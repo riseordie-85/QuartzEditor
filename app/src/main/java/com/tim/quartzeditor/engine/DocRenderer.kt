@@ -128,7 +128,7 @@ object DocRenderer {
 
     private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx) {
         when (l.kind) {
-            LayerKind.PIXELS -> drawLayer(
+            LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
                 ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.takeIf { it.layerId == l.id }, ctx.smooth, ctx.effects,
             )
@@ -602,7 +602,7 @@ object DocRenderer {
     fun buildAllEffects(doc: Doc, maxSide: Int, only: Collection<Layer> = doc.layers): Map<Long, BuiltEffects> {
         val out = HashMap<Long, BuiltEffects>()
         for (l in only) {
-            if (!l.isPixels || !l.props.visible || !l.props.style.needsBuild) continue
+            if (!l.hasContent || !l.props.visible || !l.props.style.needsBuild) continue
             val mask = if (l.maskActive) l.mask?.tiles else null
             Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide)?.let { out[l.id] = it }
         }

@@ -48,6 +48,31 @@ object QIcons {
         }
     }
 
+    /** A pen nib with a curve and its anchor points: the shape pen. */
+    val Pen: ImageVector by lazy {
+        build("Pen") {
+            line {
+                // Nib
+                moveTo(12f, 3f)
+                lineTo(17f, 11f)
+                lineTo(14.5f, 17f)
+                lineTo(9.5f, 17f)
+                lineTo(7f, 11f)
+                close()
+                moveTo(12f, 3f)
+                lineTo(12f, 10.5f)
+                moveTo(9.5f, 20.5f)
+                lineTo(14.5f, 20.5f)
+            }
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(13.3f, 11.5f)
+                arcTo(1.3f, 1.3f, 0f, true, true, 10.7f, 11.5f)
+                arcTo(1.3f, 1.3f, 0f, true, true, 13.3f, 11.5f)
+                close()
+            }
+        }
+    }
+
     /** Rectangle with a circle cut out: Photoshop's "add mask". */
     val Mask: ImageVector by lazy {
         build("Mask") {

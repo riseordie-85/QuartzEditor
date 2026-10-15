@@ -47,6 +47,7 @@ import com.tim.quartzeditor.engine.StrokeTarget
 import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.TilePatch
 import com.tim.quartzeditor.engine.solidGrid
+import com.tim.quartzeditor.engine.VectorArt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -58,7 +59,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, BRUSH, ERASER }
+enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, SHAPE, PEN, TEXT, BRUSH, ERASER }
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
@@ -125,6 +126,47 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var gradientType by mutableStateOf(com.tim.quartzeditor.engine.GradientType.entries.getOrElse(prefs.getInt("gradType", 0)) { com.tim.quartzeditor.engine.GradientType.LINEAR })
     var gradientReverse by mutableStateOf(prefs.getBoolean("gradReverse", false))
     var gradientOpacity by mutableFloatStateOf(prefs.getFloat("gradOpacity", 1f))
+
+    // ------------------------------------------------------------ phase 3: shapes and text (VectorActions.kt)
+
+    /** The shape the Shape tool draws (tap the tool again for the next one). */
+    var shapeKind by mutableStateOf(
+        com.tim.quartzeditor.engine.ShapeKind.entries.getOrElse(prefs.getInt("shapeKind", 0)) { com.tim.quartzeditor.engine.ShapeKind.RECT }
+            .let { if (it == com.tim.quartzeditor.engine.ShapeKind.PATH) com.tim.quartzeditor.engine.ShapeKind.RECT else it }
+    )
+
+    /** Fill, outline, corners and points for new shapes (the last ones used). */
+    var shapeStyle by mutableStateOf(loadShapeStyle(prefs))
+
+    /** Shapes are drawn square / round. */
+    var shapeSquare by mutableStateOf(prefs.getBoolean("shapeSquare", false))
+
+    /** The shape being dragged out (canvas pixels). */
+    var shapeDraft by mutableStateOf<com.tim.quartzeditor.engine.ShapeSpec?>(null)
+
+    /** Shape pen points placed so far (canvas pixels), and the one being placed. */
+    val penPoints = androidx.compose.runtime.mutableStateListOf<com.tim.quartzeditor.engine.PenPoint>()
+    var penDrag by mutableStateOf<com.tim.quartzeditor.engine.PenPoint?>(null)
+
+    /** Fill and outline colors to bring back when they're switched on again. */
+    internal var lastShapeFill: Int? = null
+    internal var lastShapeStroke: Int? = null
+
+    /** Font, size, color and so on for new text (the last ones used). */
+    var textStyle by mutableStateOf(loadTextStyle(prefs))
+
+    /** Text being typed (null = none). */
+    var textEdit by mutableStateOf<TextEditSession?>(null)
+        internal set
+
+    /** "Rasterize this layer?" (null = not asking). */
+    var rasterAsk by mutableStateOf<RasterAsk?>(null)
+        internal set
+
+    internal var vectorBefore: com.tim.quartzeditor.engine.DocSnap? = null
+    internal var vectorBeforeId = -1L
+    internal var vectorJob: Job? = null
+    internal var vectorLiveLayer: Layer? = null
 
     /** The brush column next to the toolbar can be folded away by tapping Brush/Eraser again. */
     var brushColumnHidden by mutableStateOf(false)
@@ -222,6 +264,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun setDocument(d: Doc, canvas: Int? = null) {
         propsBefore = null
+        resetVectorState()
         transform = null
         samplePicture = null
         samplePictureVersion = -1
@@ -241,6 +284,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         canvas?.let { changeCanvasColor(it) }
         if (viewW > 0f) fit()
         refreshThumbs(d, force = true)
+        preloadFonts(d)
+    }
+
+    private fun resetVectorState() {
+        textEdit = null
+        rasterAsk = null
+        shapeDraft = null
+        penPoints.clear()
+        penDrag = null
+        vectorBefore = null
+        vectorJob?.cancel()
+        vectorLiveLayer = null
     }
 
     fun newDocument(name: String, width: Int, height: Int, bg: NewBackground) {
@@ -342,6 +397,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (busy != null) return
         pendingFx = null
         transform = null
+        resetVectorState()
         doc = null
         stroke = null
         preview = null
@@ -506,7 +562,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             toast(selectShape.label)
             return
         }
+        if (t == Tool.SHAPE && tool == Tool.SHAPE) {
+            nextShapeKind()
+            return
+        }
         if (pendingFirst { onToolButton(t) }) return
+        if (t != tool) {
+            // A shape pen outline in progress becomes a shape
+            if (penPoints.size >= 2) finishPen(closed = false) else cancelPen()
+            shapeDraft = null
+        }
         polygonPoints.clear()
         selectDraft = null
         when {
@@ -569,10 +634,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var openedSections by mutableStateOf(setOf<PanelSection>())
         private set
 
-    fun isOpen(s: PanelSection): Boolean = s == PanelSection.LAYERS || s in pinnedSections || s in openedSections
+    /** Layers stays open unless you fold it yourself (remembered). */
+    var layersFolded by mutableStateOf(prefs.getBoolean("layersFolded", false))
+        private set
+
+    fun isOpen(s: PanelSection): Boolean =
+        if (s == PanelSection.LAYERS) !layersFolded else s in pinnedSections || s in openedSections
 
     /** Opens or closes a section. Opening one folds the other unpinned ones away. */
     fun toggleSection(s: PanelSection, open: Boolean = !isOpen(s)) {
+        if (s == PanelSection.LAYERS) {
+            layersFolded = !open
+            prefs.edit().putBoolean("layersFolded", layersFolded).apply()
+            return
+        }
         openedSections = if (open) setOf(s) else openedSections - s
         if (!open && s in pinnedSections) togglePin(s)
     }
@@ -586,6 +661,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var popup by mutableStateOf<PopupKind?>(null)
 
     fun openPopup(k: PopupKind) {
+        val a = doc?.active
+        if ((k == PopupKind.ADJUSTMENTS || k == PopupKind.FILTERS) && a != null && a.isVector) {
+            askRasterize(a) { openPopup(k) }
+            return
+        }
         popup = k
         if (k == PopupKind.FILTERS) fxThumb = null
     }
@@ -630,9 +710,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal fun paintBlocker(layer: Layer?): String? = when {
         layer == null -> "Add a layer first"
         layer.props.locked -> "\"${layer.props.name}\" is locked"
-        !layer.isPixels && layer.mask == null -> if (layer.isGroup) "Pick a layer inside the folder to paint on (or add a mask to the folder)" else "This adjustment layer has no mask to paint"
+        (layer.isGroup || layer.isAdjustment) && layer.mask == null -> if (layer.isGroup) "Pick a layer inside the folder to paint on (or add a mask to the folder)" else "This adjustment layer has no mask to paint"
         !layer.props.visible -> "\"${layer.props.name}\" is hidden"
-        (doc?.editMask == true || !layer.isPixels) && layer.mask != null && layer.props.maskDisabled -> "The mask is turned off. Turn it on to paint it"
+        (doc?.editMask == true || layer.isGroup || layer.isAdjustment) && layer.mask != null && layer.props.maskDisabled -> "The mask is turned off. Turn it on to paint it"
+        // Shape and text layers keep their shape or words: painting their pixels needs rasterizing
+        layer.isVector && !(doc?.editMask == true && layer.mask != null) -> NEEDS_RASTER
         else -> null
     }
 
@@ -649,7 +731,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         when {
             pendingFx != null -> applyFx()
             transform != null -> applyTransform()
-            else -> strokeBlockReason()?.let { toast(it) }
+            else -> strokeBlockReason()?.let { r ->
+                val l = doc?.active
+                if (r == NEEDS_RASTER && l != null) askRasterize(l, null) else toast(r)
+            }
         }
     }
 
@@ -661,12 +746,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return false
         }
         val layer = d.active
-        paintBlocker(layer)?.let { toast(it); return false }
+        if (blockPaint(layer)) return false
         layer!!
         val erase = tool == Tool.ERASER
         val b = if (erase) eraser else brush
         // Folders and adjustment layers have no pixels of their own: brushes paint their mask
-        val target = if ((d.editMask || !layer.isPixels) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
+        val target = if ((d.editMask || layer.isGroup || layer.isAdjustment) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
         val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection)
         s.addPoint(x, y)
         stroke = s
@@ -741,8 +826,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             // A folder moves everything in it
             val all = if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)
             for (x in all) {
+                val clipped = vectorClipped(x, x.x, x.y, d.width, d.height)
                 x.x += dx
                 x.y += dy
+                // A shape that reached far past the canvas has the rest drawn now
+                if (clipped) redrawVectorNow(x)
             }
         }
     }
@@ -756,7 +844,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Move tool tap: picks the top layer with something visible under the finger. */
     fun selectLayerAt(x: Float, y: Float) {
         val d = doc ?: return
-        val hit = d.layers.asReversed().firstOrNull { it.isPixels && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) }
+        val hit = d.layers.asReversed().firstOrNull { it.hasContent && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) }
         if (hit != null && hit.id != d.activeId) selectLayer(hit.id)
     }
 
@@ -805,6 +893,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Records one undo step around a change to the layer stack. */
     internal fun stackEdit(label: String, change: () -> Unit) {
         val d = doc ?: return
+        if (textEdit != null) finishText()
+        // A slider change to a shape or text layer that never heard its finger lift
+        if (vectorBefore != null) commitVector("Change layer")
         val before = d.snapshot()
         change()
         val after = d.snapshot()
@@ -828,7 +919,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Where a new layer goes: above the active one, or at the top inside an active folder. */
-    private fun insertPoint(d: Doc): Pair<Int, Long> {
+    internal fun insertPoint(d: Doc): Pair<Int, Long> {
         val a = d.active ?: return d.layers.size to 0L
         return if (a.isGroup) d.indexOf(a.id) to a.id else (d.indexOf(a.id) + 1) to a.props.parent
     }
@@ -998,8 +1089,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val below = siblingBelow(d, top)
-        if (below == null || !below.isPixels) {
-            toast(if (below == null) "There's no layer below to merge into" else "Merge into a pixel layer (not a folder or adjustment)")
+        if (below == null || !below.hasContent) {
+            toast(if (below == null) "There's no layer below to merge into" else "Merge into a pixel, shape or text layer (not a folder or adjustment)")
             return
         }
         if (top.props.locked || below.props.locked) {
@@ -1019,11 +1110,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = false).also { bmp.recycle() }
             }
             stackEdit("Merge down") {
-                below.tiles = merged
-                below.x = 0
-                below.y = 0
-                below.mask = null
-                below.props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle())
+                val props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle(), shape = null, text = null)
+                if (below.isVector) {
+                    // Merging into a shape or text layer leaves pixels
+                    d.layers[d.indexOf(below.id)] = Layer(below.id, props, merged, 0, 0, null, LayerKind.PIXELS)
+                } else {
+                    below.tiles = merged
+                    below.x = 0
+                    below.y = 0
+                    below.mask = null
+                    below.props = props
+                }
                 d.layers.remove(top)
                 d.activeId = below.id
                 d.editMask = false
@@ -1103,6 +1200,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun setPropsLive(id: Long, change: (LayerProps) -> LayerProps) {
         val d = doc ?: return
         val l = d.layer(id) ?: return
+        if (textEdit != null) finishText()
         if (propsBefore == null) propsBefore = d.snapshot()
         l.props = change(l.props)
         d.invalidate()
@@ -1138,8 +1236,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         stackEdit("Move") {
             // A folder moves everything in it
             for (m in if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)) {
+                val clipped = vectorClipped(m, m.x, m.y, d.width, d.height)
                 m.x += dx
                 m.y += dy
+                if (clipped) redrawVectorNow(m)
             }
         }
     }
@@ -1156,6 +1256,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun clearLayer() {
         if (pendingFirst { clearLayer() }) return
         val l = editableActive() ?: return
+        if (l.isVector && !(doc?.editMask == true && l.mask != null)) {
+            askRasterize(l) { clearLayer() }
+            return
+        }
         if (doc?.editMask == true && l.mask != null) {
             stackEdit("Clear mask") { l.mask = TileGrid(alphaOnly = true) }
             return
@@ -1202,6 +1306,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         val l = editableActive() ?: return
         val m = l.mask ?: return
+        if (l.isVector) {
+            askRasterize(l) { applyMask() }
+            return
+        }
         val grid = l.tiles.copy()
         val p = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
         for ((k, tile) in grid.tiles) {
@@ -1321,6 +1429,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             toast("\"${l.props.name}\" is locked")
             return
         }
+        if (l.isVector) {
+            askRasterize(l) { updateFx(fx) }
+            return
+        }
         if (!l.isPixels) {
             toast("Pick a pixel layer (or add an adjustment layer)")
             return
@@ -1348,10 +1460,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun ensureFxThumb() {
         val d = doc ?: return
         val l = d.active ?: return
-        val key = l.id to (if (l.isPixels) l.pixelVersion else -1)
+        val key = l.id to (if (l.hasContent) l.pixelVersion else -1)
         if (fxThumb != null && key == fxThumbKey) return
         fxThumbKey = key
-        fxThumb = if (l.isPixels) {
+        fxThumb = if (l.hasContent) {
             val b = l.bounds() ?: return
             DocRenderer.layerBitmap(l, min(1f, 160f / max(b.width(), b.height())))?.first
         } else {
@@ -1415,6 +1527,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * Procreate). Returns true when it started that; [then] runs once they're applied.
      */
     internal fun pendingFirst(then: () -> Unit): Boolean {
+        if (textEdit != null) finishText()
         if (cropBox != null) {
             applyCrop(onDone = then)
             return true
@@ -1452,12 +1565,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             updatePolygonDraft()
             return
         }
+        if (textEdit != null) {
+            cancelText()
+            return
+        }
+        if (penPoints.isNotEmpty()) {
+            undoPenPoint()
+            return
+        }
         history.undo(d)?.let { toast("Undo: $it") }
     }
 
     fun redo() {
         val d = doc ?: return
-        if (stroke != null || busy != null || pendingFx != null || transform != null || cropBox != null) return
+        if (stroke != null || busy != null || pendingFx != null || transform != null || cropBox != null || textEdit != null) return
         history.redo(d)?.let { toast("Redo: $it") }
     }
 
@@ -1479,7 +1600,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val d = doc ?: continue
             if (stroke != null || transform != null || busy != null) continue
             val todo = d.layers.firstOrNull {
-                it.isPixels && it.props.visible && it.props.style.needsBuild &&
+                it.hasContent && it.props.visible && it.props.style.needsBuild &&
                     Effects.keyOf(it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }
             } ?: continue
             val key = Effects.keyOf(todo)
@@ -1559,8 +1680,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             toast("\"${l.props.name}\" is locked")
             return
         }
-        if (!l.isPixels) {
-            toast("Transform works on a pixel layer")
+        if (!l.hasContent) {
+            toast("Transform works on a pixel, shape or text layer")
             return
         }
         if (l.tiles.isEmpty) {
@@ -1639,6 +1760,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         val t = transform ?: return
         if (busy != null) return
+        // Text is redrawn in its own font: wait for it if it's still loading
+        val font = t.layer.props.text?.fontKey
+        if (!fontReady(font)) {
+            withFont(font) { applyTransform(onDone) }
+            return
+        }
         var st = t.state
         if (st.copy(keepAspect = true) == t.start.copy(keepAspect = true)) {
             cancelTransform()
@@ -1647,14 +1774,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         st = st.pixelAligned()
         val l = t.layer
+        // Shapes and text stay sharp: their own geometry is transformed and redrawn
+        val vectorProps = if (l.isVector) VectorArt.transformed(l.props, st.matrix()) else null
         runBusy("Transforming…", onDone) {
             val result = withContext(Dispatchers.Default) {
                 // Layer-local → canvas
                 val m = st.matrix()
                 val limit = Transformer.limitFor(d.width, d.height)
-                val px = Transformer.render(t.tiles, false, t.content, m, limit)
-                val grid = px?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
-                    ?: TileGrid(alphaOnly = false)
+                val grid = if (vectorProps != null) {
+                    VectorArt.rasterize(vectorProps, VectorArt.clipFor(0, 0, d.width, d.height))
+                } else {
+                    val px = Transformer.render(t.tiles, false, t.content, m, limit)
+                    px?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
+                        ?: TileGrid(alphaOnly = false)
+                }
                 val maskGrid = t.mask?.let { mk ->
                     val r = Transformer.render(mk, true, t.content, m, limit)
                     r?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = true).also { bmp.recycle() } }
@@ -1666,6 +1799,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             preview = null
             if (doc === d && l.tiles === t.sourceGrid) {
                 stackEdit("Transform") {
+                    if (vectorProps != null) l.props = vectorProps
                     l.tiles = result.first
                     l.x = 0
                     l.y = 0
@@ -1710,8 +1844,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun canvasTransform(label: String, newW: Int, newH: Int, build: (Matrix) -> Unit) {
         val d = doc ?: return
         if (pendingFirst { canvasTransform(label, newW, newH, build) }) return
+        val fonts = d.layers.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
+        if (fonts.isNotEmpty()) {
+            withFonts(fonts) { canvasTransform(label, newW, newH, build) }
+            return
+        }
         val layers = d.layers.toList()
         val snaps = layers.map { Triple(it, HashMap(it.tiles.tiles), it.mask?.let { m -> HashMap(m.tiles) }) }
+        val oldProps = layers.associateWith { it.props }
+        val newProps = HashMap<Layer, LayerProps>()
         runBusy("Turning…") {
             val results = withContext(Dispatchers.Default) {
                 val everywhere = Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
@@ -1719,7 +1860,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     val m = Matrix().apply { setTranslate(l.x.toFloat(), l.y.toFloat()) }
                     build(m)
                     val area = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.tileBounds()
-                    val grid = area?.let { a -> Transformer.render(tiles, false, a, m, everywhere) }
+                    val vp = if (l.isVector) VectorArt.transformed(oldProps.getValue(l), m) else null
+                    val grid = if (vp != null) {
+                        synchronized(newProps) { newProps[l] = vp }
+                        VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, newW, newH))
+                    } else area?.let { a -> Transformer.render(tiles, false, a, m, everywhere) }
                         ?.let { (bmp, at) -> TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly = false).also { bmp.recycle() } }
                         ?: TileGrid(alphaOnly = false)
                     val maskGrid = mask?.let { mk ->
@@ -1734,6 +1879,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             if (doc !== d) return@runBusy
             stackEdit(label) {
                 for ((l, grid, maskGrid) in results) {
+                    newProps[l]?.let { l.props = it }
                     l.tiles = grid
                     l.x = 0
                     l.y = 0
@@ -1765,7 +1911,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.BUCKET, Tool.GRADIENT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
+        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.BUCKET, Tool.GRADIENT, Tool.SHAPE, Tool.PEN, Tool.TEXT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
 
         /** Effect images on screen are at most this big (blur hides the difference). */
         const val SCREEN_FX_PX = 4400

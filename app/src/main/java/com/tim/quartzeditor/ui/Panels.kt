@@ -94,18 +94,25 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             .background(Q.panel)
     ) {
         val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES)
-        // Layers keeps at least its settings, four rows and its buttons
-        val topMax = (maxHeight - 400.dp).coerceAtLeast(140.dp)
+        val layersOpen = vm.isOpen(PanelSection.LAYERS)
+        // With Color and Properties folded, the Layers list fills the column. Otherwise Layers is
+        // measured first (its settings, up to four rows and its buttons, which always stay on
+        // screen) and Color/Properties scroll in whatever is left.
+        val fillLayers = layersOpen && !anyOpen
+        val layersMax = (maxHeight - 150.dp).coerceAtLeast(120.dp)
         Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
             Column(
-                Modifier
-                    .heightIn(max = topMax)
+                (if (fillLayers) Modifier else Modifier.weight(1f, fill = false))
                     .verticalScroll(rememberScrollState())
             ) {
                 Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
                 Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
             }
-            LayersPanel(vm, onPlaceImage, fillList = !anyOpen, modifier = Modifier.weight(1f, fill = !anyOpen))
+            LayersPanel(
+                vm, onPlaceImage,
+                fillList = fillLayers,
+                modifier = if (fillLayers) Modifier.weight(1f) else Modifier.heightIn(max = layersMax),
+            )
         }
     }
 }
@@ -360,10 +367,10 @@ private fun SlotChip(label: String, color: Int, selected: Boolean, onClick: () -
     }
 }
 
-private fun hsv(c: Int): FloatArray = FloatArray(3).also { AColor.colorToHSV(c, it) }
+internal fun hsv(c: Int): FloatArray = FloatArray(3).also { AColor.colorToHSV(c, it) }
 
 @Composable
-private fun SatValSquare(hue: Float, sat: Float, value: Float, onChange: (Float, Float) -> Unit, onDone: () -> Unit, modifier: Modifier) {
+internal fun SatValSquare(hue: Float, sat: Float, value: Float, onChange: (Float, Float) -> Unit, onDone: () -> Unit, modifier: Modifier) {
     val change by rememberUpdatedState(onChange)
     val done by rememberUpdatedState(onDone)
     Canvas(
@@ -396,7 +403,7 @@ private fun SatValSquare(hue: Float, sat: Float, value: Float, onChange: (Float,
 }
 
 @Composable
-private fun HueBar(hue: Float, onChange: (Float) -> Unit, onDone: () -> Unit, modifier: Modifier) {
+internal fun HueBar(hue: Float, onChange: (Float) -> Unit, onDone: () -> Unit, modifier: Modifier) {
     val change by rememberUpdatedState(onChange)
     val done by rememberUpdatedState(onDone)
     Canvas(
@@ -566,6 +573,8 @@ private fun PropertiesPanel(vm: EditorViewModel) {
         }
         Spacer(Modifier.height(10.dp))
     }
+    if (tool == Tool.SHAPE || tool == Tool.PEN) ShapeOptions(vm)
+    if (tool == Tool.TEXT) TextOptions(vm)
     if (tool == Tool.EYEDROPPER) {
         Text("Picks into the ${if (vm.colorSlot == ColorSlot.FOREGROUND) "foreground" else "background"} color. Tap the other swatch to switch.", color = Q.textDim, fontSize = 13.sp)
         Spacer(Modifier.height(10.dp))
@@ -574,6 +583,9 @@ private fun PropertiesPanel(vm: EditorViewModel) {
     val l = d.active ?: return
     // Tools show their own settings; with Move (or Pan) it's the selected layer's
     if (tool != Tool.MOVE && tool != Tool.PAN) return
+    // Shape and text layers: their own settings first
+    if (l.isShape) ShapeOptions(vm)
+    if (l.isText) TextOptions(vm)
     Text("Layer", color = Q.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
     Spacer(Modifier.height(6.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {

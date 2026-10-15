@@ -92,6 +92,8 @@ fun Workspace(vm: EditorViewModel) {
 
         BackHandler {
             when {
+                vm.textEdit != null -> vm.finishText()
+                vm.penPoints.isNotEmpty() -> vm.cancelPen()
                 !docked && panelsOpen -> panelsOpen = false
                 else -> vm.closeDocument()
             }
@@ -117,7 +119,7 @@ fun Workspace(vm: EditorViewModel) {
                 ) {
                     val h = vm.history
                     @Suppress("UNUSED_VARIABLE") val v = h.version
-                    RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null) { vm.undo() }
+                    RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
                     RoundButton(Icons.AutoMirrored.Outlined.Redo, "Redo (three-finger tap)", enabled = h.canRedo) { vm.redo() }
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen (or pinch in quickly)") { vm.fit() }
                 }
@@ -151,6 +153,8 @@ fun Workspace(vm: EditorViewModel) {
                 TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 SelectBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 
                 // Show / hide panels
                 RoundButton(
@@ -227,6 +231,8 @@ fun Workspace(vm: EditorViewModel) {
 
         BusyOverlay(vm.busy)
     }
+
+    RasterizeDialog(vm)
 
     if (discardOpen) {
         val saved = vm.doc?.projectId != null

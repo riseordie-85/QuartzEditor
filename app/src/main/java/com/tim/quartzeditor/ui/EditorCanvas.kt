@@ -57,7 +57,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -272,6 +272,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         if (cropStart != null) vm.cropBox = cropStart
                                         mode = GestureMode.NAV
                                     }
+                                    GestureMode.SHAPING -> {
+                                        vm.cancelShape()
+                                        mode = GestureMode.NAV
+                                    }
+                                    GestureMode.PEN -> {
+                                        vm.penPreview(null)
+                                        mode = GestureMode.NAV
+                                    }
                                     else -> mode = GestureMode.NAV
                                 }
                             }
@@ -323,6 +331,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM, Tool.BUCKET, Tool.CROP -> GestureMode.PAN
                                         Tool.SELECT -> if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.POLYGON) GestureMode.PAN else GestureMode.SELECTING
                                         Tool.GRADIENT -> if (vm.beginGradient(startCx, startCy)) GestureMode.GRADIENT else GestureMode.DONE
+                                        Tool.SHAPE -> GestureMode.SHAPING
+                                        // Dragging while placing a point pulls out a curve handle
+                                        Tool.PEN -> GestureMode.PEN
+                                        // With the Text tool, dragging moves the text layer you're on
+                                        Tool.TEXT -> if (vm.doc?.active?.isText == true && vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
                                         Tool.BRUSH, Tool.ERASER -> {
                                             // Started beside the canvas: paint from there
                                             val (sx, sy) = vm.screenToCanvas(start.x, start.y)
@@ -340,6 +353,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     }
                                     if (mode == GestureMode.MOVE) {
                                         vm.moveTo((main.position.x - start.x) / vm.scale, (main.position.y - start.y) / vm.scale)
+                                    }
+                                    if (mode == GestureMode.SHAPING || mode == GestureMode.PEN) {
+                                        val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        if (mode == GestureMode.SHAPING) vm.dragShape(startCx, startCy, cx, cy)
+                                        else vm.penPreview(com.tim.quartzeditor.engine.PenPoint(startCx, startCy, cx - startCx, cy - startCy))
                                     }
                                 }
                                 GestureMode.TRANSFORM -> if (main != null && tStart != null) {
@@ -410,6 +428,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                     vm.dragCrop(cropStart, cropHandle, cx - startCx, cy - startCy)
                                 }
+                                GestureMode.SHAPING -> if (main != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    vm.dragShape(startCx, startCy, cx, cy)
+                                }
+                                GestureMode.PEN -> if (main != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    vm.penPreview(com.tim.quartzeditor.engine.PenPoint(startCx, startCy, cx - startCx, cy - startCy))
+                                }
                                 GestureMode.BLOCKED, GestureMode.DONE -> Unit
                             }
                             ev.changes.forEach { it.consume() }
@@ -437,6 +463,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     } else {
                                         vm.selectTap()
                                     }
+                                    // A tap picks the shape under your finger (to change it in Properties)
+                                    Tool.SHAPE -> if (vm.isOnCanvas(start.x, start.y)) vm.selectLayerAt(startCx, startCy)
+                                    Tool.PEN -> vm.penAdd(com.tim.quartzeditor.engine.PenPoint(startCx, startCy), 24.dp.toPx() / vm.scale)
+                                    Tool.TEXT -> vm.textTap(startCx, startCy)
                                     else -> Unit
                                 }
                             }
@@ -449,6 +479,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 vm.selectDraft = null
                             }
                             GestureMode.GRADIENT -> vm.endGradient()
+                            GestureMode.SHAPING -> vm.finishShape()
+                            GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale) }
                             GestureMode.NAV -> when {
                                 !moved && duration < 350 && maxPointers == 2 -> vm.undo()
                                 !moved && duration < 350 && maxPointers >= 3 -> vm.redo()
@@ -544,6 +576,64 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 for (p in q) {
                     drawRect(Color.Black.copy(alpha = 0.6f), Offset(p.x - hs - line, p.y - hs - line), androidx.compose.ui.geometry.Size(2 * (hs + line), 2 * (hs + line)))
                     drawRect(Color.White, Offset(p.x - hs, p.y - hs), androidx.compose.ui.geometry.Size(2 * hs, 2 * hs))
+                }
+            }
+
+            // Shape being dragged out
+            vm.shapeDraft?.let { spec ->
+                drawIntoCanvas { c ->
+                    val nc = c.nativeCanvas
+                    nc.save()
+                    nc.translate(ox, oy)
+                    nc.scale(s, s)
+                    com.tim.quartzeditor.engine.VectorArt.drawShape(nc, spec)
+                    nc.restore()
+                }
+            }
+
+            // Shape pen: the outline so far, its points and curve handles
+            if (vm.tool == Tool.PEN && (vm.penPoints.isNotEmpty() || vm.penDrag != null)) {
+                val pts = vm.penPoints.toList() + listOfNotNull(vm.penDrag)
+                fun sp(x: Float, y: Float) = Offset(x * s + ox, y * s + oy)
+                drawIntoCanvas { c ->
+                    val nc = c.nativeCanvas
+                    val path = com.tim.quartzeditor.engine.ShapeSpec.penPath(pts, closed = false)
+                    path.transform(Matrix().apply { setScale(s, s); postTranslate(ox, oy) })
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = 3.dp.toPx()
+                        color = android.graphics.Color.argb(150, 0, 0, 0)
+                    }
+                    nc.drawPath(path, p)
+                    p.strokeWidth = 1.5.dp.toPx()
+                    p.color = android.graphics.Color.WHITE
+                    nc.drawPath(path, p)
+                }
+                val hr = 4.dp.toPx()
+                pts.forEachIndexed { i, pt ->
+                    val o = sp(pt.x, pt.y)
+                    if (pt.smooth) {
+                        val a = sp(pt.x - pt.hx, pt.y - pt.hy)
+                        val b = sp(pt.x + pt.hx, pt.y + pt.hy)
+                        drawLine(Q.accent, a, b, 1.5.dp.toPx())
+                        drawCircle(Q.accent, hr * 0.8f, a)
+                        drawCircle(Q.accent, hr * 0.8f, b)
+                    }
+                    // The first point is bigger: tap it to close the shape
+                    val r = if (i == 0) hr * 1.6f else hr
+                    drawRect(Color.Black.copy(alpha = 0.6f), Offset(o.x - r - 1.5f, o.y - r - 1.5f), androidx.compose.ui.geometry.Size(2 * r + 3f, 2 * r + 3f))
+                    drawRect(Color.White, Offset(o.x - r, o.y - r), androidx.compose.ui.geometry.Size(2 * r, 2 * r))
+                }
+            }
+
+            // Text being typed: a box around it
+            vm.editingText?.let { l ->
+                com.tim.quartzeditor.engine.VectorArt.bounds(l.props)?.let { b ->
+                    b.offset(l.x.toFloat(), l.y.toFloat())
+                    val tl = Offset(b.left * s + ox, b.top * s + oy)
+                    val sz = androidx.compose.ui.geometry.Size(b.width() * s, b.height() * s)
+                    drawRect(Color.Black.copy(alpha = 0.5f), tl, sz, style = Stroke(3.dp.toPx()))
+                    drawRect(Q.accent, tl, sz, style = Stroke(1.5.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
                 }
             }
 

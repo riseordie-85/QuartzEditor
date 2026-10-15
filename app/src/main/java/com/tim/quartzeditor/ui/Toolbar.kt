@@ -36,6 +36,10 @@ import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.Polyline
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.Rectangle
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.Title
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
@@ -102,7 +106,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
 @Composable
 private fun ToolColumn(vm: EditorViewModel, compact: Boolean, buttonSize: Dp, onColorTap: () -> Unit) {
     BoxWithConstraints(Modifier.width(if (compact) 52.dp else 62.dp).fillMaxHeight()) {
-        val tight = maxHeight < buttonSize * 9 + 190.dp
+        val tight = maxHeight < (buttonSize + 6.dp) * 12 + 150.dp
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -125,6 +129,14 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, buttonSize: Dp, on
             ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
             ToolButton(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET, buttonSize) { vm.onToolButton(Tool.BUCKET) }
             ToolButton(Icons.Outlined.Gradient, "Gradient", t == Tool.GRADIENT, buttonSize) { vm.onToolButton(Tool.GRADIENT) }
+            val shapeIcon = when (vm.shapeKind) {
+                com.tim.quartzeditor.engine.ShapeKind.ELLIPSE -> Icons.Outlined.Circle
+                com.tim.quartzeditor.engine.ShapeKind.STAR -> Icons.Outlined.StarOutline
+                else -> Icons.Outlined.Rectangle
+            }
+            ToolButton(shapeIcon, "Shape: ${vm.shapeKind.label} (tap again for the next shape)", t == Tool.SHAPE, buttonSize) { vm.onToolButton(Tool.SHAPE) }
+            ToolButton(QIcons.Pen, "Shape pen", t == Tool.PEN, buttonSize) { vm.onToolButton(Tool.PEN) }
+            ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
             ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
             ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))

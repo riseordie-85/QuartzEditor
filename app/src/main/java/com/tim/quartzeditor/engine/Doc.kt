@@ -37,8 +37,11 @@ enum class Blend(val label: String, val mode: BlendMode, val group: Int) {
     }
 }
 
-/** Pixels, a folder of layers, or an adjustment that changes everything below it. */
-enum class LayerKind { PIXELS, GROUP, ADJUSTMENT }
+/**
+ * Pixels, a folder of layers, an adjustment that changes everything below it, or a shape or text
+ * layer (which keeps its shape or words, and draws its pixels from them).
+ */
+enum class LayerKind { PIXELS, GROUP, ADJUSTMENT, SHAPE, TEXT }
 
 /** Everything about a layer that isn't pixels. Immutable, so undo can keep old copies. */
 data class LayerProps(
@@ -61,6 +64,10 @@ data class LayerProps(
     val parent: Long = 0L,
     /** Adjustment layers: what they do to everything below. */
     val adjust: FxParams? = null,
+    /** Shape layers: the shape. */
+    val shape: ShapeSpec? = null,
+    /** Text layers: the text and how it looks. */
+    val text: TextSpec? = null,
 )
 
 /**
@@ -82,6 +89,12 @@ class Layer(
     val isGroup: Boolean get() = kind == LayerKind.GROUP
     val isAdjustment: Boolean get() = kind == LayerKind.ADJUSTMENT
     val isPixels: Boolean get() = kind == LayerKind.PIXELS
+    val isShape: Boolean get() = kind == LayerKind.SHAPE
+    val isText: Boolean get() = kind == LayerKind.TEXT
+    /** Shape or text: its pixels are drawn from what it is, and painting needs rasterizing first. */
+    val isVector: Boolean get() = kind == LayerKind.SHAPE || kind == LayerKind.TEXT
+    /** Has pixels of its own to draw (pixel, shape and text layers). */
+    val hasContent: Boolean get() = kind == LayerKind.PIXELS || isVector
 
     /** Folder folded shut in the Layers panel (not part of undo). */
     var collapsed by mutableStateOf(false)

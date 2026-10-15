@@ -37,7 +37,7 @@ import kotlin.math.roundToInt
 // busy overlay and "apply what's pending first" rules.
 
 /** Where paint goes on [l]: its mask (folders, adjustment layers, or when the mask is picked) or its pixels. */
-internal fun Doc.paintsMask(l: Layer): Boolean = l.mask != null && (editMask || !l.isPixels)
+internal fun Doc.paintsMask(l: Layer): Boolean = l.mask != null && (editMask || l.isGroup || l.isAdjustment)
 
 /**
  * Changes tiles of [l] (pixels or mask) covering canvas area [area] in the background, copy-on-write,
@@ -105,7 +105,7 @@ fun EditorViewModel.fillWithColor(color: Int) {
     val d = doc ?: return
     if (pendingFirst { fillWithColor(color) }) return
     val l = d.active ?: return
-    paintBlocker(l)?.let { toast(it); return }
+    if (blockPaint(l) { fillWithColor(color) }) return
     val toMask = d.paintsMask(l)
     val area = d.fillArea()
     if (area.isEmpty) return
@@ -124,7 +124,7 @@ fun EditorViewModel.beginGradient(x: Float, y: Float): Boolean {
     val d = doc ?: return false
     val l = d.active ?: return false
     if (pendingFirst { }) return false
-    paintBlocker(l)?.let { toast(it); return false }
+    if (blockPaint(l)) return false
     previewGradient(l, PointF(x, y), PointF(x, y))
     return true
 }
@@ -174,12 +174,12 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
     val d = doc ?: return
     if (pendingFirst { bucketFill(x, y) }) return
     val l = d.active ?: return
-    paintBlocker(l)?.let { toast(it); return }
+    if (blockPaint(l) { bucketFill(x, y) }) return
     val px = x.toInt()
     val py = y.toInt()
     if (px !in 0 until d.width || py !in 0 until d.height) return
     val toMask = d.paintsMask(l)
-    val allLayers = bucketAllLayers || !l.isPixels
+    val allLayers = bucketAllLayers || !l.hasContent
     val tol = (bucketTolerance * 255).roundToInt()
     val contiguous = bucketContiguous
     val sel = d.selection
@@ -317,8 +317,12 @@ fun EditorViewModel.selectionToLayer(cut: Boolean) {
         toast("Select something first")
         return
     }
-    if (!l.isPixels) {
+    if (!l.hasContent) {
         toast("Pick a pixel layer")
+        return
+    }
+    if (cut && l.isVector) {
+        askRasterize(l) { selectionToLayer(cut) }
         return
     }
     if (cut && l.props.locked) {
@@ -381,7 +385,7 @@ fun EditorViewModel.clearSelected() {
         toast("Select something first")
         return
     }
-    paintBlocker(l)?.let { toast(it); return }
+    if (blockPaint(l) { clearSelected() }) return
     if (d.paintsMask(l)) {
         fillWithColor(Color.WHITE)
         return
@@ -536,12 +540,17 @@ internal fun EditorViewModel.cropTo(r: Rect) {
     val w = r.width().coerceIn(1, Doc.MAX_SIDE)
     val h = r.height().coerceIn(1, Doc.MAX_SIDE)
     stackEdit("Crop") {
-        for (l in d.layers) {
-            l.x -= r.left
-            l.y -= r.top
-        }
+        val oldW = d.width
+        val oldH = d.height
         d.width = w
         d.height = h
+        for (l in d.layers) {
+            val clipped = vectorClipped(l, l.x, l.y, oldW, oldH)
+            l.x -= r.left
+            l.y -= r.top
+            // Shapes reaching far past the old canvas: draw the rest
+            if (clipped) redrawVectorNow(l)
+        }
         d.selection = null
     }
     fit()

@@ -18,6 +18,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +35,8 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Title
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DragHandle
@@ -82,8 +89,26 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
     val active = d.active
     var renaming by remember { mutableStateOf<Layer?>(null) }
     // Top settings and bottom buttons stay put; only the list between them scrolls (like Photoshop)
-    Column(modifier.padding(horizontal = 12.dp)) {
-        Text("Layers", color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+    SqueezeColumn(fillList, modifier.padding(horizontal = 12.dp)) {
+        val open = vm.isOpen(PanelSection.LAYERS)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { vm.toggleSection(PanelSection.LAYERS) }
+                .padding(vertical = 6.dp),
+        ) {
+            Spacer(Modifier.width(34.dp))
+            Text("Layers", color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (open) "Fold Layers" else "Open Layers",
+                tint = Q.text,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        if (!open) return@SqueezeColumn
 
         // Blend mode and opacity
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -132,7 +157,8 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         val dragFrom = shown.indexOfFirst { it.id == dragId }
         val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
 
-        val listMod = if (fillList) Modifier.weight(1f) else Modifier.height(rowH * shown.size.coerceIn(1, 4))
+        // Up to four rows while Color or Properties is open; it gives up rows before the buttons
+        val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 4)
         Column(
             Modifier
                 .fillMaxWidth()
@@ -243,6 +269,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
                     if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
                     item("Put in a new folder") { vm.groupActive() }()
+                    if (active?.isVector == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
                     item("Flatten image") { vm.flattenImage() }()
                     HorizontalDivider()
                     item("Place image as layer…") { onPlaceImage() }()
@@ -324,6 +351,10 @@ private fun LayerRow(
                 vm.selectLayer(layer.id, mask = false)
                 vm.openPopup(PopupKind.ADJUSTMENTS)
             }
+            // Text layers show a T like Photoshop; tapping it on the selected layer edits the text
+            layer.isText -> IconThumb(Icons.Outlined.Title, selected && !maskSelected) {
+                if (selected && !maskSelected) vm.beginTextEdit(layer) else vm.selectLayer(layer.id, mask = false)
+            }
             else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
         }
         if (layer.hasMask) {
@@ -339,6 +370,7 @@ private fun LayerRow(
         Column(Modifier.weight(1f)) {
             Text(p.name, color = if (p.visible) Q.text else Q.textDim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val notes = buildList {
+                if (layer.isShape) add("Shape")
                 if (p.blend != Blend.NORMAL) add(p.blend.label)
                 if (p.opacity < 0.995f) add("${(p.opacity * 100).roundToInt()}%")
                 if (p.style.any) add("fx")
@@ -350,6 +382,52 @@ private fun LayerRow(
         if (p.locked) Icon(Icons.Outlined.Lock, contentDescription = "Locked", tint = Q.textDim, modifier = Modifier.size(16.dp))
         Box(contentAlignment = Alignment.Center, modifier = handle.size(44.dp)) {
             Icon(Icons.Outlined.DragHandle, contentDescription = "Drag to reorder", tint = Q.text)
+        }
+    }
+}
+
+private const val LIST_ID = "list"
+
+/**
+ * A column whose child tagged [LIST_ID] gets the height the others leave: all of it with [fill],
+ * otherwise up to its own height. The other children always get their full height, so the
+ * buttons under the list never get pushed off.
+ */
+@Composable
+private fun SqueezeColumn(fill: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, c ->
+        val bounded = c.hasBoundedHeight
+        val placeables = arrayOfNulls<Placeable>(measurables.size)
+        var used = 0
+        measurables.forEachIndexed { i, m ->
+            if (m.layoutId != LIST_ID) {
+                val p = m.measure(Constraints(maxWidth = c.maxWidth))
+                placeables[i] = p
+                used += p.height
+            }
+        }
+        // Without a height limit there's nothing to fill, and the list gets its own height (at most 4 rows)
+        val left = if (bounded) (c.maxHeight - used).coerceAtLeast(0) else Constraints.Infinity
+        measurables.forEachIndexed { i, m ->
+            if (m.layoutId == LIST_ID) {
+                val max = if (bounded) left else 1_000_000
+                val p = m.measure(Constraints(maxWidth = c.maxWidth, minHeight = if (fill && bounded) left else 0, maxHeight = max))
+                placeables[i] = p
+                used += p.height
+            }
+        }
+        val width = if (c.hasBoundedWidth) c.maxWidth else placeables.maxOf { it?.width ?: 0 }
+        val height = (if (fill && bounded) c.maxHeight else used).coerceIn(c.minHeight, if (bounded) c.maxHeight else Int.MAX_VALUE)
+        layout(width, height) {
+            var y = 0
+            val last = placeables.lastOrNull()
+            for (p in placeables) {
+                if (p == null) continue
+                // Very short on room: the last row (the buttons) stays at the bottom, over the rest
+                val at = if (p === last && y + p.height > height) (height - p.height).coerceAtLeast(0) else y
+                p.placeRelative(0, at)
+                y += p.height
+            }
         }
     }
 }

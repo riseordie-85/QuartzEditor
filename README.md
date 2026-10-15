@@ -36,6 +36,17 @@ and the same button hides them.
   pixels" and "look at all layers" are in Properties.
 - **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
   Linear / Radial / Reflected, reverse and opacity are in Properties.
+- **Shape** — drag to draw a Rectangle, Ellipse or Star on a new shape layer; tap the tool again for the
+  next shape. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
+  the star's points and depth (no depth makes a polygon), and "same width and height". Tap a shape with the
+  tool to pick it; with a shape layer selected, Properties changes that shape.
+- **Shape pen** — tap to place corners; drag as you place a point to bend the line into a curve. Tap the first
+  point (or Close shape) to finish, or Open line for an unclosed line. Two-finger tap or the bar's undo
+  removes the last point.
+- **Text** — tap the picture and type (the bar at the top has the text box, Cancel and Done). Tap existing
+  text to change it; drag with the Text tool to move it. Properties: font (Android's, Google Fonts, or your
+  own .ttf/.otf), size, color, alignment, faux bold/italic, underline, letter and line spacing, and Arc.
+  Outline, shadow and glow come from Layer Style (fx).
 - **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
 - **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
@@ -56,8 +67,9 @@ Only **Color**, **Properties** and **Layers** live in the column.
   header keeps it open. With Move, Properties shows the selected layer (name, position, mask).
 - **Color** — saturation/brightness square, hue bar, hex, RGB, recent colors and basics.
 - **Layers** — like Photoshop, the settings on top (blend mode, opacity, locks, fill) and the buttons at the
-  bottom stay put; only the list between them scrolls. It shows four layers while Color or Properties is
-  open, and fills the column when they're folded.
+  bottom stay put; only the list between them scrolls. It shows up to four layers while Color or Properties
+  is open (fewer if the screen is short; the buttons always stay), and fills the column when they're folded.
+  Tap its header to fold it too.
   - Blend modes (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
   - Lock transparent pixels and lock the whole layer.
@@ -66,6 +78,10 @@ Only **Color**, **Properties** and **Layers** live in the column.
     drag it below the folder's contents to take it out.
   - **Adjustment layers**: change everything below them without touching pixels; paint their mask to limit
     them. Tap one's icon to edit it.
+  - **Shape and text layers** stay editable: change them in Properties, scale, rotate or distort them with
+    Transform (they stay sharp), add masks and layer styles. Painting, fills, filters and adjustments ask to
+    **rasterize** them first (turn them into pixels); ⋮ → Rasterize layer does it any time. Text layers
+    show a T; tap it on the selected layer to edit the text.
   - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (new adjustment layer, Adjustments…,
     Filters…), new folder, new layer, delete, and ⋮ for everything else.
 
@@ -104,6 +120,5 @@ in between. Tap the mask thumbnail to paint on the mask, the layer thumbnail to 
 - The same drawing code draws the screen and exports, so what you see is what you save.
 - `.qedit` files are zips: `doc.json` (settings), raw tile pixels, and a thumbnail.
 
-## Coming next
-- **Phase 3**: shapes (rectangle, ellipse, star with points and depth), shape pen, text, and the matching
-  Properties options.
+- Shape and text layers keep what they are (the shape, the words, the font) and redraw their pixels from
+  it whenever it changes, so blend modes, masks, styles, merging and export treat them like any layer.

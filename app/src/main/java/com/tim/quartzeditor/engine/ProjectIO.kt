@@ -118,6 +118,8 @@ object ProjectIO {
                     .put("parent", p.parent)
                     .put("collapsed", l.collapsed)
                     .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
+                    .also { o -> p.shape?.let { o.put("shape", it.toJson()) } }
+                    .also { o -> p.text?.let { o.put("text", it.toJson()) } }
             )
         }
         // Settings first, then the pixels
@@ -204,6 +206,8 @@ object ProjectIO {
                 style = LayerStyle.fromJson(o.optJSONObject("style")),
                 parent = o.optLong("parent", 0L),
                 adjust = FxParams.fromJson(o.optJSONObject("adjust")),
+                shape = o.optJSONObject("shape")?.let { runCatching { ShapeSpec.fromJson(it) }.getOrNull() },
+                text = o.optJSONObject("text")?.let { runCatching { TextSpec.fromJson(it) }.getOrNull() },
             )
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null
@@ -215,7 +219,9 @@ object ProjectIO {
                 val k = TileGrid.key(coords[0].toInt(), coords[1].toInt())
                 if (isLayer) grid.tiles[k] = t else mask?.tiles?.set(k, t)
             }
-            val kind = LayerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: LayerKind.PIXELS
+            var kind = LayerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: LayerKind.PIXELS
+            // A shape or text layer whose description is missing still has its pixels
+            if ((kind == LayerKind.SHAPE && props.shape == null) || (kind == LayerKind.TEXT && props.text == null)) kind = LayerKind.PIXELS
             doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask, kind).also { it.collapsed = o.optBoolean("collapsed") })
         }
         doc.reserveIds(maxId)

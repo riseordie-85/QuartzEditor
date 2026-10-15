@@ -177,14 +177,14 @@ fun ToolOptions(vm: EditorViewModel) {
 }
 
 @Composable
-private fun Title(text: String) {
+internal fun Title(text: String) {
     Text(text, color = Q.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
     Spacer(Modifier.height(6.dp))
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipRow(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+internal fun ChipRow(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         labels.forEachIndexed { i, l ->
             Text(
@@ -202,7 +202,7 @@ private fun ChipRow(labels: List<String>, selected: Int, onPick: (Int) -> Unit) 
 }
 
 @Composable
-private fun ToggleRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
         Switch(checked = on, onCheckedChange = onChange, colors = SwitchDefaults.colors(checkedTrackColor = Q.accent))
@@ -212,7 +212,7 @@ private fun ToggleRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
 // ===================================================================== bars over the picture
 
 @Composable
-private fun Bar(modifier: Modifier, content: @Composable () -> Unit) {
+internal fun Bar(modifier: Modifier, content: @Composable () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -225,7 +225,7 @@ private fun Bar(modifier: Modifier, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun BarIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
+internal fun BarIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -238,7 +238,7 @@ private fun BarIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun BarChip(text: String, on: Boolean, onClick: () -> Unit) {
+internal fun BarChip(text: String, on: Boolean, onClick: () -> Unit) {
     Text(
         text,
         color = Color.White,
