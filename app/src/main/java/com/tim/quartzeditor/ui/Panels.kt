@@ -88,6 +88,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             .padding(vertical = 8.dp),
     ) {
         Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
+        Section(vm, PanelSection.GRADIENTS) { GradientsPanel(vm) }
         Section(vm, PanelSection.ADJUSTMENTS) { AdjustPanel(vm) }
         Section(vm, PanelSection.FILTERS) { FiltersPanel(vm) }
         Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
@@ -368,8 +369,11 @@ private val HUE_ORDER = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan,
 @Composable
 private fun AdjustPanel(vm: EditorViewModel) {
     val layer = vm.doc?.active
-    val fx = vm.pendingFx ?: FxParams()
-    Text("Applies to: ${layer?.props?.name ?: "—"}", color = Q.textDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val fx = vm.currentFx()
+    Text(
+        if (vm.fxTarget != null) "Adjustment layer \"${layer?.props?.name}\": changes everything below it" else "Applies to: ${layer?.props?.name ?: "—"}",
+        color = Q.textDim, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+    )
     Spacer(Modifier.height(4.dp))
     Adjust.entries.forEach { a ->
         val v = fx.adjust(a)
@@ -378,7 +382,8 @@ private fun AdjustPanel(vm: EditorViewModel) {
             value = v,
             range = if (a.bipolar) -1f..1f else 0f..1f,
             display = (if (a.bipolar && v > 0.005f) "+" else "") + "${(v * 100).roundToInt()}",
-            onChange = { nv -> vm.updateFx(fx.copy(adjust = fx.adjust + (a to nv))) },
+            onChange = { nv -> vm.editFx(fx.copy(adjust = fx.adjust + (a to nv))) },
+            onDone = { vm.editFxDone() },
         )
     }
     FxButtons(vm)
@@ -386,7 +391,7 @@ private fun AdjustPanel(vm: EditorViewModel) {
 
 @Composable
 private fun FxButtons(vm: EditorViewModel) {
-    if (vm.pendingFx == null) return
+    if (vm.pendingFx == null || vm.fxTarget != null) return
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SmallButton("Cancel", Modifier.weight(1f)) { vm.cancelFx() }
@@ -400,7 +405,7 @@ private fun FxButtons(vm: EditorViewModel) {
 @Composable
 private fun FiltersPanel(vm: EditorViewModel) {
     LaunchedEffect(vm.doc?.activeId, vm.doc?.active?.pixelVersion) { vm.ensureFxThumb() }
-    val fx = vm.pendingFx ?: FxParams()
+    val fx = vm.currentFx()
     val thumb = vm.fxThumb
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), maxItemsInEachRow = 4) {
         FilterPreset.entries.forEach { f ->
@@ -411,7 +416,10 @@ private fun FiltersPanel(vm: EditorViewModel) {
                     .width(62.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .border(if (sel) 2.dp else 0.dp, if (sel) Q.accent else Color.Transparent, RoundedCornerShape(8.dp))
-                    .clickable { vm.updateFx(fx.copy(filter = f)) }
+                    .clickable {
+                        vm.editFx(fx.copy(filter = f))
+                        vm.editFxDone()
+                    }
                     .padding(3.dp),
             ) {
                 val shader = remember { ColorShader() }
@@ -434,7 +442,7 @@ private fun FiltersPanel(vm: EditorViewModel) {
     }
     if (fx.filter != FilterPreset.NONE) {
         Spacer(Modifier.height(6.dp))
-        PanelSlider("Strength", fx.filterStrength, 0f..1f, "${(fx.filterStrength * 100).roundToInt()}%", onChange = { vm.updateFx(fx.copy(filterStrength = it)) })
+        PanelSlider("Strength", fx.filterStrength, 0f..1f, "${(fx.filterStrength * 100).roundToInt()}%", onChange = { vm.editFx(fx.copy(filterStrength = it)) }, onDone = { vm.editFxDone() })
     }
     if (fx.filter == FilterPreset.DUOTONE) {
         Text("Color pairs", color = Q.textDim, fontSize = 13.sp)
@@ -448,7 +456,10 @@ private fun FiltersPanel(vm: EditorViewModel) {
                         .clip(RoundedCornerShape(6.dp))
                         .background(Brush.horizontalGradient(listOf(Color(a), Color(b))))
                         .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
-                        .clickable { vm.updateFx(fx.copy(duoShadow = a, duoHighlight = b)) }
+                        .clickable {
+                            vm.editFx(fx.copy(duoShadow = a, duoHighlight = b))
+                            vm.editFxDone()
+                        }
                 )
             }
         }
@@ -462,6 +473,7 @@ private fun FiltersPanel(vm: EditorViewModel) {
 @Composable
 private fun PropertiesPanel(vm: EditorViewModel) {
     TransformProperties(vm)
+    ToolOptions(vm)
     val tool = vm.tool
     if (tool == Tool.BRUSH || tool == Tool.ERASER) {
         val b = if (tool == Tool.ERASER) vm.eraser else vm.brush

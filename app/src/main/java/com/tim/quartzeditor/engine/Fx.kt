@@ -95,6 +95,33 @@ data class FxParams(
     /** Vignette strength 0..1 (slider plus the filter's own). */
     val vignette: Float
         get() = (adjust(Adjust.VIGNETTE) + filter.vignette * (if (filter == FilterPreset.NONE) 0f else filterStrength)).coerceIn(0f, 1f)
+
+    fun toJson(): org.json.JSONObject {
+        val a = org.json.JSONObject()
+        for ((k, v) in adjust) if (v != 0f) a.put(k.name, v.toDouble())
+        return org.json.JSONObject()
+            .put("adjust", a)
+            .put("filter", filter.name)
+            .put("strength", filterStrength.toDouble())
+            .put("duoShadow", duoShadow)
+            .put("duoHighlight", duoHighlight)
+    }
+
+    companion object {
+        fun fromJson(o: org.json.JSONObject?): FxParams? {
+            if (o == null) return null
+            val a = o.optJSONObject("adjust")
+            val map = HashMap<Adjust, Float>()
+            if (a != null) for (k in Adjust.entries) if (a.has(k.name)) map[k] = a.optDouble(k.name).toFloat()
+            return FxParams(
+                adjust = map,
+                filter = FilterPreset.entries.firstOrNull { it.name == o.optString("filter") } ?: FilterPreset.NONE,
+                filterStrength = o.optDouble("strength", 1.0).toFloat(),
+                duoShadow = o.optInt("duoShadow", DUOTONE_PRESETS[0].first),
+                duoHighlight = o.optInt("duoHighlight", DUOTONE_PRESETS[0].second),
+            )
+        }
+    }
 }
 
 /** GPU work that runs off-screen and comes back as a normal bitmap. */
@@ -200,9 +227,23 @@ class ColorShader {
             shader.setInputShader("image", input)
             bound = src
         }
-        val strength = if (state.filter == FilterPreset.NONE) 0f else state.filterStrength
         // Sample spacing that scales with the image, so preview and full size look the same
-        shader.setFloatUniform("unit", max(1f, max(src.width, src.height) / 1500f))
+        setUniforms(state, max(1f, max(src.width, src.height) / 1500f))
+        paint.shader = shader
+    }
+
+    /**
+     * The shader as a [RenderEffect] input for adjustment layers on screen: the effect supplies the
+     * picture below as "image". [unit] is the sample spacing in screen pixels.
+     */
+    fun effect(state: FxParams, unit: Float): android.graphics.RenderEffect {
+        setUniforms(state, unit)
+        return android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "image")
+    }
+
+    private fun setUniforms(state: FxParams, unit: Float) {
+        val strength = if (state.filter == FilterPreset.NONE) 0f else state.filterStrength
+        shader.setFloatUniform("unit", unit)
         shader.setFloatUniform("exposure", state.adjust(Adjust.EXPOSURE))
         shader.setFloatUniform("brightness", state.adjust(Adjust.BRIGHTNESS))
         shader.setFloatUniform("contrastAmt", state.adjust(Adjust.CONTRAST))
@@ -226,7 +267,6 @@ class ColorShader {
         shader.setFloatUniform("duo", if (duo) 1f else 0f)
         shader.setFloatUniform("duoA", Color.red(state.duoShadow) / 255f, Color.green(state.duoShadow) / 255f, Color.blue(state.duoShadow) / 255f)
         shader.setFloatUniform("duoB", Color.red(state.duoHighlight) / 255f, Color.green(state.duoHighlight) / 255f, Color.blue(state.duoHighlight) / 255f)
-        paint.shader = shader
     }
 
     companion object {

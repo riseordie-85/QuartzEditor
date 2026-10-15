@@ -27,6 +27,7 @@ import com.tim.quartzeditor.engine.BrushTip
 import com.tim.quartzeditor.engine.BuiltEffects
 import com.tim.quartzeditor.engine.Effects
 import com.tim.quartzeditor.engine.LayerStyle
+import com.tim.quartzeditor.engine.LayerKind
 import com.tim.quartzeditor.engine.TransformState
 import com.tim.quartzeditor.engine.Transformer
 import com.tim.quartzeditor.engine.Cutout
@@ -57,13 +58,18 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { MOVE, PAN, TRANSFORM, EYEDROPPER, BRUSH, ERASER }
+enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, BRUSH, ERASER }
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
-enum class PanelSection(val label: String) { COLOR("Color"), ADJUSTMENTS("Adjustments"), FILTERS("Filters"), PROPERTIES("Properties"), STYLE("Layer Style"), LAYERS("Layers") }
+enum class PanelSection(val label: String) { COLOR("Color"), GRADIENTS("Gradients"), ADJUSTMENTS("Adjustments"), FILTERS("Filters"), PROPERTIES("Properties"), STYLE("Layer Style"), LAYERS("Layers") }
 
 enum class NewBackground(val label: String) { WHITE("White"), BLACK("Black"), TRANSPARENT("Transparent") }
+
+/** Crop box shapes (width ÷ height; null = free, -1 = the canvas's own shape). */
+enum class CropRatio(val label: String, val ratio: Float?) {
+    FREE("Free", null), ORIGINAL("Original", -1f), SQUARE("1:1", 1f), R4_3("4:3", 4f / 3f), R3_4("3:4", 3f / 4f), R16_9("16:9", 16f / 9f), R9_16("9:16", 9f / 16f)
+}
 
 /** Settings for the brush or the eraser. */
 data class BrushSettings(
@@ -78,8 +84,8 @@ data class BrushSettings(
 
 /** Which document is open, the tools and colors, and every action you can take on them. */
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
-    private val prefs = app.getSharedPreferences("editor", Context.MODE_PRIVATE)
-    private val ctx: Context get() = getApplication()
+    internal val prefs = app.getSharedPreferences("editor", Context.MODE_PRIVATE)
+    internal val ctx: Context get() = getApplication()
 
     // ------------------------------------------------------------ document
 
@@ -91,7 +97,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------ tools and colors
 
     var tool by mutableStateOf(Tool.BRUSH)
-        private set
+        internal set
+
+    // ------------------------------------------------------------ phase 2 tools
+
+    var selectShape by mutableStateOf(com.tim.quartzeditor.engine.SelectShape.entries.getOrElse(prefs.getInt("selectShape", 0)) { com.tim.quartzeditor.engine.SelectShape.RECT })
+    var selectMode by mutableStateOf(com.tim.quartzeditor.engine.SelectMode.NEW)
+
+    /** A selection shape being drawn (canvas pixels), shown with marching ants. */
+    var selectDraft by mutableStateOf<android.graphics.Path?>(null)
+
+    /** Polygonal lasso corners placed so far. */
+    val polygonPoints = androidx.compose.runtime.mutableStateListOf<android.graphics.PointF>()
+
+    /** The crop box while cropping (canvas pixels, may reach past the canvas). */
+    var cropBox by mutableStateOf<RectF?>(null)
+    var cropRatio by mutableStateOf(CropRatio.FREE)
+
+    var bucketTolerance by mutableFloatStateOf(prefs.getFloat("bucketTol", 0.12f))
+    var bucketContiguous by mutableStateOf(prefs.getBoolean("bucketContig", true))
+    var bucketAllLayers by mutableStateOf(prefs.getBoolean("bucketAll", false))
+
+    var gradientPreset by mutableIntStateOf(prefs.getInt("gradPreset", 0))
+    var gradientType by mutableStateOf(com.tim.quartzeditor.engine.GradientType.entries.getOrElse(prefs.getInt("gradType", 0)) { com.tim.quartzeditor.engine.GradientType.LINEAR })
+    var gradientReverse by mutableStateOf(prefs.getBoolean("gradReverse", false))
+    var gradientOpacity by mutableFloatStateOf(prefs.getFloat("gradOpacity", 1f))
+
+    /** The brush column next to the toolbar can be folded away by tapping Brush/Eraser again. */
+    var brushColumnHidden by mutableStateOf(false)
 
     /** True while a brush slider is being dragged: the canvas shows the brush. */
     var brushPreview by mutableStateOf(false)
@@ -121,7 +154,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var stroke by mutableStateOf<StrokeSession?>(null)
         private set
     var preview by mutableStateOf<LayerPreview?>(null)
-        private set
+        internal set
 
     /** Adjustments/filter being tried on the active layer (null = none). */
     var pendingFx by mutableStateOf<FxParams?>(null)
@@ -187,6 +220,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun setDocument(d: Doc, canvas: Int? = null) {
         propsBefore = null
         transform = null
+        samplePicture = null
+        samplePictureVersion = -1
+        cropBox = null
+        polygonPoints.clear()
+        selectDraft = null
         effectsCache.clear()
         failedEffects.clear()
         moveLayer = null
@@ -380,7 +418,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * Runs slow work with the busy overlay up (it blocks other edits). [onDone] runs after the
      * overlay is gone, only if the work succeeded — so it may start busy work of its own.
      */
-    private fun runBusy(label: String, onDone: (() -> Unit)? = null, block: suspend () -> Unit) {
+    internal fun runBusy(label: String, onDone: (() -> Unit)? = null, block: suspend () -> Unit) {
         if (busy != null) return
         busy = label
         viewModelScope.launch {
@@ -455,14 +493,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Tapping a tool's button. Tapping the move button again switches to panning; brushes show their picker. */
     fun onToolButton(t: Tool) {
         if (t == Tool.TRANSFORM && transform != null) return
+        if (t == Tool.CROP && cropBox != null) return
+        if (t == Tool.SELECT && tool == Tool.SELECT) {
+            // Tapping Select again: next shape
+            selectShape = selectShape.next
+            prefs.edit().putInt("selectShape", selectShape.ordinal).apply()
+            polygonPoints.clear()
+            selectDraft = null
+            toast(selectShape.label)
+            return
+        }
         if (pendingFirst { onToolButton(t) }) return
+        polygonPoints.clear()
+        selectDraft = null
         when {
             t == Tool.MOVE && (tool == Tool.MOVE || tool == Tool.PAN) -> tool = if (tool == Tool.MOVE) Tool.PAN else Tool.MOVE
-            (t == Tool.BRUSH || t == Tool.ERASER) && tool == t -> brushPickerFor = if (brushPickerFor == t) null else t
+            (t == Tool.BRUSH || t == Tool.ERASER) && tool == t -> brushColumnHidden = !brushColumnHidden
             else -> {
                 tool = t
                 brushPickerFor = null
+                if (t == Tool.BRUSH || t == Tool.ERASER) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
+                if (t == Tool.CROP) beginCrop()
             }
         }
     }
@@ -544,11 +596,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ================================================================== painting
 
     /** Why the active layer can't be painted on right now (null = it can). */
-    private fun paintBlocker(layer: Layer?): String? = when {
+    internal fun paintBlocker(layer: Layer?): String? = when {
         layer == null -> "Add a layer first"
         layer.props.locked -> "\"${layer.props.name}\" is locked"
+        !layer.isPixels && layer.mask == null -> if (layer.isGroup) "Pick a layer inside the folder to paint on (or add a mask to the folder)" else "This adjustment layer has no mask to paint"
         !layer.props.visible -> "\"${layer.props.name}\" is hidden"
-        doc?.editMask == true && layer.mask != null && layer.props.maskDisabled -> "The mask is turned off. Turn it on to paint it"
+        (doc?.editMask == true || !layer.isPixels) && layer.mask != null && layer.props.maskDisabled -> "The mask is turned off. Turn it on to paint it"
         else -> null
     }
 
@@ -556,6 +609,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun strokeBlockReason(): String? = when {
         pendingFx != null -> "Apply or cancel the adjustment first"
         transform != null -> "Apply or cancel the transform first"
+        cropBox != null -> "Apply or cancel the crop first"
         else -> paintBlocker(doc?.active)
     }
 
@@ -580,8 +634,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         layer!!
         val erase = tool == Tool.ERASER
         val b = if (erase) eraser else brush
-        val target = if (d.editMask && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
-        val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness)
+        // Folders and adjustment layers have no pixels of their own: brushes paint their mask
+        val target = if ((d.editMask || !layer.isPixels) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
+        val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection)
         s.addPoint(x, y)
         stroke = s
         d.invalidate()
@@ -652,8 +707,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         stackEdit("Move") {
-            l.x += dx
-            l.y += dy
+            // A folder moves everything in it
+            val all = if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)
+            for (x in all) {
+                x.x += dx
+                x.y += dy
+            }
         }
     }
 
@@ -666,14 +725,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Move tool tap: picks the top layer with something visible under the finger. */
     fun selectLayerAt(x: Float, y: Float) {
         val d = doc ?: return
-        val hit = d.layers.asReversed().firstOrNull { it.props.visible && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) }
+        val hit = d.layers.asReversed().firstOrNull { it.isPixels && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) }
         if (hit != null && hit.id != d.activeId) selectLayer(hit.id)
     }
 
     /** Eyedropper: sets the color in the slot being edited from the image. */
     fun sampleAt(x: Float, y: Float, commit: Boolean): Int? {
         val d = doc ?: return null
-        val c = DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup) ?: return null
+        val c = (if (d.layers.any { it.isAdjustment && d.effectivelyVisible(it) }) sampleFromPicture(d, x.toInt(), y.toInt()) else DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup)) ?: return null
         if (commit) {
             setColor(colorSlot, c)
             rememberColor(c)
@@ -681,10 +740,39 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         return c
     }
 
+    // With adjustment layers the color has to come from the finished picture: kept in the background
+    private var samplePicture: Bitmap? = null
+    private var samplePictureVersion = -1
+    private var sampleJob: Job? = null
+
+    private fun sampleFromPicture(d: Doc, x: Int, y: Int): Int? {
+        if (x !in 0 until d.width || y !in 0 until d.height) return null
+        val v = d.renderVersion
+        if (samplePictureVersion != v && sampleJob?.isActive != true) {
+            val copy = d.shallowCopy()
+            sampleJob = viewModelScope.launch {
+                val bmp = withContext(Dispatchers.Default) {
+                    try {
+                        DocRenderer.flatten(copy, effects = { l -> effectsLookup(l) })
+                    } catch (e: Throwable) {
+                        null
+                    }
+                }
+                if (bmp != null && doc === d) {
+                    samplePicture = bmp
+                    samplePictureVersion = v
+                }
+            }
+        }
+        val pic = samplePicture?.takeIf { it.width == d.width && it.height == d.height } ?: return null
+        val px = pic.getPixel(x, y)
+        return if (Color.alpha(px) < 8) null else px or 0xFF000000.toInt()
+    }
+
     // ================================================================== layers
 
     /** Records one undo step around a change to the layer stack. */
-    private fun stackEdit(label: String, change: () -> Unit) {
+    internal fun stackEdit(label: String, change: () -> Unit) {
         val d = doc ?: return
         val before = d.snapshot()
         change()
@@ -702,35 +790,95 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (id != d.activeId && pendingFirst { selectLayer(id, mask) }) return
         d.activeId = id
-        d.editMask = mask && d.layer(id)?.hasMask == true
+        val l = d.layer(id)
+        d.editMask = l?.hasMask == true && (mask || l.isAdjustment)
         d.invalidate()
         if (pendingFx == null) fxThumb = null
+    }
+
+    /** Where a new layer goes: above the active one, or at the top inside an active folder. */
+    private fun insertPoint(d: Doc): Pair<Int, Long> {
+        val a = d.active ?: return d.layers.size to 0L
+        return if (a.isGroup) d.indexOf(a.id) to a.id else (d.indexOf(a.id) + 1) to a.props.parent
     }
 
     fun addLayer() {
         val d = doc ?: return
         if (pendingFirst { addLayer() }) return
         stackEdit("New layer") {
-            val l = Layer(d.newId(), LayerProps(d.uniqueName("Layer")), TileGrid(alphaOnly = false))
-            d.layers.add(d.indexOf(d.activeId) + 1, l)
+            val (at, parent) = insertPoint(d)
+            val l = Layer(d.newId(), LayerProps(d.uniqueName("Layer"), parent = parent), TileGrid(alphaOnly = false))
+            d.layers.add(at, l)
             d.activeId = l.id
             d.editMask = false
         }
+    }
+
+    /** A new, empty folder above the active layer. */
+    fun addFolder() {
+        val d = doc ?: return
+        if (pendingFirst { addFolder() }) return
+        stackEdit("New folder") {
+            val a = d.active
+            val parent = a?.props?.parent ?: 0L
+            val at = a?.let { d.indexOf(it.id) + 1 } ?: d.layers.size
+            val g = Layer(d.newId(), LayerProps(d.uniqueName("Folder"), parent = parent), TileGrid(alphaOnly = false), kind = LayerKind.GROUP)
+            d.layers.add(at, g)
+            d.activeId = g.id
+            d.editMask = false
+        }
+        toast("Drag layers just under the folder to put them in it")
+    }
+
+    /** Puts the active layer into a new folder in its place. */
+    fun groupActive() {
+        val d = doc ?: return
+        if (pendingFirst { groupActive() }) return
+        val a = d.active ?: return
+        stackEdit("Put in folder") {
+            val g = Layer(d.newId(), LayerProps(d.uniqueName("Folder"), parent = a.props.parent), TileGrid(alphaOnly = false), kind = LayerKind.GROUP)
+            d.layers.add(d.indexOf(a.id) + 1, g)
+            a.props = a.props.copy(parent = g.id)
+            d.activeId = g.id
+            d.editMask = false
+        }
+    }
+
+    /** An adjustment layer above the active one: changes everything below it without touching pixels. */
+    fun addAdjustmentLayer() {
+        val d = doc ?: return
+        if (pendingFirst { addAdjustmentLayer() }) return
+        stackEdit("New adjustment layer") {
+            val (at, parent) = insertPoint(d)
+            val l = Layer(
+                d.newId(),
+                LayerProps(d.uniqueName("Adjustments"), parent = parent, adjust = FxParams()),
+                TileGrid(alphaOnly = false),
+                mask = TileGrid(alphaOnly = true),
+                kind = LayerKind.ADJUSTMENT,
+            )
+            d.layers.add(at, l)
+            d.activeId = l.id
+            d.editMask = true
+        }
+        toggleSection(PanelSection.ADJUSTMENTS, open = true)
+        toast("Adjustment layer: use Adjustments or Filters, and paint its mask to limit it")
     }
 
     fun deleteLayer() {
         val d = doc ?: return
         if (pendingFirst { deleteLayer() }) return
         val l = d.active ?: return
-        if (d.layers.size <= 1) {
+        val range = d.block(l)
+        if (d.layers.size - (range.last - range.first + 1) < 1) {
             toast("An image needs at least one layer")
             return
         }
-        stackEdit("Delete layer") {
-            val i = d.indexOf(l.id)
-            d.layers.removeAt(i)
-            d.activeId = d.layers[(i - 1).coerceAtLeast(0)].id
-            d.editMask = false
+        stackEdit(if (l.isGroup) "Delete folder" else "Delete layer") {
+            val below = range.first - 1
+            for (k in range.reversed()) d.layers.removeAt(k)
+            d.activeId = d.layers[below.coerceIn(0, d.layers.lastIndex)].id
+            d.editMask = d.active?.isAdjustment == true
         }
     }
 
@@ -738,42 +886,91 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (pendingFirst { duplicateLayer() }) return
         val l = d.active ?: return
-        stackEdit("Duplicate layer") {
-            val c = Layer(d.newId(), l.props.copy(name = "${l.props.name} copy", locked = false), l.tiles.copy(), l.x, l.y, l.mask?.copy())
-            d.layers.add(d.indexOf(l.id) + 1, c)
-            d.activeId = c.id
+        stackEdit(if (l.isGroup) "Duplicate folder" else "Duplicate layer") {
+            val range = d.block(l)
+            val ids = HashMap<Long, Long>()
+            val copies = d.layers.slice(range).map { src ->
+                val id = d.newId()
+                ids[src.id] = id
+                src to id
+            }.map { (src, id) ->
+                val parent = ids[src.props.parent] ?: src.props.parent
+                val name = if (src === l) "${src.props.name} copy" else src.props.name
+                Layer(id, src.props.copy(name = name, locked = false, parent = parent), src.tiles.copy(), src.x, src.y, src.mask?.copy(), src.kind)
+            }
+            d.layers.addAll(range.last + 1, copies)
+            d.activeId = ids.getValue(l.id)
         }
     }
 
-    /** Moves a layer [steps] places up (+) or down (-) the stack. */
-    fun moveLayerBy(id: Long, steps: Int) {
+    /**
+     * Moves a layer (with everything in it, for a folder) to sit directly below the row [aboveId]
+     * as the Layers panel shows it (top first). If that row is an open folder, the layer goes in at
+     * the top of it. [aboveId] null = the very top.
+     */
+    fun moveLayerUnder(id: Long, aboveId: Long?) {
+        if (pendingFirst { moveLayerUnder(id, aboveId) }) return
         val d = doc ?: return
-        val from = d.indexOf(id)
-        if (from < 0 || steps == 0) return
-        moveLayer(from, (from + steps).coerceIn(0, d.layers.lastIndex))
+        val l = d.layer(id) ?: return
+        val above = aboveId?.let { d.layer(it) }
+        if (above != null && (above === l || d.isInside(above, l))) return
+        val newParent: Long
+        val anchor: Layer?
+        if (above == null) {
+            newParent = 0L
+            anchor = null
+        } else if (above.isGroup && !above.collapsed) {
+            newParent = above.id
+            anchor = null
+        } else {
+            newParent = above.props.parent
+            anchor = above
+        }
+        // Children of each folder, top first
+        val kids = HashMap<Long, MutableList<Layer>>()
+        for (x in d.layers.asReversed()) kids.getOrPut(x.props.parent) { mutableListOf() }.add(x)
+        kids[l.props.parent]?.remove(l)
+        val list = kids.getOrPut(newParent) { mutableListOf() }
+        val at = if (anchor == null) 0 else list.indexOf(anchor) + 1
+        list.add(at.coerceIn(0, list.size), l)
+        val order = ArrayList<Layer>(d.layers.size)
+        fun emit(parent: Long) {
+            for (x in (kids[parent] ?: return).asReversed()) {
+                if (x.isGroup) emit(x.id)
+                order.add(x)
+            }
+        }
+        emit(0L)
+        if (order.size != d.layers.size) return
+        val sameOrder = order.indices.all { order[it] === d.layers[it] } && l.props.parent == newParent
+        if (sameOrder) return
+        stackEdit("Move layer") {
+            l.props = l.props.copy(parent = newParent)
+            d.layers.clear()
+            d.layers.addAll(order)
+        }
     }
 
-    /** Moves a layer from list position [from] to [to] (bottom = 0). */
-    fun moveLayer(from: Int, to: Int) {
-        if (pendingFirst { moveLayer(from, to) }) return
-        val d = doc ?: return
-        if (from == to || from !in d.layers.indices || to !in d.layers.indices) return
-        stackEdit("Reorder layers") {
-            val l = d.layers.removeAt(from)
-            d.layers.add(to, l)
-        }
+    /** The layer directly below [l] in the same folder, if any. */
+    private fun siblingBelow(d: Doc, l: Layer): Layer? {
+        val sibs = d.children(l.props.parent)
+        val i = sibs.indexOf(l)
+        return if (i > 0) sibs[i - 1] else null
     }
 
     fun mergeDown() {
         val d = doc ?: return
         if (pendingFirst { mergeDown() }) return
         val top = d.active ?: return
-        val i = d.indexOf(top.id)
-        if (i <= 0) {
-            toast("There's no layer below to merge into")
+        if (top.isGroup) {
+            mergeFolder()
             return
         }
-        val below = d.layers[i - 1]
+        val below = siblingBelow(d, top)
+        if (below == null || !below.isPixels) {
+            toast(if (below == null) "There's no layer below to merge into" else "Merge into a pixel layer (not a folder or adjustment)")
+            return
+        }
         if (top.props.locked || below.props.locked) {
             toast("Unlock both layers to merge them")
             return
@@ -786,7 +983,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 // Room for shadows and strokes that reach past the pixels
                 val reach = pair.maxOfOrNull { kotlin.math.ceil(if (it.props.style.any) it.props.style.reach else 0f).toInt() + 4 } ?: 0
                 region.inset(-reach, -reach)
-                val bmp = DocRenderer.renderLayers(pair, region, d.width, d.height, effects = { fx[it.id] })
+                if (top.isAdjustment) region.set(union(region, Rect(0, 0, d.width, d.height))!!)
+                val bmp = DocRenderer.renderLayers(pair, region, d.width, d.height, effects = { fx[it.id] }, doc = d)
                 TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = false).also { bmp.recycle() }
             }
             stackEdit("Merge down") {
@@ -802,17 +1000,54 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Turns the active folder into one pixel layer, in its place (keeping the folder's blend, opacity and visibility). */
+    fun mergeFolder() {
+        val d = doc ?: return
+        if (pendingFirst { mergeFolder() }) return
+        val g = d.active?.takeIf { it.isGroup } ?: return
+        runBusy("Merging folder…") {
+            val inside = d.layers.slice(d.block(g)).filter { it !== g }
+            var region: Rect? = null
+            for (l in inside) region = union(region, l.bounds()?.apply {
+                val r = kotlin.math.ceil(if (l.props.style.any) l.props.style.reach else 0f).toInt() + 4
+                inset(-r, -r)
+            })
+            val area = union(region, Rect(0, 0, d.width, d.height))!!
+            val mask = if (g.maskActive) g.mask else null
+            val merged = withContext(Dispatchers.Default) {
+                val fx = fullEffects(inside)
+                // The folder's contents as they look inside it; its own blend and opacity stay on the result
+                val bmp = DocRenderer.renderLayers(d.children(g.id), area, d.width, d.height, effects = { fx[it.id] }, doc = d)
+                if (mask != null) {
+                    val c = Canvas(bmp)
+                    c.translate(-area.left.toFloat(), -area.top.toFloat())
+                    mask.drawTo(c, g.x.toFloat(), g.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                }
+                TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() }
+            }
+            stackEdit("Merge folder") {
+                val range = d.block(g)
+                val p = g.props
+                val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = p.blend, parent = p.parent), merged)
+                for (k in range.reversed()) d.layers.removeAt(k)
+                d.layers.add(range.first, l)
+                d.activeId = l.id
+                d.editMask = false
+            }
+        }
+    }
+
     /** Merges every visible layer into one (hidden layers are discarded, like Photoshop). */
     fun flattenImage() {
         val d = doc ?: return
         if (pendingFirst { flattenImage() }) return
-        if (d.layers.size <= 1) return
+        if (d.layers.size <= 1 && d.layers.firstOrNull()?.isPixels == true) return
         runBusy("Flattening…") {
-            val visible = d.layers.filter { it.props.visible }
+            val top = d.children(0L)
             val region = Rect(0, 0, d.width, d.height)
             val merged = withContext(Dispatchers.Default) {
-                val fx = fullEffects(visible)
-                val bmp = DocRenderer.renderLayers(visible, region, d.width, d.height, effects = { fx[it.id] })
+                val fx = fullEffects(d.layers.filter { d.effectivelyVisible(it) })
+                val bmp = DocRenderer.renderLayers(top, region, d.width, d.height, effects = { fx[it.id] }, doc = d)
                 TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false).also { bmp.recycle() }
             }
             stackEdit("Flatten image") {
@@ -825,7 +1060,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun union(a: Rect?, b: Rect?): Rect? = when {
+    internal fun union(a: Rect?, b: Rect?): Rect? = when {
         a == null -> b
         b == null -> a
         else -> Rect(a).apply { union(b) }
@@ -867,13 +1102,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (l.x == x && l.y == y) return
+        val dx = x - l.x
+        val dy = y - l.y
         stackEdit("Move") {
-            l.x = x
-            l.y = y
+            // A folder moves everything in it
+            for (m in if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)) {
+                m.x += dx
+                m.y += dy
+            }
         }
     }
 
-    private fun editableActive(): Layer? {
+    internal fun editableActive(): Layer? {
         val l = doc?.active ?: return null
         if (l.props.locked) {
             toast("\"${l.props.name}\" is locked")
@@ -893,39 +1133,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         stackEdit("Clear layer") { l.tiles = TileGrid(alphaOnly = false) }
     }
 
-    /** Fills the canvas area of the active layer (or its mask) with [color]. */
-    fun fillLayer(color: Int) {
-        val d = doc ?: return
-        if (pendingFirst { fillLayer(color) }) return
-        val l = editableActive() ?: return
-        val toMask = d.editMask && l.mask != null
-        val grid = if (toMask) l.mask!! else l.tiles
-        val area = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat()).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
-        val saved = HashMap<Long, Bitmap?>()
-        val paint = Paint()
-        if (toMask) {
-            // Mask stores how much is hidden
-            paint.color = Color.BLACK
-            paint.alpha = ((1f - com.tim.quartzeditor.engine.grayLevel(color)) * 255).roundToInt()
-            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC)
-        } else {
-            paint.color = color or 0xFF000000.toInt()
-            paint.xfermode = PorterDuffXfermode(if (l.props.lockAlpha) PorterDuff.Mode.SRC_ATOP else PorterDuff.Mode.SRC_OVER)
-        }
-        for (k in grid.keysIn(area)) {
-            val existing = grid[k]
-            if (existing == null && !toMask && l.props.lockAlpha) continue
-            val tile = grid.editableCopy(existing)
-            saved[k] = existing
-            grid.tiles[k] = tile
-            val c = Canvas(tile)
-            c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
-            c.drawRect(area, paint)
-        }
-        if (saved.isEmpty()) return
-        history.record(TilePatch(l, grid, saved, if (toMask) "Fill mask" else "Fill"))
-        d.touched(l)
-    }
+    /** Fills the selection (or the canvas area) of the active layer (or its mask) with [color]. */
+    fun fillLayer(color: Int) = fillWithColor(color)
 
     // ------------------------------------------------------------ masks
 
@@ -1045,8 +1254,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val top = (d.height - bmp.height) / 2
             val grid = withContext(Dispatchers.Default) { TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false) }
             stackEdit("Place image") {
-                val l = Layer(d.newId(), LayerProps(name), grid, left, top)
-                d.layers.add(d.indexOf(d.activeId) + 1, l)
+                val (at, parent) = insertPoint(d)
+                val l = Layer(d.newId(), LayerProps(name, parent = parent), grid, left, top)
+                d.layers.add(at, l)
                 d.activeId = l.id
                 d.editMask = false
             }
@@ -1054,6 +1264,23 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ================================================================== adjustments and filters
+
+    /** An adjustment layer being edited by the Adjustments and Filters panels (null = a pixel layer). */
+    val fxTarget: Layer? get() = doc?.active?.takeIf { it.isAdjustment }
+
+    /** What the Adjustments and Filters panels show. */
+    fun currentFx(): FxParams = fxTarget?.props?.adjust ?: pendingFx ?: FxParams()
+
+    /** Panel change: edits an adjustment layer live, or tries the change on a pixel layer. */
+    fun editFx(fx: FxParams) {
+        val a = fxTarget
+        if (a != null) setPropsLive(a.id) { it.copy(adjust = fx) } else updateFx(fx)
+    }
+
+    /** A slider was let go (one undo step for adjustment layers). */
+    fun editFxDone() {
+        if (fxTarget != null) commitProps("Adjustment layer")
+    }
 
     /** Tries [fx] on the active layer (live preview; nothing changes until [applyFx]). */
     fun updateFx(fx: FxParams) {
@@ -1063,10 +1290,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             toast("\"${l.props.name}\" is locked")
             return
         }
+        if (!l.isPixels) {
+            toast("Pick a pixel layer (or add an adjustment layer)")
+            return
+        }
         pendingFx = fx
         val p = preview
         if (p?.fx != null && p.layerId == l.id) {
-            preview = LayerPreview(l.id, fx = fx, proxy = p.proxy, proxyBounds = p.proxyBounds)
+            preview = LayerPreview(l.id, fx = fx, proxy = p.proxy, proxyBounds = p.proxyBounds, selection = d.selection)
         } else {
             val b = l.tiles.tileBounds() ?: run {
                 pendingFx = null
@@ -1075,19 +1306,26 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             val s = min(1f, PREVIEW_PX / max(b.width(), b.height()).toFloat())
             val (proxy, bounds) = DocRenderer.layerBitmap(l, s) ?: return
-            preview = LayerPreview(l.id, fx = fx, proxy = proxy, proxyBounds = bounds)
+            preview = LayerPreview(l.id, fx = fx, proxy = proxy, proxyBounds = bounds, selection = d.selection)
         }
         d.invalidate()
     }
 
-    /** Small copy of the active layer (for filter thumbnails). */
+    private var fxThumbKey: Pair<Long, Int>? = null
+
+    /** Small copy of the active layer, or of the whole picture for an adjustment layer (filter thumbnails). */
     fun ensureFxThumb() {
-        if (fxThumb != null) return
         val d = doc ?: return
         val l = d.active ?: return
-        val b = l.bounds() ?: return
-        val s = min(1f, 160f / max(b.width(), b.height()))
-        fxThumb = DocRenderer.layerBitmap(l, s)?.first
+        val key = l.id to (if (l.isPixels) l.pixelVersion else -1)
+        if (fxThumb != null && key == fxThumbKey) return
+        fxThumbKey = key
+        fxThumb = if (l.isPixels) {
+            val b = l.bounds() ?: return
+            DocRenderer.layerBitmap(l, min(1f, 160f / max(b.width(), b.height())))?.first
+        } else {
+            DocRenderer.thumbnail(d.shallowCopy().also { c -> c.layers.removeAll { x -> x.isAdjustment } }, 160)
+        }
     }
 
     fun cancelFx() {
@@ -1111,10 +1349,24 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val source = l.tiles
+        // The selection the preview showed
+        val sel = preview?.takeIf { it.fx != null }?.selection
         runBusy("Applying…", onDone) {
             val grid = withContext(Dispatchers.Default) {
                 val (src, bounds) = DocRenderer.layerBitmap(l) ?: throw IllegalStateException("The layer is empty")
-                val out = Gpu.applyFx(src, fx, l.x + bounds.left, l.y + bounds.top, d.width.toFloat(), d.height.toFloat())
+                val ox = l.x + bounds.left
+                val oy = l.y + bounds.top
+                var out = Gpu.applyFx(src, fx, ox, oy, d.width.toFloat(), d.height.toFloat())
+                if (sel != null) {
+                    // Only the selected part changes: original × (1 − selected) + adjusted × selected
+                    sel.keepInside(Canvas(out), ox, oy)
+                    val mixed = src.copy(Bitmap.Config.ARGB_8888, true)
+                    val mc = Canvas(mixed)
+                    sel.mask().drawTo(mc, -ox, -oy, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                    mc.drawBitmap(out, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD) })
+                    out.recycle()
+                    out = mixed
+                }
                 src.recycle()
                 TileGrid.fromBitmap(out, bounds.left.toInt(), bounds.top.toInt(), alphaOnly = false).also { out.recycle() }
             }
@@ -1131,7 +1383,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * Anything else you do first applies the adjustments you were trying (like switching tools in
      * Procreate). Returns true when it started that; [then] runs once they're applied.
      */
-    private fun pendingFirst(then: () -> Unit): Boolean {
+    internal fun pendingFirst(then: () -> Unit): Boolean {
+        if (cropBox != null) {
+            applyCrop(onDone = then)
+            return true
+        }
         if (pendingFx != null) {
             applyFx(onDone = then)
             return true
@@ -1156,12 +1412,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             cancelTransform()
             return
         }
+        if (cropBox != null) {
+            cancelCrop()
+            return
+        }
+        if (polygonPoints.isNotEmpty()) {
+            polygonPoints.removeAt(polygonPoints.lastIndex)
+            updatePolygonDraft()
+            return
+        }
         history.undo(d)?.let { toast("Undo: $it") }
     }
 
     fun redo() {
         val d = doc ?: return
-        if (stroke != null || busy != null || pendingFx != null || transform != null) return
+        if (stroke != null || busy != null || pendingFx != null || transform != null || cropBox != null) return
         history.redo(d)?.let { toast("Redo: $it") }
     }
 
@@ -1183,7 +1448,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val d = doc ?: continue
             if (stroke != null || transform != null || busy != null) continue
             val todo = d.layers.firstOrNull {
-                it.props.visible && it.props.style.needsBuild &&
+                it.isPixels && it.props.visible && it.props.style.needsBuild &&
                     Effects.keyOf(it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }
             } ?: continue
             val key = Effects.keyOf(todo)
@@ -1210,7 +1475,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Full-size effect images for a background render (merge, flatten). */
-    private fun fullEffects(layers: List<Layer>): Map<Long, BuiltEffects> {
+    internal fun fullEffects(layers: List<Layer>): Map<Long, BuiltEffects> {
         val out = HashMap<Long, BuiltEffects>()
         for (l in layers) {
             if (!l.props.style.needsBuild) continue
@@ -1261,6 +1526,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val l = d.active ?: return
         if (l.props.locked) {
             toast("\"${l.props.name}\" is locked")
+            return
+        }
+        if (!l.isPixels) {
+            toast("Transform works on a pixel layer")
             return
         }
         if (l.tiles.isEmpty) {

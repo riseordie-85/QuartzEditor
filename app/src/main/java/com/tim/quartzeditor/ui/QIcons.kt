@@ -106,4 +106,39 @@ object QIcons {
             }
         }
     }
+
+    /** Dashed square: rectangle selection. */
+    val SelectRect: ImageVector by lazy {
+        build("SelectRect") {
+            line {
+                // Dashes around a square
+                val pts = listOf(4f to 4f, 20f to 4f, 20f to 20f, 4f to 20f, 4f to 4f)
+                for (i in 0 until 4) {
+                    val (x0, y0) = pts[i]
+                    val (x1, y1) = pts[i + 1]
+                    for (k in 0 until 4) {
+                        val a = k / 4f
+                        val b = (k + 0.55f) / 4f
+                        moveTo(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a)
+                        lineTo(x0 + (x1 - x0) * b, y0 + (y1 - y0) * b)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Dashed circle: ellipse selection. */
+    val SelectEllipse: ImageVector by lazy {
+        build("SelectEllipse") {
+            line {
+                val n = 14
+                for (k in 0 until n) {
+                    val a0 = 2 * Math.PI * k / n
+                    val a1 = 2 * Math.PI * (k + 0.55) / n
+                    moveTo(12f + 8.5f * kotlin.math.cos(a0).toFloat(), 12f + 8.5f * kotlin.math.sin(a0).toFloat())
+                    lineTo(12f + 8.5f * kotlin.math.cos(a1).toFloat(), 12f + 8.5f * kotlin.math.sin(a1).toFloat())
+                }
+            }
+        }
+    }
 }

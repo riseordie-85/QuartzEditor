@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.os.SystemClock
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -56,7 +57,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -169,6 +170,32 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                         var prevCx = startCx
                         var prevCy = startCy
+                        // Crop box handles: 0..3 corners, 4..7 edges, -1 inside
+                        var cropHandle = -2
+                        val cropStart = vm.cropBox?.let { android.graphics.RectF(it) }
+                        if (tool == Tool.CROP && cropStart != null) {
+                            val r = 30.dp.toPx()
+                            fun sc(x: Float, y: Float) = Offset(x * vm.scale + vm.offsetX, y * vm.scale + vm.offsetY)
+                            val c = listOf(
+                                sc(cropStart.left, cropStart.top), sc(cropStart.right, cropStart.top),
+                                sc(cropStart.right, cropStart.bottom), sc(cropStart.left, cropStart.bottom),
+                            )
+                            val e = listOf(
+                                sc(cropStart.centerX(), cropStart.top), sc(cropStart.right, cropStart.centerY()),
+                                sc(cropStart.centerX(), cropStart.bottom), sc(cropStart.left, cropStart.centerY()),
+                            )
+                            val ci = c.indexOfFirst { (it - start).getDistance() < r }
+                            val ei = e.indexOfFirst { (it - start).getDistance() < r }
+                            cropHandle = when {
+                                ci >= 0 -> ci
+                                ei >= 0 -> 4 + ei
+                                cropStart.contains(startCx, startCy) -> -1
+                                else -> -2
+                            }
+                            if (cropHandle != -2) mode = GestureMode.CROP
+                        }
+                        // Lasso outline being drawn
+                        val lasso = android.graphics.Path().apply { moveTo(startCx, startCy) }
                         when (tool) {
                             Tool.BRUSH, Tool.ERASER -> if (vm.isOnCanvas(start.x, start.y)) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
@@ -233,6 +260,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         if (tStart != null) vm.updateTransform { tStart.copy(keepAspect = it.keepAspect) }
                                         mode = GestureMode.NAV
                                     }
+                                    GestureMode.SELECTING -> {
+                                        vm.selectDraft = null
+                                        mode = GestureMode.NAV
+                                    }
+                                    GestureMode.GRADIENT -> {
+                                        vm.cancelGradient()
+                                        mode = GestureMode.NAV
+                                    }
+                                    GestureMode.CROP -> {
+                                        if (cropStart != null) vm.cropBox = cropStart
+                                        mode = GestureMode.NAV
+                                    }
                                     else -> mode = GestureMode.NAV
                                 }
                             }
@@ -281,7 +320,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     moved = true
                                     mode = when (tool) {
                                         Tool.MOVE -> if (vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
-                                        Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM -> GestureMode.PAN
+                                        Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM, Tool.BUCKET, Tool.CROP -> GestureMode.PAN
+                                        Tool.SELECT -> if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.POLYGON) GestureMode.PAN else GestureMode.SELECTING
+                                        Tool.GRADIENT -> if (vm.beginGradient(startCx, startCy)) GestureMode.GRADIENT else GestureMode.DONE
                                         Tool.BRUSH, Tool.ERASER -> {
                                             // Started beside the canvas: paint from there
                                             val (sx, sy) = vm.screenToCanvas(start.x, start.y)
@@ -345,6 +386,30 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     prevCx = cx
                                     prevCy = cy
                                 }
+                                GestureMode.SELECTING -> if (main != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    val r = android.graphics.RectF(minOf(startCx, cx), minOf(startCy, cy), maxOf(startCx, cx), maxOf(startCy, cy))
+                                    vm.selectDraft = when (vm.selectShape) {
+                                        com.tim.quartzeditor.engine.SelectShape.RECT -> com.tim.quartzeditor.engine.Selection.rect(r)
+                                        com.tim.quartzeditor.engine.SelectShape.ELLIPSE -> com.tim.quartzeditor.engine.Selection.oval(r)
+                                        else -> {
+                                            for (h in main.historical) {
+                                                val (hx, hy) = vm.screenToCanvas(h.position.x, h.position.y)
+                                                lasso.lineTo(hx, hy)
+                                            }
+                                            lasso.lineTo(cx, cy)
+                                            android.graphics.Path(lasso)
+                                        }
+                                    }
+                                }
+                                GestureMode.GRADIENT -> if (main != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    vm.gradientTo(cx, cy)
+                                }
+                                GestureMode.CROP -> if (main != null && cropStart != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    vm.dragCrop(cropStart, cropHandle, cx - startCx, cy - startCy)
+                                }
                                 GestureMode.BLOCKED, GestureMode.DONE -> Unit
                             }
                             ev.changes.forEach { it.consume() }
@@ -362,12 +427,28 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 vm.sampleAt(cx, cy, commit = true)
                                 loupe = null
                             }
-                            GestureMode.PENDING -> if (!longPressDone && tool == Tool.MOVE && vm.isOnCanvas(start.x, start.y)) {
-                                val (cx, cy) = vm.screenToCanvas(start.x, start.y)
-                                vm.selectLayerAt(cx, cy)
-                            } else if (!longPressDone && tool == Tool.TRANSFORM && vm.transform == null) {
-                                vm.beginTransform()
+                            GestureMode.PENDING -> if (!longPressDone) {
+                                when (tool) {
+                                    Tool.MOVE -> if (vm.isOnCanvas(start.x, start.y)) vm.selectLayerAt(startCx, startCy)
+                                    Tool.TRANSFORM -> if (vm.transform == null) vm.beginTransform()
+                                    Tool.BUCKET -> if (vm.isOnCanvas(start.x, start.y)) vm.bucketFill(startCx, startCy)
+                                    Tool.SELECT -> if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.POLYGON) {
+                                        vm.polygonTap(startCx, startCy, 24.dp.toPx() / vm.scale)
+                                    } else {
+                                        vm.selectTap()
+                                    }
+                                    else -> Unit
+                                }
                             }
+                            GestureMode.SELECTING -> {
+                                val draft = vm.selectDraft
+                                if (draft != null) {
+                                    if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.LASSO) draft.close()
+                                    vm.commitSelectionShape(draft)
+                                }
+                                vm.selectDraft = null
+                            }
+                            GestureMode.GRADIENT -> vm.endGradient()
                             GestureMode.NAV -> when {
                                 !moved && duration < 350 && maxPointers == 2 -> vm.undo()
                                 !moved && duration < 350 && maxPointers >= 3 -> vm.redo()
@@ -400,9 +481,44 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 nc.translate(ox, oy)
                 nc.scale(s, s)
                 val visible = RectF(-ox / s, -oy / s, (size.width - ox) / s, (size.height - oy) / s)
-                DocRenderer.draw(nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup)
+                DocRenderer.draw(
+                    nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
+                    view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
+                    viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
+                )
                 nc.restore()
             }
+            // Crop box: dim what's cut off, thirds, handles
+            vm.cropBox?.let { b ->
+                val l = b.left * s + ox
+                val t = b.top * s + oy
+                val r = b.right * s + ox
+                val bt = b.bottom * s + oy
+                val dim = Color.Black.copy(alpha = 0.55f)
+                drawRect(dim, Offset(0f, 0f), androidx.compose.ui.geometry.Size(size.width, t.coerceAtLeast(0f)))
+                drawRect(dim, Offset(0f, bt), androidx.compose.ui.geometry.Size(size.width, (size.height - bt).coerceAtLeast(0f)))
+                drawRect(dim, Offset(0f, t), androidx.compose.ui.geometry.Size(l.coerceAtLeast(0f), (bt - t).coerceAtLeast(0f)))
+                drawRect(dim, Offset(r, t), androidx.compose.ui.geometry.Size((size.width - r).coerceAtLeast(0f), (bt - t).coerceAtLeast(0f)))
+                val line = 1.dp.toPx()
+                for (k in 1..2) {
+                    val x = l + (r - l) * k / 3f
+                    val y = t + (bt - t) * k / 3f
+                    drawLine(Color.White.copy(alpha = 0.5f), Offset(x, t), Offset(x, bt), line)
+                    drawLine(Color.White.copy(alpha = 0.5f), Offset(l, y), Offset(r, y), line)
+                }
+                drawRect(Color.White, Offset(l, t), androidx.compose.ui.geometry.Size(r - l, bt - t), style = Stroke(line * 1.5f))
+                val hl = 18.dp.toPx()
+                val hw = 4.dp.toPx()
+                for ((cx, cy) in listOf(l to t, r to t, r to bt, l to bt)) {
+                    val sx = if (cx == l) 1f else -1f
+                    val sy = if (cy == t) 1f else -1f
+                    drawLine(Color.White, Offset(cx, cy), Offset(cx + sx * hl, cy), hw)
+                    drawLine(Color.White, Offset(cx, cy), Offset(cx, cy + sy * hl), hw)
+                }
+                for (m in listOf(Offset((l + r) / 2f, t), Offset((l + r) / 2f, bt))) drawLine(Color.White, m - Offset(hl / 2f, 0f), m + Offset(hl / 2f, 0f), hw)
+                for (m in listOf(Offset(l, (t + bt) / 2f), Offset(r, (t + bt) / 2f))) drawLine(Color.White, m - Offset(0f, hl / 2f), m + Offset(0f, hl / 2f), hw)
+            }
+
             // Transform box
             vm.transform?.let { t ->
                 val st = t.state
@@ -460,6 +576,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
         }
 
+        // Selection outline ("marching ants"); its own layer so only it animates
+        val d0 = vm.doc
+        val sel = d0?.selection
+        val draft = vm.selectDraft
+        if (sel != null || draft != null) {
+            MarchingAnts(vm, sel?.path, draft, if (vm.tool == Tool.SELECT) vm.polygonPoints.toList() else emptyList())
+        }
+
         // Eyedropper loupe
         loupe?.let { (p, c) ->
             val sizePx = with(density) { 64.dp.toPx() }
@@ -512,4 +636,47 @@ private fun checkerShader(cell: Int): BitmapShader {
     c.drawRect(0f, 0f, cell.toFloat(), cell.toFloat(), p)
     c.drawRect(cell.toFloat(), cell.toFloat(), cell * 2f, cell * 2f, p)
     return BitmapShader(b, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+}
+
+/** Animated dashed outline of the selection (and of a shape being drawn), in screen space. */
+@Composable
+private fun MarchingAnts(vm: EditorViewModel, path: android.graphics.Path?, draft: android.graphics.Path?, corners: List<android.graphics.PointF>) {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "ants")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 16f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(tween<Float>(700, easing = androidx.compose.animation.core.LinearEasing)),
+        label = "phase",
+    )
+    Canvas(Modifier.fillMaxSize()) {
+        val m = Matrix().apply {
+            setScale(vm.scale, vm.scale)
+            postTranslate(vm.offsetX, vm.offsetY)
+        }
+        val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.2.dp.toPx()
+            color = android.graphics.Color.WHITE
+        }
+        val black = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.2.dp.toPx()
+            color = android.graphics.Color.BLACK
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()), phase * density / 2f)
+        }
+        drawIntoCanvas { c ->
+            val nc = c.nativeCanvas
+            for (p in listOfNotNull(path, draft)) {
+                val sp = android.graphics.Path()
+                p.transform(m, sp)
+                nc.drawPath(sp, white)
+                nc.drawPath(sp, black)
+            }
+        }
+        corners.forEachIndexed { i, p ->
+            val o = Offset(p.x * vm.scale + vm.offsetX, p.y * vm.scale + vm.offsetY)
+            drawCircle(Color.White, (if (i == 0) 7 else 5).dp.toPx(), o)
+            drawCircle(Q.accent, (if (i == 0) 5 else 3).dp.toPx(), o)
+        }
+    }
 }

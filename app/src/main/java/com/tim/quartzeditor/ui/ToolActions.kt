@@ -1,0 +1,560 @@
+package com.tim.quartzeditor.ui
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PointF
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
+import android.graphics.RectF
+import com.tim.quartzeditor.engine.BrushTip
+import com.tim.quartzeditor.engine.Doc
+import com.tim.quartzeditor.engine.FloodFill
+import com.tim.quartzeditor.engine.GradientDrag
+import com.tim.quartzeditor.engine.GradientPainter
+import com.tim.quartzeditor.engine.GradientPreset
+import com.tim.quartzeditor.engine.GradientSpec
+import com.tim.quartzeditor.engine.Layer
+import com.tim.quartzeditor.engine.LayerPreview
+import com.tim.quartzeditor.engine.LayerProps
+import com.tim.quartzeditor.engine.SelectMode
+import com.tim.quartzeditor.engine.Selection
+import com.tim.quartzeditor.engine.StrokeSession
+import com.tim.quartzeditor.engine.StrokeTarget
+import com.tim.quartzeditor.engine.TileGrid
+import com.tim.quartzeditor.engine.TilePatch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.lifecycle.viewModelScope
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+// Phase 2 tools: selections, crop, paint bucket, gradients. They share the view model's undo,
+// busy overlay and "apply what's pending first" rules.
+
+/** Where paint goes on [l]: its mask (folders, adjustment layers, or when the mask is picked) or its pixels. */
+internal fun Doc.paintsMask(l: Layer): Boolean = l.mask != null && (editMask || !l.isPixels)
+
+/**
+ * Changes tiles of [l] (pixels or mask) covering canvas area [area] in the background, copy-on-write,
+ * as one undo step. [draw] gets a canvas in the layer's own coordinates and the area in those coordinates.
+ */
+internal fun EditorViewModel.paintTiles(
+    l: Layer,
+    toMask: Boolean,
+    area: RectF,
+    label: String,
+    skipMissing: Boolean,
+    draw: (Canvas, RectF) -> Unit,
+) {
+    val d = doc ?: return
+    val grid = (if (toMask) l.mask else l.tiles) ?: return
+    val local = RectF(area).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
+    val keys = grid.keysIn(local)
+    val existing = keys.associateWith { grid[it] }
+    runBusy("$label…") {
+        val made = withContext(Dispatchers.Default) {
+            keys.mapNotNull { k ->
+                val e = existing[k]
+                if (e == null && skipMissing) return@mapNotNull null
+                val tile = grid.editableCopy(e)
+                val c = Canvas(tile)
+                c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
+                draw(c, local)
+                k to tile
+            }
+        }
+        val now = if (toMask) l.mask else l.tiles
+        if (doc !== d || now !== grid || made.isEmpty()) return@runBusy
+        val saved = HashMap<Long, Bitmap?>()
+        for ((k, t) in made) saved[k] = grid.swap(k, t)
+        history.record(TilePatch(l, grid, saved, label))
+        d.touched(l)
+    }
+}
+
+// ===================================================================== fills and gradients
+
+fun EditorViewModel.gradientSpec(): GradientSpec {
+    val preset = GradientPreset.ALL.getOrElse(gradientPreset) { GradientPreset.ALL[0] }
+    return GradientSpec(preset.resolve(foreground, background), gradientType, gradientOpacity, gradientReverse)
+}
+
+fun EditorViewModel.saveGradientPrefs() {
+    prefs.edit()
+        .putInt("gradPreset", gradientPreset)
+        .putInt("gradType", gradientType.ordinal)
+        .putBoolean("gradReverse", gradientReverse)
+        .putFloat("gradOpacity", gradientOpacity)
+        .apply()
+}
+
+/** The canvas area a fill or gradient may change: the canvas, or the selected part of it. */
+private fun Doc.fillArea(): RectF {
+    val a = RectF(0f, 0f, width.toFloat(), height.toFloat())
+    selection?.let { if (!a.intersect(it.reach)) a.setEmpty() }
+    return a
+}
+
+/** Fills the selection (or the whole canvas) of the active layer or its mask with [color]. */
+fun EditorViewModel.fillWithColor(color: Int) {
+    val d = doc ?: return
+    if (pendingFirst { fillWithColor(color) }) return
+    val l = d.active ?: return
+    paintBlocker(l)?.let { toast(it); return }
+    val toMask = d.paintsMask(l)
+    val area = d.fillArea()
+    if (area.isEmpty) return
+    val spec = GradientSpec(listOf(color or 0xFF000000.toInt(), color or 0xFF000000.toInt()))
+    val sel = d.selection
+    val lock = !toMask && l.props.lockAlpha
+    paintTiles(l, toMask, area, if (toMask) "Fill mask" else "Fill", skipMissing = lock) { c, local ->
+        val p0 = PointF(local.left, local.top)
+        val p1 = PointF(local.right, local.bottom)
+        if (toMask) GradientPainter.paintMask(c, local, spec, p0, p1, sel, l.x.toFloat(), l.y.toFloat())
+        else GradientPainter.paintPixels(c, local, spec, p0, p1, sel, l.x.toFloat(), l.y.toFloat(), lock)
+    }
+}
+
+fun EditorViewModel.beginGradient(x: Float, y: Float): Boolean {
+    val d = doc ?: return false
+    val l = d.active ?: return false
+    if (pendingFirst { }) return false
+    paintBlocker(l)?.let { toast(it); return false }
+    previewGradient(l, PointF(x, y), PointF(x, y))
+    return true
+}
+
+internal fun EditorViewModel.setPreview(p: LayerPreview?) {
+    preview = p
+    doc?.invalidate()
+}
+
+private fun EditorViewModel.previewGradient(l: Layer, start: PointF, end: PointF) {
+    val d = doc ?: return
+    setPreview(LayerPreview(l.id, gradient = GradientDrag(start, end, gradientSpec(), d.paintsMask(l), d.selection)))
+}
+
+fun EditorViewModel.gradientTo(x: Float, y: Float) {
+    val g = preview?.gradient ?: return
+    val l = doc?.layer(preview?.layerId ?: return) ?: return
+    previewGradient(l, g.start, PointF(x, y))
+}
+
+fun EditorViewModel.endGradient() {
+    val d = doc ?: return
+    val p = preview ?: return
+    val g = p.gradient ?: return
+    val l = d.layer(p.layerId) ?: return
+    setPreview(null)
+    if (abs(g.end.x - g.start.x) + abs(g.end.y - g.start.y) < 2f) return
+    val area = d.fillArea()
+    if (area.isEmpty) return
+    val lock = !g.toMask && l.props.lockAlpha
+    paintTiles(l, g.toMask, area, "Gradient", skipMissing = lock) { c, local ->
+        val s = PointF(g.start.x - l.x, g.start.y - l.y)
+        val e = PointF(g.end.x - l.x, g.end.y - l.y)
+        if (g.toMask) GradientPainter.paintMask(c, local, g.spec, s, e, g.selection, l.x.toFloat(), l.y.toFloat())
+        else GradientPainter.paintPixels(c, local, g.spec, s, e, g.selection, l.x.toFloat(), l.y.toFloat(), lock)
+    }
+}
+
+fun EditorViewModel.cancelGradient() {
+    if (preview?.gradient != null) setPreview(null)
+}
+
+// ===================================================================== paint bucket
+
+/** Fills the area around canvas point ([x], [y]) that matches its color (within the tolerance). */
+fun EditorViewModel.bucketFill(x: Float, y: Float) {
+    val d = doc ?: return
+    if (pendingFirst { bucketFill(x, y) }) return
+    val l = d.active ?: return
+    paintBlocker(l)?.let { toast(it); return }
+    val px = x.toInt()
+    val py = y.toInt()
+    if (px !in 0 until d.width || py !in 0 until d.height) return
+    val toMask = d.paintsMask(l)
+    val allLayers = bucketAllLayers || !l.isPixels
+    val tol = (bucketTolerance * 255).roundToInt()
+    val contiguous = bucketContiguous
+    val sel = d.selection
+    val copy = if (allLayers) d.shallowCopy() else null
+    val tiles = HashMap(l.tiles.tiles)
+    val lx = l.x
+    val ly = l.y
+    val w = d.width
+    val h = d.height
+    runBusy("Filling…") {
+        val coverage = withContext(Dispatchers.Default) {
+            // What the bucket looks at: this layer, or everything you see
+            val src = if (copy != null) {
+                com.tim.quartzeditor.engine.DocRenderer.flatten(copy)
+            } else {
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { b ->
+                    TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.drawTo(Canvas(b), lx.toFloat(), ly.toFloat(), null)
+                }
+            }
+            val pixels = IntArray(w * h)
+            src.getPixels(pixels, 0, w, 0, 0, w, h)
+            src.recycle()
+            val cov = FloodFill.coverage(pixels, w, h, px, py, tol, contiguous)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
+            bmp.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(cov))
+            sel?.keepInside(Canvas(bmp), 0f, 0f)
+            TileGrid.fromBitmap(bmp, -lx, -ly, alphaOnly = true).also { bmp.recycle() }
+        }
+        if (doc !== d || coverage.isEmpty) return@runBusy
+        // Applied like a brush stroke at full strength, so locks and masks behave the same
+        val s = StrokeSession(
+            l, if (toMask) StrokeTarget.MASK else StrokeTarget.PIXELS, false, foreground, background, 1f,
+            BrushTip.ROUND, 1f, 0f, null,
+        )
+        s.buffer.tiles.putAll(coverage.tiles)
+        s.commit()?.let {
+            history.record(it)
+            d.touched(l)
+        }
+    }
+}
+
+// ===================================================================== selections
+
+private fun EditorViewModel.setSelection(label: String, sel: Selection?) {
+    val d = doc ?: return
+    if (sel === d.selection) return
+    // Adjustments being tried are applied to the old selection first
+    if (pendingFirst { setSelection(label, sel) }) return
+    stackEdit(label) { d.selection = sel }
+    // Prepare its pixel mask in the background, so the first brush stroke doesn't wait for it
+    if (sel != null) viewModelScope.launch(Dispatchers.Default) { runCatching { sel.mask() } }
+}
+
+/** A finished rectangle, ellipse or lasso shape (canvas pixels). */
+fun EditorViewModel.commitSelectionShape(shape: Path) {
+    val d = doc ?: return
+    selectDraft = null
+    setSelection(if (selectMode == SelectMode.NEW) "Select" else "Change selection", Selection.combine(d.selection, shape, selectMode))
+}
+
+/** Tapped without dragging: a new selection mode deselects (like Photoshop). */
+fun EditorViewModel.selectTap() {
+    if (selectMode == SelectMode.NEW) deselect()
+}
+
+fun EditorViewModel.deselect() {
+    val d = doc ?: return
+    if (d.selection == null) return
+    setSelection("Deselect", null)
+}
+
+fun EditorViewModel.selectAll() {
+    val d = doc ?: return
+    setSelection("Select all", Selection.all(d.width, d.height))
+}
+
+fun EditorViewModel.invertSelection() {
+    val d = doc ?: return
+    val s = d.selection ?: run {
+        toast("Nothing is selected")
+        return
+    }
+    setSelection("Invert selection", Selection.inverse(s, d.width, d.height))
+}
+
+fun EditorViewModel.featherSelection(px: Float) {
+    val d = doc ?: return
+    val s = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    setSelection("Feather", s.withFeather(px))
+}
+
+/** Polygonal lasso: adds a corner; tapping near the first one closes the shape. */
+fun EditorViewModel.polygonTap(x: Float, y: Float, closeRadius: Float) {
+    val first = polygonPoints.firstOrNull()
+    if (first != null && polygonPoints.size >= 3 && abs(first.x - x) + abs(first.y - y) < closeRadius) {
+        finishPolygon()
+        return
+    }
+    polygonPoints.add(PointF(x, y))
+    updatePolygonDraft()
+}
+
+fun EditorViewModel.updatePolygonDraft() {
+    selectDraft = if (polygonPoints.isEmpty()) null else Path().apply {
+        polygonPoints.forEachIndexed { i, p -> if (i == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y) }
+    }
+}
+
+fun EditorViewModel.finishPolygon() {
+    if (polygonPoints.size < 3) {
+        polygonPoints.clear()
+        updatePolygonDraft()
+        return
+    }
+    val path = Selection.polygon(polygonPoints.toList())
+    polygonPoints.clear()
+    commitSelectionShape(path)
+}
+
+fun EditorViewModel.cancelPolygon() {
+    polygonPoints.clear()
+    updatePolygonDraft()
+}
+
+/** The selected pixels of the active layer as a new layer; [cut] also removes them from the original. */
+fun EditorViewModel.selectionToLayer(cut: Boolean) {
+    val d = doc ?: return
+    if (pendingFirst { selectionToLayer(cut) }) return
+    val l = d.active ?: return
+    val sel = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    if (!l.isPixels) {
+        toast("Pick a pixel layer")
+        return
+    }
+    if (cut && l.props.locked) {
+        toast("\"${l.props.name}\" is locked")
+        return
+    }
+    val tiles = HashMap(l.tiles.tiles)
+    val source = l.tiles
+    runBusy(if (cut) "Cutting…" else "Copying…") {
+        val (copyGrid, rest) = withContext(Dispatchers.Default) {
+            val copy = TileGrid(alphaOnly = false)
+            val remain = TileGrid(alphaOnly = false)
+            val local = RectF(sel.reach).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
+            val touched = TileGrid(alphaOnly = false).keysIn(local).toSet()
+            for ((k, t) in tiles) {
+                if (k !in touched) {
+                    remain.tiles[k] = t
+                    continue
+                }
+                val ox = (TileGrid.tx(k) * TileGrid.SIZE).toFloat()
+                val oy = (TileGrid.ty(k) * TileGrid.SIZE).toFloat()
+                val inside = t.copy(Bitmap.Config.ARGB_8888, true).also { it.setHasMipMap(true) }
+                sel.keepInside(Canvas(inside), l.x + ox, l.y + oy)
+                copy.tiles[k] = inside
+                if (cut) {
+                    val outside = t.copy(Bitmap.Config.ARGB_8888, true).also { it.setHasMipMap(true) }
+                    val c = Canvas(outside)
+                    c.translate(-ox, -oy)
+                    sel.mask().drawTo(c, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                    remain.tiles[k] = outside
+                } else {
+                    remain.tiles[k] = t
+                }
+            }
+            copy.dropEmptyTiles()
+            copy to remain
+        }
+        if (doc !== d || l.tiles !== source) return@runBusy
+        if (copyGrid.isEmpty) {
+            toast("Nothing there to ${if (cut) "cut" else "copy"}")
+            return@runBusy
+        }
+        stackEdit(if (cut) "Layer via cut" else "Layer via copy") {
+            if (cut) l.tiles = rest
+            val n = Layer(d.newId(), LayerProps(d.uniqueName("Layer"), parent = l.props.parent), copyGrid, l.x, l.y)
+            d.layers.add(d.indexOf(l.id) + 1, n)
+            d.activeId = n.id
+            d.editMask = false
+            d.selection = null
+        }
+    }
+}
+
+/** Erases the selected pixels of the active layer. */
+fun EditorViewModel.clearSelected() {
+    val d = doc ?: return
+    if (pendingFirst { clearSelected() }) return
+    val l = d.active ?: return
+    val sel = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    paintBlocker(l)?.let { toast(it); return }
+    if (d.paintsMask(l)) {
+        fillWithColor(Color.WHITE)
+        return
+    }
+    val area = RectF(sel.reach)
+    paintTiles(l, false, area, "Delete", skipMissing = true) { c, _ ->
+        sel.mask().drawTo(c, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+    }
+}
+
+/** A mask on the active layer that shows only the selected part. */
+fun EditorViewModel.maskFromSelection() {
+    val d = doc ?: return
+    if (pendingFirst { maskFromSelection() }) return
+    val l = editableActive() ?: return
+    val sel = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    runBusy("Making mask…") {
+        val mask = withContext(Dispatchers.Default) {
+            val g = TileGrid(alphaOnly = true)
+            val local = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat()).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
+            // Everywhere the layer has pixels too, so moving it later doesn't uncover unmasked parts
+            l.tiles.tileBounds()?.let { local.union(RectF(it)) }
+            for (k in g.keysIn(local)) {
+                val t = TileGrid.newTile(alphaOnly = true)
+                val c = Canvas(t)
+                c.drawColor(Color.BLACK)
+                c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
+                sel.mask().drawTo(c, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                g.tiles[k] = t
+            }
+            g
+        }
+        stackEdit("Mask from selection") {
+            l.mask = mask
+            l.props = l.props.copy(maskDisabled = false)
+            d.editMask = true
+            d.selection = null
+        }
+    }
+}
+
+// ===================================================================== crop
+
+fun EditorViewModel.beginCrop() {
+    val d = doc ?: return
+    cropBox = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat())
+    if (cropRatio != CropRatio.FREE) applyCropRatio(cropRatio)
+}
+
+/** The canvas's width ÷ height for "Original". */
+private fun EditorViewModel.ratioValue(r: CropRatio): Float? {
+    val d = doc ?: return null
+    return when (r.ratio) {
+        null -> null
+        -1f -> d.width.toFloat() / d.height
+        else -> r.ratio
+    }
+}
+
+/** Reshapes the crop box to [r], keeping its center and fitting inside it. */
+fun EditorViewModel.applyCropRatio(r: CropRatio) {
+    cropRatio = r
+    val b = cropBox ?: return
+    val ratio = ratioValue(r) ?: return
+    val cx = b.centerX()
+    val cy = b.centerY()
+    var w = b.width()
+    var h = w / ratio
+    if (h > b.height()) {
+        h = b.height()
+        w = h * ratio
+    }
+    cropBox = RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+}
+
+/**
+ * Drags a crop handle. [handle]: 0..3 corners (TL, TR, BR, BL), 4..7 edges (top, right, bottom, left),
+ * -1 = the whole box. [start] is the box when the drag began; ([dx], [dy]) how far the finger moved.
+ */
+fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float) {
+    var l = start.left
+    var t = start.top
+    var r = start.right
+    var b = start.bottom
+    when (handle) {
+        -1 -> { l += dx; r += dx; t += dy; b += dy }
+        0 -> { l += dx; t += dy }
+        1 -> { r += dx; t += dy }
+        2 -> { r += dx; b += dy }
+        3 -> { l += dx; b += dy }
+        4 -> t += dy
+        5 -> r += dx
+        6 -> b += dy
+        7 -> l += dx
+    }
+    val min = 8f
+    if (r - l < min) { if (handle == 0 || handle == 3 || handle == 7) l = r - min else r = l + min }
+    if (b - t < min) { if (handle == 0 || handle == 1 || handle == 4) t = b - min else b = t + min }
+    val ratio = ratioValue(cropRatio)
+    if (ratio != null && handle >= 0) {
+        // Keep the shape: the dragged side decides, the other follows
+        val w = r - l
+        val h = b - t
+        if (handle == 4 || handle == 6) {
+            val nw = h * ratio
+            val cx = (l + r) / 2f
+            l = cx - nw / 2f
+            r = cx + nw / 2f
+        } else if (handle == 5 || handle == 7) {
+            val nh = w / ratio
+            val cy = (t + b) / 2f
+            t = cy - nh / 2f
+            b = cy + nh / 2f
+        } else {
+            val nh = w / ratio
+            if (handle == 0 || handle == 1) t = b - nh else b = t + nh
+        }
+    }
+    val maxSide = Doc.MAX_SIDE.toFloat()
+    if (r - l > maxSide) r = l + maxSide
+    if (b - t > maxSide) b = t + maxSide
+    cropBox = RectF(l, t, r, b)
+}
+
+fun EditorViewModel.cancelCrop() {
+    if (cropBox == null) return
+    cropBox = null
+    tool = Tool.MOVE
+}
+
+/** Crops the canvas to the box. Pixels outside are kept (move a layer to bring them back). */
+fun EditorViewModel.applyCrop(onDone: () -> Unit = {}) {
+    val d = doc ?: return
+    val box = cropBox ?: return
+    val r = Rect(box.left.roundToInt(), box.top.roundToInt(), box.right.roundToInt(), box.bottom.roundToInt())
+    cropBox = null
+    tool = Tool.MOVE
+    if (r.left == 0 && r.top == 0 && r.width() == d.width && r.height() == d.height) {
+        onDone()
+        return
+    }
+    cropTo(r)
+    onDone()
+}
+
+/** Makes the canvas cover [r] (canvas pixels) by moving every layer. */
+internal fun EditorViewModel.cropTo(r: Rect) {
+    val d = doc ?: return
+    val w = r.width().coerceIn(1, Doc.MAX_SIDE)
+    val h = r.height().coerceIn(1, Doc.MAX_SIDE)
+    stackEdit("Crop") {
+        for (l in d.layers) {
+            l.x -= r.left
+            l.y -= r.top
+        }
+        d.width = w
+        d.height = h
+        d.selection = null
+    }
+    fit()
+}
+
+fun EditorViewModel.cropToSelection() {
+    val d = doc ?: return
+    if (pendingFirst { cropToSelection() }) return
+    val s = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    val b = s.pixelBounds()
+    if (!b.intersect(0, 0, d.width, d.height)) return
+    cropTo(b)
+}

@@ -3,6 +3,8 @@ package com.tim.quartzeditor.engine
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.RenderNode
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -26,6 +28,10 @@ class LayerPreview(
     val proxyBounds: RectF? = null,
     /** Being transformed: [proxy] (with its mask applied) drawn through this matrix (proxy pixels → canvas). */
     val transform: android.graphics.Matrix? = null,
+    /** A gradient being dragged out on this layer. */
+    val gradient: GradientDrag? = null,
+    /** Adjustments being tried only change what's selected. */
+    val selection: Selection? = null,
 ) {
     private val shader by lazy { ColorShader() }
 
@@ -50,9 +56,33 @@ class LayerPreview(
  */
 object DocRenderer {
 
+    /** Everything a draw pass needs, passed down through folders. */
+    private class Ctx(
+        val doc: Doc?,
+        val docW: Float,
+        val docH: Float,
+        /** Canvas area being drawn (canvas pixels, with a small margin). */
+        val bounds: RectF,
+        val tilePaint: Paint,
+        val stroke: StrokeSession?,
+        val preview: LayerPreview?,
+        val smooth: Boolean,
+        val effects: ((Layer) -> BuiltEffects?)?,
+        /** On screen: canvas pixels → screen pixels, and the screen size (null when rendering a picture). */
+        val view: Matrix?,
+        val viewW: Int,
+        val viewH: Int,
+        /** Off screen: picture pixels per canvas pixel. */
+        val pixelScale: Float,
+        /** Layers to draw at the top (null = the document's top level). */
+        val roots: List<Layer>? = null,
+    )
+
     /**
      * @param visible the part of the canvas that's on screen (canvas pixels), to skip hidden tiles
      * @param smooth bilinear filtering (off when zoomed in close, so pixels stay crisp)
+     * @param view on screen: canvas → screen matrix and the view's size (needed by adjustment layers)
+     * @param pixelScale off screen: output pixels per canvas pixel
      */
     fun draw(
         canvas: Canvas,
@@ -62,6 +92,10 @@ object DocRenderer {
         preview: LayerPreview? = null,
         smooth: Boolean = true,
         effects: ((Layer) -> BuiltEffects?)? = null,
+        view: Matrix? = null,
+        viewW: Int = 0,
+        viewH: Int = 0,
+        pixelScale: Float = 1f,
     ) {
         val w = doc.width.toFloat()
         val h = doc.height.toFloat()
@@ -74,13 +108,223 @@ object DocRenderer {
         // Blend modes mix with the layers below, not with whatever is behind the canvas (the checkerboard)
         val isolate = doc.layers.any { it.props.visible && it.props.blend != Blend.NORMAL }
         if (isolate) canvas.saveLayer(bounds, null)
-        val tilePaint = Paint().apply { isFilterBitmap = smooth }
-        for (layer in doc.layers) {
-            if (!layer.props.visible) continue
-            drawLayer(canvas, doc.width.toFloat(), doc.height.toFloat(), layer, bounds, tilePaint, stroke?.takeIf { it.layer === layer }, preview?.takeIf { it.layerId == layer.id }, smooth, effects)
-        }
+        val ctx = Ctx(doc, w, h, bounds, Paint().apply { isFilterBitmap = smooth }, stroke, preview, smooth, effects, view, viewW, viewH, pixelScale)
+        drawList(canvas, doc.children(0L), ctx)
         if (isolate) canvas.restore()
         canvas.restore()
+    }
+
+    /** Draws sibling layers bottom to top. Adjustment layers change everything drawn before them in the list. */
+    private fun drawList(canvas: Canvas, list: List<Layer>, ctx: Ctx) {
+        val shown = list.filter { it.props.visible }
+        val adjusts = shown.any { it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f }
+        if (!adjusts) {
+            for (l in shown) drawNode(canvas, l, ctx)
+            return
+        }
+        val v = ctx.view
+        if (v != null && canvas.isHardwareAccelerated && ctx.viewW > 0 && ctx.viewH > 0) drawListGpu(canvas, shown, ctx, v) else drawListPicture(canvas, shown, ctx)
+    }
+
+    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx) {
+        when (l.kind) {
+            LayerKind.PIXELS -> drawLayer(
+                canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
+                ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.takeIf { it.layerId == l.id }, ctx.smooth, ctx.effects,
+            )
+            LayerKind.GROUP -> {
+                val p = l.props
+                val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
+                if (alpha <= 0f) return
+                val dragX = ctx.preview?.takeIf { it.layerId == l.id }?.dragX ?: 0f
+                val dragY = ctx.preview?.takeIf { it.layerId == l.id }?.dragY ?: 0f
+                // A folder is drawn as one picture, then blended (its layers' blend modes stay inside it)
+                canvas.saveLayer(ctx.bounds, Paint().apply {
+                    this.alpha = (alpha * 255).roundToInt()
+                    blendMode = p.blend.mode
+                })
+                canvas.save()
+                canvas.translate(dragX, dragY)
+                drawList(canvas, ctx.doc?.children(l.id) ?: emptyList(), ctx)
+                canvas.restore()
+                drawMask(canvas, l, ctx, l.x + dragX, l.y + dragY)
+                canvas.restore()
+            }
+            LayerKind.ADJUSTMENT -> Unit // drawn by drawList
+        }
+    }
+
+    /** Cuts a layer's (or folder's) mask out of what's in the current saveLayer. */
+    private fun drawMask(canvas: Canvas, l: Layer, ctx: Ctx, dx: Float, dy: Float) {
+        val mask = if (l.maskActive) l.mask else null
+        val maskStroke = ctx.stroke?.takeIf { it.layer === l && it.target == StrokeTarget.MASK }
+        if (mask == null) return
+        canvas.saveLayer(ctx.bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+        mask.drawTo(canvas, dx, dy, Paint().apply {
+            isFilterBitmap = ctx.smooth
+            color = Color.BLACK
+        }, RectF(ctx.bounds))
+        if (maskStroke != null) {
+            canvas.save()
+            canvas.translate(dx, dy)
+            maskStroke.applyToMask(canvas, 0f, 0f, RectF(ctx.bounds).apply { offset(-dx, -dy) }, smooth = ctx.smooth)
+            canvas.restore()
+        }
+        ctx.preview?.takeIf { it.layerId == l.id }?.gradient?.takeIf { it.toMask }?.let { g ->
+            val area = RectF(0f, 0f, ctx.docW, ctx.docH).apply { intersect(ctx.bounds) }
+            GradientPainter.paintMask(canvas, area, g.spec, g.start, g.end, g.selection, 0f, 0f)
+        }
+        canvas.restore()
+    }
+
+    // ------------------------------------------------------------ adjustment layers
+
+    /** Shaders for adjustment layers on screen, kept so they aren't rebuilt every frame (main thread only). */
+    private val screenShaders = HashMap<Long, ColorShader>()
+
+    /**
+     * On screen: what's below each adjustment layer is recorded into a RenderNode, and a copy of it
+     * is drawn through the adjustment's shader on top (at the layer's opacity, through its mask).
+     */
+    private fun drawListGpu(canvas: Canvas, list: List<Layer>, ctx: Ctx, view: Matrix) {
+        val w = ctx.viewW
+        val h = ctx.viewH
+        fun node(name: String) = RenderNode(name).apply { setPosition(0, 0, w, h) }
+        var below = node("below")
+        var rec = below.beginRecording(w, h)
+        rec.concat(view)
+        for (l in list) {
+            val fx = l.props.adjust
+            if (!(l.isAdjustment && fx != null)) {
+                drawNode(rec, l, ctx)
+                continue
+            }
+            below.endRecording()
+            val shader = screenShaders.getOrPut(l.id) { ColorShader() }
+            val scale = run {
+                val pts = floatArrayOf(0f, 0f, 1f, 0f)
+                view.mapPoints(pts)
+                kotlin.math.hypot(pts[2] - pts[0], pts[3] - pts[1])
+            }
+            val adjusted = node("adjusted").apply {
+                // Sharpen/grain spacing follows the zoom, like the full-size result
+                setRenderEffect(shader.effect(fx, max(1f, scale * max(ctx.docW, ctx.docH) / 1500f)))
+            }
+            adjusted.beginRecording(w, h).drawRenderNode(below)
+            adjusted.endRecording()
+            val next = node("next")
+            val nr = next.beginRecording(w, h)
+            nr.drawRenderNode(below)
+            val op = (l.props.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+            val mx = l.x + (ctx.preview?.takeIf { it.layerId == l.id }?.dragX ?: 0f)
+            val my = l.y + (ctx.preview?.takeIf { it.layerId == l.id }?.dragY ?: 0f)
+            fun adjustedWithMask() {
+                nr.drawRenderNode(adjusted)
+                nr.save()
+                nr.concat(view)
+                if (fx.vignette > 0f) {
+                    nr.save()
+                    nr.clipRect(0f, 0f, ctx.docW, ctx.docH)
+                    Gpu.drawVignette(nr, fx.vignette, 0f, 0f, ctx.docW, ctx.docH)
+                    nr.restore()
+                }
+                drawMask(nr, l, ctx, mx, my)
+                nr.restore()
+            }
+            if (l.props.blend == Blend.NORMAL) {
+                // below × (1 − w) + adjusted × w, where w is the opacity through the mask
+                nr.saveLayer(null, Paint().apply {
+                    alpha = op
+                    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                })
+                nr.drawColor(Color.BLACK)
+                nr.save()
+                nr.concat(view)
+                drawMask(nr, l, ctx, mx, my)
+                nr.restore()
+                nr.restore()
+                nr.saveLayer(null, Paint().apply {
+                    alpha = op
+                    blendMode = android.graphics.BlendMode.PLUS
+                })
+                adjustedWithMask()
+                nr.restore()
+            } else {
+                nr.saveLayer(null, Paint().apply {
+                    alpha = op
+                    blendMode = l.props.blend.mode
+                })
+                adjustedWithMask()
+                nr.restore()
+            }
+            nr.concat(view)
+            below = next
+            rec = nr
+        }
+        below.endRecording()
+        val inverse = Matrix()
+        view.invert(inverse)
+        canvas.save()
+        canvas.concat(inverse)
+        canvas.drawRenderNode(below)
+        canvas.restore()
+    }
+
+    /**
+     * Off screen (export, merge, thumbnails): the list is drawn into a picture, and each adjustment is
+     * applied to that picture on the GPU.
+     */
+    private fun drawListPicture(canvas: Canvas, list: List<Layer>, ctx: Ctx) {
+        val b = ctx.bounds
+        val area = android.graphics.Rect(
+            kotlin.math.floor(b.left).toInt(), kotlin.math.floor(b.top).toInt(),
+            kotlin.math.ceil(b.right).toInt(), kotlin.math.ceil(b.bottom).toInt(),
+        )
+        val s = ctx.pixelScale
+        val pw = (area.width() * s).roundToInt().coerceAtLeast(1)
+        val ph = (area.height() * s).roundToInt().coerceAtLeast(1)
+        var pic = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+        var pc = Canvas(pic)
+        fun prepare(c: Canvas) {
+            c.scale(pw / area.width().toFloat(), ph / area.height().toFloat())
+            c.translate(-area.left.toFloat(), -area.top.toFloat())
+        }
+        prepare(pc)
+        for (l in list) {
+            val fx = l.props.adjust
+            if (!(l.isAdjustment && fx != null)) {
+                drawNode(pc, l, ctx)
+                continue
+            }
+            val adjusted = Gpu.applyFx(pic, fx, area.left * s, area.top * s, ctx.docW * s, ctx.docH * s)
+            val next = pic.copy(Bitmap.Config.ARGB_8888, true)
+            pic.recycle()
+            pic = next
+            pc = Canvas(pic)
+            prepare(pc)
+            val op = (l.props.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+            val normal = l.props.blend == Blend.NORMAL
+            if (normal) {
+                // below × (1 − w) + adjusted × w, where w is the opacity through the mask
+                pc.saveLayer(RectF(area), Paint().apply {
+                    alpha = op
+                    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                })
+                pc.drawColor(Color.BLACK)
+                drawMask(pc, l, ctx, l.x.toFloat(), l.y.toFloat())
+                pc.restore()
+            }
+            pc.saveLayer(RectF(area), Paint().apply {
+                alpha = op
+                blendMode = if (normal) android.graphics.BlendMode.PLUS else l.props.blend.mode
+            })
+            pc.drawBitmap(adjusted, null, RectF(area), Paint().apply { isFilterBitmap = true })
+            drawMask(pc, l, ctx, l.x.toFloat(), l.y.toFloat())
+            pc.restore()
+            adjusted.recycle()
+        }
+        canvas.drawBitmap(pic, null, RectF(area), Paint().apply { isFilterBitmap = true })
+        pic.recycle()
     }
 
     private fun drawLayer(
@@ -108,7 +352,7 @@ object DocRenderer {
             val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
             if (alpha <= 0f) return
             val mask = if (layer.maskActive && !transforming) layer.mask else null
-            val plain = p.blend == Blend.NORMAL && alpha >= 1f && mask == null && stroke == null && preview?.fx == null && !transforming
+            val plain = p.blend == Blend.NORMAL && alpha >= 1f && mask == null && stroke == null && preview?.fx == null && preview?.gradient == null && !transforming
             if (plain) {
                 layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
                 return
@@ -183,9 +427,27 @@ object DocRenderer {
             return
         }
         if (preview?.fx != null) {
-            preview.drawFx(canvas, layer, docW, docH)
+            val sel = preview.selection
+            if (sel == null) {
+                preview.drawFx(canvas, layer, docW, docH)
+            } else {
+                // Changed inside the selection, unchanged outside
+                layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
+                // original × (1 − selected) + adjusted × selected
+                canvas.saveLayer(bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                sel.mask().drawTo(canvas, 0f, 0f, Paint().apply { isFilterBitmap = true }, RectF(bounds))
+                canvas.restore()
+                canvas.saveLayer(bounds, Paint().apply { blendMode = android.graphics.BlendMode.PLUS })
+                preview.drawFx(canvas, layer, docW, docH)
+                sel.keepInside(canvas, 0f, 0f, bounds)
+                canvas.restore()
+            }
         } else {
             layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
+        }
+        preview?.gradient?.takeIf { !it.toMask }?.let { g ->
+            val area = RectF(0f, 0f, docW, docH).apply { intersect(bounds) }
+            GradientPainter.paintPixels(canvas, area, g.spec, g.start, g.end, g.selection, 0f, 0f, layer.props.lockAlpha)
         }
         val pixelStroke = stroke?.takeIf { it.target == StrokeTarget.PIXELS }
         val maskStroke = stroke?.takeIf { it.target == StrokeTarget.MASK }
@@ -208,6 +470,10 @@ object DocRenderer {
                 maskStroke.applyToMask(canvas, 0f, 0f, local, smooth = smooth)
                 canvas.restore()
             }
+            preview?.gradient?.takeIf { it.toMask }?.let { g ->
+                val area = RectF(0f, 0f, docW, docH).apply { intersect(bounds) }
+                GradientPainter.paintMask(canvas, area, g.spec, g.start, g.end, g.selection, 0f, 0f)
+            }
             canvas.restore()
         }
     }
@@ -216,17 +482,13 @@ object DocRenderer {
      * Draws [layers] (with their masks, opacity and blend modes) over a transparent background,
      * covering canvas area [region] — which may reach past the canvas edges.
      */
-    fun renderLayers(layers: List<Layer>, region: android.graphics.Rect, docW: Int, docH: Int, effects: ((Layer) -> BuiltEffects?)? = null): Bitmap {
+    fun renderLayers(layers: List<Layer>, region: android.graphics.Rect, docW: Int, docH: Int, effects: ((Layer) -> BuiltEffects?)? = null, doc: Doc? = null): Bitmap {
         val bmp = Bitmap.createBitmap(region.width().coerceAtLeast(1), region.height().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         bmp.setHasAlpha(true)
         val c = Canvas(bmp)
         c.translate(-region.left.toFloat(), -region.top.toFloat())
-        val b = RectF(region)
-        val paint = Paint()
-        for (l in layers) {
-            if (!l.props.visible) continue
-            drawLayer(c, docW.toFloat(), docH.toFloat(), l, b, paint, null, null, false, effects)
-        }
+        val ctx = Ctx(doc, docW.toFloat(), docH.toFloat(), RectF(region), Paint(), null, null, false, effects, null, 0, 0, 1f)
+        drawList(c, layers, ctx)
         return bmp
     }
 
@@ -242,6 +504,7 @@ object DocRenderer {
 
     /** A small copy of the whole image, longest side [maxPx]. */
     fun thumbnail(doc: Doc, maxPx: Int, background: Int = Color.TRANSPARENT, effects: ((Layer) -> BuiltEffects?)? = null): Bitmap {
+        val s0 = min(1f, maxPx.toFloat() / max(doc.width, doc.height))
         val s = min(1f, maxPx.toFloat() / max(doc.width, doc.height))
         val w = (doc.width * s).roundToInt().coerceAtLeast(1)
         val h = (doc.height * s).roundToInt().coerceAtLeast(1)
@@ -249,7 +512,7 @@ object DocRenderer {
         val c = Canvas(bmp)
         if (Color.alpha(background) > 0) c.drawColor(background)
         c.scale(w / doc.width.toFloat(), h / doc.height.toFloat())
-        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), effects = effects)
+        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), effects = effects, pixelScale = s0)
         return bmp
     }
 
@@ -339,7 +602,7 @@ object DocRenderer {
     fun buildAllEffects(doc: Doc, maxSide: Int, only: Collection<Layer> = doc.layers): Map<Long, BuiltEffects> {
         val out = HashMap<Long, BuiltEffects>()
         for (l in only) {
-            if (!l.props.visible || !l.props.style.needsBuild) continue
+            if (!l.isPixels || !l.props.visible || !l.props.style.needsBuild) continue
             val mask = if (l.maskActive) l.mask?.tiles else null
             Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide)?.let { out[l.id] = it }
         }

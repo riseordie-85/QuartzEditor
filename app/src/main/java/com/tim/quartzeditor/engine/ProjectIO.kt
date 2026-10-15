@@ -114,6 +114,10 @@ object ProjectIO {
                     .put("y", l.y)
                     .put("hasMask", l.mask != null)
                     .put("style", p.style.toJson())
+                    .put("kind", l.kind.name)
+                    .put("parent", p.parent)
+                    .put("collapsed", l.collapsed)
+                    .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
             )
         }
         // Settings first, then the pixels
@@ -198,6 +202,8 @@ object ProjectIO {
                 locked = o.optBoolean("locked"),
                 maskDisabled = o.optBoolean("maskDisabled"),
                 style = LayerStyle.fromJson(o.optJSONObject("style")),
+                parent = o.optLong("parent", 0L),
+                adjust = FxParams.fromJson(o.optJSONObject("adjust")),
             )
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null
@@ -209,7 +215,8 @@ object ProjectIO {
                 val k = TileGrid.key(coords[0].toInt(), coords[1].toInt())
                 if (isLayer) grid.tiles[k] = t else mask?.tiles?.set(k, t)
             }
-            doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask))
+            val kind = LayerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: LayerKind.PIXELS
+            doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask, kind).also { it.collapsed = o.optBoolean("collapsed") })
         }
         doc.reserveIds(maxId)
         doc.activeId = j.optLong("activeId", doc.layers.lastOrNull()?.id ?: -1L)

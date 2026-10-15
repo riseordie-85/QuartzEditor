@@ -147,6 +147,8 @@ fun Workspace(vm: EditorViewModel) {
 
                 // Transforming: cancel / flip / rotate / distort / apply
                 TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                SelectBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
 
                 // Show / hide panels
                 RoundButton(

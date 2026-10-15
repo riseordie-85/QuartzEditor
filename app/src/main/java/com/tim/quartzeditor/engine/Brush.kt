@@ -149,6 +149,8 @@ class StrokeSession(
     val tip: BrushTip,
     val size: Float,
     val softness: Float,
+    /** Painting only reaches inside this (null = everywhere). */
+    val selection: Selection? = null,
 ) {
     val buffer = TileGrid(alphaOnly = true)
     private val canvases = HashMap<Long, Canvas>()
@@ -242,7 +244,32 @@ class StrokeSession(
                 p.xfermode = PorterDuffXfermode(if (lockAlpha) PorterDuff.Mode.SRC_ATOP else PorterDuff.Mode.SRC_OVER)
             }
         }
-        buf.drawTo(canvas, dx, dy, p, visible)
+        drawBuffer(canvas, dx, dy, visible, buf, p)
+    }
+
+    /**
+     * Draws the coverage buffer with [paint]. With a selection, the stroke is first drawn at full
+     * strength into its own layer, cut to the selection, then applied with the paint's mode and
+     * strength — so soft selection edges fade the stroke exactly once.
+     */
+    private fun drawBuffer(canvas: Canvas, dx: Float, dy: Float, visible: RectF?, buf: TileGrid, paint: Paint) {
+        val sel = selection
+        if (sel == null) {
+            buf.drawTo(canvas, dx, dy, paint, visible)
+            return
+        }
+        val apply = Paint().apply {
+            alpha = paint.alpha
+            xfermode = paint.xfermode
+        }
+        canvas.saveLayer(visible, apply)
+        val full = Paint(paint).apply {
+            alpha = 255
+            xfermode = null
+        }
+        buf.drawTo(canvas, dx, dy, full, visible)
+        sel.keepInside(canvas, layer.x - dx, layer.y - dy, visible)
+        canvas.restore()
     }
 
     /** Same idea for a mask: pull the hidden amount toward the target level where the stroke covers. */
@@ -253,7 +280,7 @@ class StrokeSession(
             alpha = a
             xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
         }
-        buf.drawTo(canvas, dx, dy, out, visible)
+        drawBuffer(canvas, dx, dy, visible, buf, out)
         val v = maskHidden
         if (v > 0.002f) {
             val add = Paint().apply {
@@ -262,13 +289,13 @@ class StrokeSession(
                 alpha = (opacity * v * 255).roundToInt()
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD)
             }
-            buf.drawTo(canvas, dx, dy, add, visible)
+            drawBuffer(canvas, dx, dy, visible, buf, add)
         }
     }
 
     /** Applies the stroke to the layer. Returns the undo step, or null if nothing changed. */
     fun commit(): Change? {
-        if (dabCount == 0) return null
+        if (dabCount == 0 && buffer.isEmpty) return null
         val grid: TileGrid = when (target) {
             StrokeTarget.PIXELS -> layer.tiles
             StrokeTarget.MASK -> layer.mask ?: return null

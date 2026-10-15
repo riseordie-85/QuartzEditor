@@ -24,6 +24,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Contrast
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DragHandle
 import androidx.compose.material.icons.outlined.Lock
@@ -107,7 +114,15 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
     val rowPx = with(density) { rowH.toPx() }
     var dragId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    val shown = d.layers.asReversed().toList()
+    // Rows top first; folders that are folded hide what's in them
+    val shown = ArrayList<Layer>()
+    fun addRows(parent: Long) {
+        for (l in d.children(parent).asReversed()) {
+            shown.add(l)
+            if (l.isGroup && !l.collapsed) addRows(l.id)
+        }
+    }
+    addRows(0L)
     val dragFrom = shown.indexOfFirst { it.id == dragId }
     val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
 
@@ -138,9 +153,27 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
                             dragOffset = 0f
                         },
                         onDragEnd = {
-                            // Rows shown top-first: dragging down moves the layer lower in the stack
                             val steps = (dragOffset / rowPx).roundToInt()
-                            dragId?.let { id -> vm.moveLayerBy(id, -steps) }
+                            val id = dragId
+                            val doc = vm.doc
+                            val dragged = id?.let { doc?.layer(it) }
+                            if (doc != null && dragged != null && steps != 0) {
+                                // Rows as they are now (this lambda may be older than the panel)
+                                val rows = ArrayList<Layer>()
+                                fun add(parent: Long) {
+                                    for (x in doc.children(parent).asReversed()) {
+                                        rows.add(x)
+                                        if (x.isGroup && !x.collapsed) add(x.id)
+                                    }
+                                }
+                                add(0L)
+                                val from = rows.indexOf(dragged)
+                                val rest = rows.filter { it !== dragged && !doc.isInside(it, dragged) }
+                                val inside = rows.size - 1 - rest.size
+                                val target = (if (steps > 0) (from + steps - inside).coerceAtLeast(from) else from + steps).coerceIn(0, rest.size)
+                                // The row that ends up just above it decides where it goes
+                                vm.moveLayerUnder(dragged.id, if (target == 0) null else rest[target - 1].id)
+                            }
                             dragId = null
                             dragOffset = 0f
                         },
@@ -165,13 +198,15 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(44.dp)
+                .size(38.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .clickable { vm.toggleSection(PanelSection.STYLE, open = true) },
         ) {
             Text("fx", color = Q.text, fontSize = 18.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold)
         }
         BarButton(QIcons.Mask, "Add a mask") { vm.addMask() }
+        BarButton(Icons.Outlined.Contrast, "New adjustment layer") { vm.addAdjustmentLayer() }
+        BarButton(Icons.Outlined.CreateNewFolder, "New folder") { vm.addFolder() }
         BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
         BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
         Box {
@@ -183,8 +218,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
                         action()
                     })
                 }
-                item("Duplicate layer") { vm.duplicateLayer() }()
-                item("Merge down") { vm.mergeDown() }()
+                item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
+                if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
+                item("Put in a new folder") { vm.groupActive() }()
                 item("Flatten image") { vm.flattenImage() }()
                 HorizontalDivider()
                 item("Place image as layer…") { onPlaceImage() }()
@@ -238,12 +274,32 @@ private fun LayerRow(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(40.dp)
+                .size(36.dp)
                 .clickable { vm.setProps(layer.id, if (p.visible) "Hide layer" else "Show layer") { it.copy(visible = !it.visible) } },
         ) {
             Icon(if (p.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, contentDescription = if (p.visible) "Hide" else "Show", tint = if (p.visible) Q.text else Q.textDim, modifier = Modifier.size(20.dp))
         }
-        Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+        // Indent what's inside folders
+        val depth = vm.doc?.depth(layer) ?: 0
+        if (depth > 0) Spacer(Modifier.width((12 * depth).dp))
+        when {
+            layer.isGroup -> {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clickable {
+                            layer.collapsed = !layer.collapsed
+                            vm.doc?.invalidate()
+                        },
+                ) {
+                    Icon(if (layer.collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown, contentDescription = if (layer.collapsed) "Open folder" else "Fold folder", tint = Q.text)
+                }
+                IconThumb(if (layer.collapsed) Icons.Outlined.Folder else Icons.Outlined.FolderOpen, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+            }
+            layer.isAdjustment -> IconThumb(Icons.Outlined.Tune, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+            else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+        }
         if (layer.hasMask) {
             Spacer(Modifier.width(4.dp))
             Box {
@@ -272,6 +328,22 @@ private fun LayerRow(
     }
 }
 
+/** Folder or adjustment icon in place of a picture. */
+@Composable
+private fun IconThumb(icon: ImageVector, outlined: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
+            .border(if (outlined) 2.dp else 1.dp, if (outlined) Color.White else Color.White.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(4.dp))
+            .background(Q.field)
+            .clickable(onClick = onClick),
+    ) {
+        Icon(icon, contentDescription = null, tint = Q.text, modifier = Modifier.size(24.dp))
+    }
+}
+
 @Composable
 private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onClick: () -> Unit) {
     Box(
@@ -292,7 +364,7 @@ private fun BarButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(44.dp)
+            .size(38.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {

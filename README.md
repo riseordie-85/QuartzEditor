@@ -19,17 +19,25 @@ right (the arrow button at the bottom right); on tablets and the unfolded Fold t
 and the same button hides them.
 
 ### Toolbar
-- **Move** — drag the selected layer with one finger; tap the picture to select the top layer under your
-  finger. Tap Move again to switch to **Pan** (one finger moves the view).
+- **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
+  layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view).
+- **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso. Drag to select
+  (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last corner).
+  The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
+  Feather, Copy or Cut to a new layer, Delete selected pixels, Fill, Mask from selection, Crop to selection.
+  Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
+- **Crop** — drag the corners, edges or the box; pick a shape (Free, Original, 1:1, 4:3, 3:4, 16:9, 9:16).
+  Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
 - **Transform** — a box around the selected layer: drag inside to move, corners to scale (proportions
   locked unless you unlink them), edges to stretch, outside the box or the top handle to rotate (snaps to
-  straight angles). The bar on the picture has flip, rotate 90°, **Distort** (drag each corner anywhere)
-  and Apply; Properties has exact W/H % and angle.
-- **Eyedropper** — touch and drag; the loupe shows the color, lifting picks it into the swatch you're editing.
-- **Brush** — tap again for brush tips: Round, Square, Triangle, Grunge.
-- **Eraser** — tap again for the same tips.
-- **Softness**, **Size** and **Opacity** sliders. They follow whichever of brush or eraser you're using,
-  and the brush appears in the middle of the picture while you drag one.
+  straight angles). The bar on the picture has flip, rotate 90°, **Distort** and Apply.
+- **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
+- **Paint bucket** — tap to fill matching pixels with the foreground color. Tolerance, "only touching
+  pixels" and "look at all layers" are in Properties.
+- **Gradient** — drag on the picture: the gradient (from the Gradients panel) runs from where you start to
+  where you let go. Linear, Radial or Reflected; reverse and opacity.
+- **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
+  Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
 - **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
   them to swap.
 
@@ -42,8 +50,11 @@ and the same button hides them.
 
 ### Panels
 - **Color** — saturation/brightness square, hue bar, hex, RGB, recent colors and basics.
+- **Gradients** — presets (including foreground→background and foreground→transparent), type, reverse,
+  opacity. Picking one switches to the Gradient tool.
 - **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
-  sharpness, vignette, grain. Live preview on the selected layer, then Apply or Cancel.
+  sharpness, vignette, grain. On a pixel layer: live preview, then Apply or Cancel. On an **adjustment
+  layer** the same sliders (and Filters) stay editable forever and change everything below it.
 - **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength, previewed on the layer.
 - **Properties** — transform numbers; brush/eraser tip, opacity and exact size; the layer's name and X/Y
   position; mask controls.
@@ -57,8 +68,14 @@ and the same button hides them.
   - Lock transparent pixels (painting only changes what's already there; the eraser paints the background
     color) and lock the whole layer.
   - Each layer: show/hide, thumbnail, mask thumbnail, name (long-press to rename), drag handle to reorder.
-  - Bottom bar: add mask, new layer, delete, and ⋮ for duplicate, merge down, flatten, place image,
-    remove background, fill, clear, and mask options (enable/disable, invert, apply, delete).
+  - **Folders**: the arrow folds/unfolds them. Drag a layer just under a folder's row to put it inside;
+    drag it below the folder's contents to take it out. A folder's opacity, blend mode and mask apply to
+    everything in it.
+  - **Adjustment layers**: change everything below them (inside their folder) without touching pixels;
+    paint their mask to limit them.
+  - Bottom bar: fx, add mask, new adjustment layer, new folder, new layer, delete, and ⋮ for duplicate,
+    merge down / merge folder, put in a new folder, flatten, place image, remove background, fill, clear,
+    and mask options (enable/disable, invert, apply, delete).
 
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for
@@ -85,7 +102,5 @@ in between. Tap the mask thumbnail to paint on the mask, the layer thumbnail to 
 - `.qedit` files are zips: `doc.json` (settings), raw tile pixels, and a thumbnail.
 
 ## Coming next
-- **Phase 2**: selections (rectangle, ellipse, lasso, polygonal), crop, paint bucket, gradients (presets,
-  linear/radial/reflected), layer folders, adjustment layers.
 - **Phase 3**: shapes (rectangle, ellipse, star with points and depth), shape pen, text, and the matching
   Properties options.
