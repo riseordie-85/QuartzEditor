@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -23,6 +24,11 @@ import androidx.lifecycle.viewModelScope
 import com.tim.quartzeditor.data.ExportFormat
 import com.tim.quartzeditor.data.Media
 import com.tim.quartzeditor.engine.BrushTip
+import com.tim.quartzeditor.engine.BuiltEffects
+import com.tim.quartzeditor.engine.Effects
+import com.tim.quartzeditor.engine.LayerStyle
+import com.tim.quartzeditor.engine.TransformState
+import com.tim.quartzeditor.engine.Transformer
 import com.tim.quartzeditor.engine.Cutout
 import com.tim.quartzeditor.engine.CutoutException
 import com.tim.quartzeditor.engine.Doc
@@ -51,11 +57,11 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { MOVE, PAN, EYEDROPPER, BRUSH, ERASER }
+enum class Tool { MOVE, PAN, TRANSFORM, EYEDROPPER, BRUSH, ERASER }
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
-enum class PanelSection(val label: String) { COLOR("Color"), ADJUSTMENTS("Adjustments"), FILTERS("Filters"), PROPERTIES("Properties"), LAYERS("Layers") }
+enum class PanelSection(val label: String) { COLOR("Color"), ADJUSTMENTS("Adjustments"), FILTERS("Filters"), PROPERTIES("Properties"), STYLE("Layer Style"), LAYERS("Layers") }
 
 enum class NewBackground(val label: String) { WHITE("White"), BLACK("Black"), TRANSPARENT("Transparent") }
 
@@ -86,6 +92,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     var tool by mutableStateOf(Tool.BRUSH)
         private set
+
+    /** True while a brush slider is being dragged: the canvas shows the brush. */
+    var brushPreview by mutableStateOf(false)
 
     /** Which tool's brush picker is open (null = closed). */
     var brushPickerFor by mutableStateOf<Tool?>(null)
@@ -146,6 +155,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private var thumbJob: Job? = null
 
     init {
+        viewModelScope.launch { effectsLoop() }
         // Keep thumbnails up to date shortly after changes
         viewModelScope.launch {
             var lastSeen = -1
@@ -176,6 +186,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun setDocument(d: Doc, canvas: Int? = null) {
         propsBefore = null
+        transform = null
+        effectsCache.clear()
+        failedEffects.clear()
         moveLayer = null
         stroke = null
         preview = null
@@ -272,13 +285,27 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Saves (when there's anything worth saving) and closes the document. */
     fun closeDocument() {
         val d = doc ?: return
-        if (fxFirst { closeDocument() }) return
+        if (pendingFirst { closeDocument() }) return
         val save = history.editsSinceSave > 0
         if (save) saveToProjects(quiet = false)
         doc = null
         stroke = null
         preview = null
         fxThumb = null
+        d.invalidate()
+    }
+
+    /** Closes the document and throws away changes since it was last saved. */
+    fun discardDocument() {
+        val d = doc ?: return
+        if (busy != null) return
+        pendingFx = null
+        transform = null
+        doc = null
+        stroke = null
+        preview = null
+        fxThumb = null
+        history = newHistory()
         d.invalidate()
     }
 
@@ -316,7 +343,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Writes the project to a file the user chose. */
     fun saveProjectFile(uri: Uri) {
         val d = doc ?: return
-        if (fxFirst { saveProjectFile(uri) }) return
+        if (pendingFirst { saveProjectFile(uri) }) return
         val copy = d.shallowCopy()
         val color = canvasColor
         runBusy("Saving…") {
@@ -331,12 +358,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Flattens and saves a picture to Pictures/Quartz Editor. Calls [onSaved] with its address. */
     fun export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
         val d = doc ?: return
-        if (fxFirst { export(format, onSaved) }) return
+        if (pendingFirst { export(format, onSaved) }) return
         val copy = d.shallowCopy()
         runBusy("Exporting…") {
             val uri = withContext(Dispatchers.Default) {
                 val bg = if (format.alpha) Color.TRANSPARENT else Color.WHITE
-                val bmp = DocRenderer.flatten(copy, bg)
+                val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
+                val bmp = DocRenderer.flatten(copy, bg, effects = { fx[it.id] })
                 try {
                     Media.saveImage(ctx, bmp, copy.name.ifBlank { "Quartz" }, format)
                 } finally {
@@ -348,12 +376,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun runBusy(label: String, block: suspend () -> Unit) {
+    /**
+     * Runs slow work with the busy overlay up (it blocks other edits). [onDone] runs after the
+     * overlay is gone, only if the work succeeded — so it may start busy work of its own.
+     */
+    private fun runBusy(label: String, onDone: (() -> Unit)? = null, block: suspend () -> Unit) {
         if (busy != null) return
         busy = label
         viewModelScope.launch {
+            var ok = false
             try {
                 block()
+                ok = true
             } catch (e: OutOfMemoryError) {
                 toast("Not enough memory for that")
             } catch (e: CutoutException) {
@@ -363,6 +397,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 busy = null
             }
+            if (ok) onDone?.invoke()
         }
     }
 
@@ -419,13 +454,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tapping a tool's button. Tapping the move button again switches to panning; brushes show their picker. */
     fun onToolButton(t: Tool) {
-        if (fxFirst { onToolButton(t) }) return
+        if (t == Tool.TRANSFORM && transform != null) return
+        if (pendingFirst { onToolButton(t) }) return
         when {
             t == Tool.MOVE && (tool == Tool.MOVE || tool == Tool.PAN) -> tool = if (tool == Tool.MOVE) Tool.PAN else Tool.MOVE
             (t == Tool.BRUSH || t == Tool.ERASER) && tool == t -> brushPickerFor = if (brushPickerFor == t) null else t
             else -> {
                 tool = t
                 brushPickerFor = null
+                if (t == Tool.TRANSFORM) beginTransform()
             }
         }
     }
@@ -518,12 +555,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Why a brush stroke can't start right now (null = it can). Checked before painting. */
     fun strokeBlockReason(): String? = when {
         pendingFx != null -> "Apply or cancel the adjustment first"
+        transform != null -> "Apply or cancel the transform first"
         else -> paintBlocker(doc?.active)
     }
 
     /** A one-finger touch that couldn't paint: apply a pending adjustment, or say why. */
     fun onBlockedStroke() {
-        if (pendingFx != null) applyFx() else strokeBlockReason()?.let { toast(it) }
+        when {
+            pendingFx != null -> applyFx()
+            transform != null -> applyTransform()
+            else -> strokeBlockReason()?.let { toast(it) }
+        }
     }
 
     /** Starts a brush or eraser stroke at canvas point ([x], [y]). Returns false if painting isn't possible. */
@@ -631,7 +673,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Eyedropper: sets the color in the slot being edited from the image. */
     fun sampleAt(x: Float, y: Float, commit: Boolean): Int? {
         val d = doc ?: return null
-        val c = DocRenderer.sample(d, x.toInt(), y.toInt()) ?: return null
+        val c = DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup) ?: return null
         if (commit) {
             setColor(colorSlot, c)
             rememberColor(c)
@@ -658,7 +700,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectLayer(id: Long, mask: Boolean = false) {
         val d = doc ?: return
-        if (id != d.activeId && fxFirst { selectLayer(id, mask) }) return
+        if (id != d.activeId && pendingFirst { selectLayer(id, mask) }) return
         d.activeId = id
         d.editMask = mask && d.layer(id)?.hasMask == true
         d.invalidate()
@@ -667,7 +709,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addLayer() {
         val d = doc ?: return
-        if (fxFirst { addLayer() }) return
+        if (pendingFirst { addLayer() }) return
         stackEdit("New layer") {
             val l = Layer(d.newId(), LayerProps(d.uniqueName("Layer")), TileGrid(alphaOnly = false))
             d.layers.add(d.indexOf(d.activeId) + 1, l)
@@ -678,7 +720,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteLayer() {
         val d = doc ?: return
-        if (fxFirst { deleteLayer() }) return
+        if (pendingFirst { deleteLayer() }) return
         val l = d.active ?: return
         if (d.layers.size <= 1) {
             toast("An image needs at least one layer")
@@ -694,7 +736,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun duplicateLayer() {
         val d = doc ?: return
-        if (fxFirst { duplicateLayer() }) return
+        if (pendingFirst { duplicateLayer() }) return
         val l = d.active ?: return
         stackEdit("Duplicate layer") {
             val c = Layer(d.newId(), l.props.copy(name = "${l.props.name} copy", locked = false), l.tiles.copy(), l.x, l.y, l.mask?.copy())
@@ -713,6 +755,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Moves a layer from list position [from] to [to] (bottom = 0). */
     fun moveLayer(from: Int, to: Int) {
+        if (pendingFirst { moveLayer(from, to) }) return
         val d = doc ?: return
         if (from == to || from !in d.layers.indices || to !in d.layers.indices) return
         stackEdit("Reorder layers") {
@@ -723,7 +766,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun mergeDown() {
         val d = doc ?: return
-        if (fxFirst { mergeDown() }) return
+        if (pendingFirst { mergeDown() }) return
         val top = d.active ?: return
         val i = d.indexOf(top.id)
         if (i <= 0) {
@@ -738,7 +781,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         runBusy("Merging…") {
             val region = union(top.bounds(), below.bounds()) ?: Rect(0, 0, d.width, d.height)
             val merged = withContext(Dispatchers.Default) {
-                val bmp = DocRenderer.renderLayers(listOf(below, top).filter { it.props.visible }, region, d.width, d.height)
+                val pair = listOf(below, top).filter { it.props.visible }
+                val fx = fullEffects(pair)
+                // Room for shadows and strokes that reach past the pixels
+                val reach = pair.maxOfOrNull { kotlin.math.ceil(if (it.props.style.any) it.props.style.reach else 0f).toInt() + 4 } ?: 0
+                region.inset(-reach, -reach)
+                val bmp = DocRenderer.renderLayers(pair, region, d.width, d.height, effects = { fx[it.id] })
                 TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = false).also { bmp.recycle() }
             }
             stackEdit("Merge down") {
@@ -746,7 +794,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 below.x = 0
                 below.y = 0
                 below.mask = null
-                below.props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false)
+                below.props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle())
                 d.layers.remove(top)
                 d.activeId = below.id
                 d.editMask = false
@@ -757,13 +805,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Merges every visible layer into one (hidden layers are discarded, like Photoshop). */
     fun flattenImage() {
         val d = doc ?: return
-        if (fxFirst { flattenImage() }) return
+        if (pendingFirst { flattenImage() }) return
         if (d.layers.size <= 1) return
         runBusy("Flattening…") {
             val visible = d.layers.filter { it.props.visible }
             val region = Rect(0, 0, d.width, d.height)
             val merged = withContext(Dispatchers.Default) {
-                val bmp = DocRenderer.renderLayers(visible, region, d.width, d.height)
+                val fx = fullEffects(visible)
+                val bmp = DocRenderer.renderLayers(visible, region, d.width, d.height, effects = { fx[it.id] })
                 TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false).also { bmp.recycle() }
             }
             stackEdit("Flatten image") {
@@ -810,6 +859,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setLayerPosition(id: Long, x: Int, y: Int) {
+        if (pendingFirst { setLayerPosition(id, x, y) }) return
         val d = doc ?: return
         val l = d.layer(id) ?: return
         if (l.props.locked) {
@@ -833,6 +883,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearLayer() {
+        if (pendingFirst { clearLayer() }) return
         val l = editableActive() ?: return
         if (doc?.editMask == true && l.mask != null) {
             stackEdit("Clear mask") { l.mask = TileGrid(alphaOnly = true) }
@@ -845,7 +896,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Fills the canvas area of the active layer (or its mask) with [color]. */
     fun fillLayer(color: Int) {
         val d = doc ?: return
-        if (fxFirst { fillLayer(color) }) return
+        if (pendingFirst { fillLayer(color) }) return
         val l = editableActive() ?: return
         val toMask = d.editMask && l.mask != null
         val grid = if (toMask) l.mask!! else l.tiles
@@ -880,7 +931,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addMask() {
         val d = doc ?: return
-        if (fxFirst { addMask() }) return
+        if (pendingFirst { addMask() }) return
         val l = editableActive() ?: return
         if (l.mask != null) {
             selectLayer(l.id, mask = true)
@@ -895,6 +946,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteMask() {
+        if (pendingFirst { deleteMask() }) return
         val d = doc ?: return
         val l = editableActive() ?: return
         if (l.mask == null) return
@@ -906,6 +958,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Bakes the mask into the pixels and removes it. */
     fun applyMask() {
+        if (pendingFirst { applyMask() }) return
         val d = doc ?: return
         val l = editableActive() ?: return
         val m = l.mask ?: return
@@ -924,6 +977,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun invertMask() {
+        if (pendingFirst { invertMask() }) return
         val d = doc ?: return
         val l = editableActive() ?: return
         val m = l.mask ?: return
@@ -942,6 +996,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleMaskEnabled() {
+        if (pendingFirst { toggleMaskEnabled() }) return
         val l = doc?.active ?: return
         if (l.mask == null) return
         setProps(l.id, if (l.props.maskDisabled) "Enable mask" else "Disable mask") { it.copy(maskDisabled = !it.maskDisabled) }
@@ -950,7 +1005,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Masks out the background of the active layer (on-device). The mask can be touched up with the brush. */
     fun removeBackground() {
         val d = doc ?: return
-        if (fxFirst { removeBackground() }) return
+        if (pendingFirst { removeBackground() }) return
         val l = editableActive() ?: return
         if (l.tiles.isEmpty) {
             toast("This layer is empty")
@@ -976,7 +1031,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Adds a photo as a new layer, centered and fitted inside the canvas. */
     fun placeImage(uri: Uri) {
         val d = doc ?: return
-        if (fxFirst { placeImage(uri) }) return
+        if (pendingFirst { placeImage(uri) }) return
         runBusy("Placing…") {
             val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
             var bmp = withContext(Dispatchers.IO) { Media.decodeUpright(ctx, uri, Doc.MAX_SIDE) }
@@ -1056,30 +1111,19 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val source = l.tiles
-        busy = "Applying…"
-        viewModelScope.launch {
-            try {
-                val grid = withContext(Dispatchers.Default) {
-                    val (src, bounds) = DocRenderer.layerBitmap(l) ?: throw IllegalStateException("empty layer")
-                    val out = Gpu.applyFx(src, fx, l.x + bounds.left, l.y + bounds.top, d.width.toFloat(), d.height.toFloat())
-                    src.recycle()
-                    TileGrid.fromBitmap(out, bounds.left.toInt(), bounds.top.toInt(), alphaOnly = false).also { out.recycle() }
-                }
-                pendingFx = null
-                preview = null
-                if (doc === d && l.tiles === source) {
-                    stackEdit(if (fx.filter != com.tim.quartzeditor.engine.FilterPreset.NONE) fx.filter.label else "Adjustments") { l.tiles = grid }
-                }
-                fxThumb = null
-                busy = null
-                onDone()
-            } catch (e: OutOfMemoryError) {
-                toast("Not enough memory to apply that")
-            } catch (e: Exception) {
-                toast("Couldn't apply (${e.message})")
-            } finally {
-                busy = null
+        runBusy("Applying…", onDone) {
+            val grid = withContext(Dispatchers.Default) {
+                val (src, bounds) = DocRenderer.layerBitmap(l) ?: throw IllegalStateException("The layer is empty")
+                val out = Gpu.applyFx(src, fx, l.x + bounds.left, l.y + bounds.top, d.width.toFloat(), d.height.toFloat())
+                src.recycle()
+                TileGrid.fromBitmap(out, bounds.left.toInt(), bounds.top.toInt(), alphaOnly = false).also { out.recycle() }
             }
+            pendingFx = null
+            preview = null
+            if (doc === d && l.tiles === source) {
+                stackEdit(if (fx.filter != com.tim.quartzeditor.engine.FilterPreset.NONE) fx.filter.label else "Adjustments") { l.tiles = grid }
+            }
+            fxThumb = null
         }
     }
 
@@ -1087,10 +1131,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * Anything else you do first applies the adjustments you were trying (like switching tools in
      * Procreate). Returns true when it started that; [then] runs once they're applied.
      */
-    private fun fxFirst(then: () -> Unit): Boolean {
-        if (pendingFx == null) return false
-        applyFx(onDone = then)
-        return true
+    private fun pendingFirst(then: () -> Unit): Boolean {
+        if (pendingFx != null) {
+            applyFx(onDone = then)
+            return true
+        }
+        if (transform != null) {
+            applyTransform(onDone = then)
+            return true
+        }
+        return false
     }
 
     // ================================================================== undo
@@ -1102,13 +1152,298 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             cancelFx()
             return
         }
+        if (transform != null) {
+            cancelTransform()
+            return
+        }
         history.undo(d)?.let { toast("Undo: $it") }
     }
 
     fun redo() {
         val d = doc ?: return
-        if (stroke != null || busy != null) return
+        if (stroke != null || busy != null || pendingFx != null || transform != null) return
         history.redo(d)?.let { toast("Redo: $it") }
+    }
+
+    // ================================================================== layer styles
+
+    private val effectsCache = HashMap<Long, BuiltEffects>()
+    private val failedEffects = HashSet<Any>()
+
+    /** Prepared effect images for the screen (may be a moment behind while they rebuild). */
+    val effectsLookup: (Layer) -> BuiltEffects? = { l ->
+        // Images made for a replaced set of pixels (after a transform or merge) would be in the wrong place
+        effectsCache[l.id]?.takeIf { it.tilesId == System.identityHashCode(l.tiles) }
+    }
+
+    /** Keeps effect images up to date in the background, one layer at a time. */
+    private suspend fun effectsLoop() {
+        while (true) {
+            delay(60)
+            val d = doc ?: continue
+            if (stroke != null || transform != null || busy != null) continue
+            val todo = d.layers.firstOrNull {
+                it.props.visible && it.props.style.needsBuild &&
+                    Effects.keyOf(it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }
+            } ?: continue
+            val key = Effects.keyOf(todo)
+            val style = todo.props.style
+            val tilesId = System.identityHashCode(todo.tiles)
+            val tiles = HashMap(todo.tiles.tiles)
+            val mask = if (todo.maskActive) todo.mask?.let { HashMap(it.tiles) } else null
+            val built = withContext(Dispatchers.Default) {
+                try {
+                    Effects.build(key, style, tiles, mask, SCREEN_FX_PX, tilesId)
+                } catch (e: Throwable) {
+                    null
+                }
+            }
+            if (doc !== d) continue
+            if (built == null) {
+                failedEffects.add(key)
+                effectsCache.remove(todo.id)
+            } else {
+                effectsCache[todo.id] = built
+            }
+            d.invalidate()
+        }
+    }
+
+    /** Full-size effect images for a background render (merge, flatten). */
+    private fun fullEffects(layers: List<Layer>): Map<Long, BuiltEffects> {
+        val out = HashMap<Long, BuiltEffects>()
+        for (l in layers) {
+            if (!l.props.style.needsBuild) continue
+            val mask = if (l.maskActive) l.mask?.tiles else null
+            Effects.build(Unit, l.props.style, l.tiles.tiles, mask, FULL_FX_PX)?.let { out[l.id] = it }
+        }
+        return out
+    }
+
+    /** Live change to the selected layer's style while a slider moves (call [commitProps] after). */
+    fun setStyleLive(change: (LayerStyle) -> LayerStyle) {
+        val l = doc?.active ?: return
+        setPropsLive(l.id) { it.copy(style = change(it.style)) }
+    }
+
+    fun setStyle(label: String, change: (LayerStyle) -> LayerStyle) {
+        val l = doc?.active ?: return
+        setProps(l.id, label) { it.copy(style = change(it.style)) }
+    }
+
+    // ================================================================== transform
+
+    /** A transform in progress: the layer, the part being transformed, and a smaller copy to show. */
+    class TransformSession(
+        val layer: Layer,
+        /** The pixels (and mask) as they were when the transform started. */
+        val tiles: Map<Long, Bitmap>,
+        val mask: Map<Long, Bitmap>?,
+        val sourceGrid: TileGrid,
+        /** Layer-local area of the pixels being transformed. */
+        val content: Rect,
+        val proxy: Bitmap,
+        /** Proxy pixels per canvas pixel. */
+        val proxyScale: Float,
+        state: TransformState,
+    ) {
+        var state by mutableStateOf(state)
+        val start: TransformState = state
+    }
+
+    var transform by mutableStateOf<TransformSession?>(null)
+        private set
+
+    /** Starts transforming the selected layer (when the Transform tool is picked). */
+    fun beginTransform() {
+        val d = doc ?: return
+        if (transform != null) return
+        val l = d.active ?: return
+        if (l.props.locked) {
+            toast("\"${l.props.name}\" is locked")
+            return
+        }
+        if (l.tiles.isEmpty) {
+            toast("This layer is empty")
+            return
+        }
+        val tiles = HashMap(l.tiles.tiles)
+        val mask = if (l.maskActive) l.mask?.let { HashMap(it.tiles) } else null
+        val source = l.tiles
+        runBusy("Preparing…") {
+            val prepared = withContext(Dispatchers.Default) {
+                val bounds = Transformer.contentBounds(tiles) ?: return@withContext null
+                val ps = min(1f, PREVIEW_PX / max(bounds.width(), bounds.height()).toFloat())
+                val w = (bounds.width() * ps).roundToInt().coerceAtLeast(1)
+                val h = (bounds.height() * ps).roundToInt().coerceAtLeast(1)
+                val proxy = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val c = Canvas(proxy)
+                c.scale(ps, ps)
+                c.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
+                c.saveLayer(null, null)
+                val p = Paint().apply { isFilterBitmap = true }
+                TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.drawTo(c, 0f, 0f, p)
+                if (mask != null) {
+                    TileGrid(alphaOnly = true).also { it.tiles.putAll(mask) }.drawTo(c, 0f, 0f, Paint().apply {
+                        isFilterBitmap = true
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                    })
+                }
+                c.restore()
+                Triple(bounds, proxy, ps)
+            }
+            if (prepared == null) {
+                toast("This layer is empty")
+                return@runBusy
+            }
+            val (bounds, proxy, ps) = prepared
+            if (doc !== d || d.active !== l) return@runBusy
+            if (l.tiles !== source) return@runBusy
+            val session = TransformSession(l, tiles, l.mask?.let { HashMap(it.tiles) }, source, bounds, proxy, ps, TransformState.start(RectF(bounds), l.x, l.y))
+            transform = session
+            showTransform(session)
+        }
+    }
+
+    private fun showTransform(t: TransformSession) {
+        val m = Matrix()
+        m.setScale(1f / t.proxyScale, 1f / t.proxyScale)
+        m.postTranslate(t.content.left.toFloat(), t.content.top.toFloat())
+        m.postConcat(t.state.matrix())
+        preview = LayerPreview(t.layer.id, transform = m, proxy = t.proxy)
+        doc?.invalidate()
+    }
+
+    fun updateTransform(change: (TransformState) -> TransformState) {
+        val t = transform ?: return
+        t.state = change(t.state)
+        showTransform(t)
+    }
+
+    fun resetTransform() {
+        val t = transform ?: return
+        t.state = t.start.copy(keepAspect = t.state.keepAspect)
+        showTransform(t)
+    }
+
+    fun cancelTransform() {
+        if (transform == null) return
+        transform = null
+        preview = null
+        tool = Tool.MOVE
+        doc?.invalidate()
+    }
+
+    /** Applies the transform at full size (pixels and mask), then runs [onDone]. */
+    fun applyTransform(onDone: () -> Unit = {}) {
+        val d = doc ?: return
+        val t = transform ?: return
+        if (busy != null) return
+        var st = t.state
+        if (st.copy(keepAspect = true) == t.start.copy(keepAspect = true)) {
+            cancelTransform()
+            onDone()
+            return
+        }
+        st = st.pixelAligned()
+        val l = t.layer
+        runBusy("Transforming…", onDone) {
+            val result = withContext(Dispatchers.Default) {
+                // Layer-local → canvas
+                val m = st.matrix()
+                val limit = Transformer.limitFor(d.width, d.height)
+                val px = Transformer.render(t.tiles, false, t.content, m, limit)
+                val grid = px?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
+                    ?: TileGrid(alphaOnly = false)
+                val maskGrid = t.mask?.let { mk ->
+                    val r = Transformer.render(mk, true, t.content, m, limit)
+                    r?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = true).also { bmp.recycle() } }
+                        ?: TileGrid(alphaOnly = true)
+                }
+                grid to maskGrid
+            }
+            transform = null
+            preview = null
+            if (doc === d && l.tiles === t.sourceGrid) {
+                stackEdit("Transform") {
+                    l.tiles = result.first
+                    l.x = 0
+                    l.y = 0
+                    if (l.mask != null) l.mask = result.second
+                }
+            }
+            tool = Tool.MOVE
+        }
+    }
+
+    /** Rotates the whole image a quarter turn (every layer and mask; the canvas turns too). */
+    fun rotateImage(clockwise: Boolean) {
+        val d = doc ?: return
+        val w = d.width
+        val h = d.height
+        canvasTransform(if (clockwise) "Rotate image right" else "Rotate image left", h, w) { m ->
+            if (clockwise) {
+                m.postRotate(90f)
+                m.postTranslate(h.toFloat(), 0f)
+            } else {
+                m.postRotate(-90f)
+                m.postTranslate(0f, w.toFloat())
+            }
+        }
+    }
+
+    fun flipImage(horizontal: Boolean) {
+        val d = doc ?: return
+        val w = d.width
+        val h = d.height
+        canvasTransform(if (horizontal) "Flip image horizontally" else "Flip image vertically", w, h) { m ->
+            if (horizontal) {
+                m.postScale(-1f, 1f)
+                m.postTranslate(w.toFloat(), 0f)
+            } else {
+                m.postScale(1f, -1f)
+                m.postTranslate(0f, h.toFloat())
+            }
+        }
+    }
+
+    private fun canvasTransform(label: String, newW: Int, newH: Int, build: (Matrix) -> Unit) {
+        val d = doc ?: return
+        if (pendingFirst { canvasTransform(label, newW, newH, build) }) return
+        val layers = d.layers.toList()
+        val snaps = layers.map { Triple(it, HashMap(it.tiles.tiles), it.mask?.let { m -> HashMap(m.tiles) }) }
+        runBusy("Turning…") {
+            val results = withContext(Dispatchers.Default) {
+                val everywhere = Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
+                snaps.map { (l, tiles, mask) ->
+                    val m = Matrix().apply { setTranslate(l.x.toFloat(), l.y.toFloat()) }
+                    build(m)
+                    val area = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.tileBounds()
+                    val grid = area?.let { a -> Transformer.render(tiles, false, a, m, everywhere) }
+                        ?.let { (bmp, at) -> TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly = false).also { bmp.recycle() } }
+                        ?: TileGrid(alphaOnly = false)
+                    val maskGrid = mask?.let { mk ->
+                        val ma = TileGrid(alphaOnly = true).also { it.tiles.putAll(mk) }.tileBounds()
+                        ma?.let { a -> Transformer.render(mk, true, a, m, everywhere) }
+                            ?.let { (bmp, at) -> TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly = true).also { bmp.recycle() } }
+                            ?: TileGrid(alphaOnly = true)
+                    }
+                    Triple(l, grid, maskGrid)
+                }
+            }
+            if (doc !== d) return@runBusy
+            stackEdit(label) {
+                for ((l, grid, maskGrid) in results) {
+                    l.tiles = grid
+                    l.x = 0
+                    l.y = 0
+                    if (l.mask != null) l.mask = maskGrid
+                }
+                d.width = newW
+                d.height = newH
+            }
+            fit()
+        }
     }
 
     // ================================================================== thumbnails
@@ -1130,6 +1465,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** Effect images on screen are at most this big (blur hides the difference). */
+        const val SCREEN_FX_PX = 4400
+        /** Exports and merges use full size. */
+        const val FULL_FX_PX = 8192
         const val PREVIEW_PX = 2048f
         const val THUMB_PX = 96
     }

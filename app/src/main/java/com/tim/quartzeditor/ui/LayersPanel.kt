@@ -55,6 +55,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -160,6 +162,15 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
     Spacer(Modifier.height(6.dp))
     var more by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { vm.toggleSection(PanelSection.STYLE, open = true) },
+        ) {
+            Text("fx", color = Q.text, fontSize = 18.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold)
+        }
         BarButton(QIcons.Mask, "Add a mask") { vm.addMask() }
         BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
         BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
@@ -248,6 +259,7 @@ private fun LayerRow(
             val notes = buildList {
                 if (p.blend != Blend.NORMAL) add(p.blend.label)
                 if (p.opacity < 0.995f) add("${(p.opacity * 100).roundToInt()}%")
+                if (p.style.any) add("fx")
                 if (p.locked) add("Locked")
                 else if (p.lockAlpha) add("Transparency locked")
             }

@@ -172,7 +172,7 @@ object Gpu {
                 buffer.use { hb ->
                     val hw = Bitmap.wrapHardwareBuffer(hb, ColorSpace.get(ColorSpace.Named.SRGB))
                         ?: throw IllegalStateException("Couldn't wrap GPU buffer")
-                    val copy = hw.copy(Bitmap.Config.ARGB_8888, false)
+                    val copy = hw.copy(Bitmap.Config.ARGB_8888, true)
                     hw.recycle()
                     return copy
                 }

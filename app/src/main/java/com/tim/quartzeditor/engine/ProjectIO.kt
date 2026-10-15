@@ -76,7 +76,8 @@ object ProjectIO {
             tmp.copyTo(dest, overwrite = true)
             tmp.delete()
         }
-        val thumb = DocRenderer.thumbnail(doc, 360, background = 0xFF2B2B2B.toInt())
+        val small = DocRenderer.buildAllEffects(doc, 512)
+        val thumb = DocRenderer.thumbnail(doc, 360, background = 0xFF2B2B2B.toInt(), effects = { small[it.id] })
         thumbFile(context, id).outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 85, it) }
         thumb.recycle()
         metaFile(context, id).writeText(
@@ -112,6 +113,7 @@ object ProjectIO {
                     .put("x", l.x)
                     .put("y", l.y)
                     .put("hasMask", l.mask != null)
+                    .put("style", p.style.toJson())
             )
         }
         // Settings first, then the pixels
@@ -135,7 +137,8 @@ object ProjectIO {
             l.mask?.let { m -> for ((k, b) in m.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "M${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf) }
         }
 
-        val thumb = DocRenderer.thumbnail(doc, 512, background = Color.WHITE)
+        val fx = DocRenderer.buildAllEffects(doc, 512)
+        val thumb = DocRenderer.thumbnail(doc, 512, background = Color.WHITE, effects = { fx[it.id] })
         zip.putNextEntry(ZipEntry("thumb.jpg"))
         thumb.compress(Bitmap.CompressFormat.JPEG, 85, zip)
         zip.closeEntry()
@@ -194,6 +197,7 @@ object ProjectIO {
                 lockAlpha = o.optBoolean("lockAlpha"),
                 locked = o.optBoolean("locked"),
                 maskDisabled = o.optBoolean("maskDisabled"),
+                style = LayerStyle.fromJson(o.optJSONObject("style")),
             )
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null

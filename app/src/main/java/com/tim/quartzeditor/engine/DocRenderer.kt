@@ -24,6 +24,8 @@ class LayerPreview(
     val proxy: Bitmap? = null,
     /** Layer-local area [proxy] covers. */
     val proxyBounds: RectF? = null,
+    /** Being transformed: [proxy] (with its mask applied) drawn through this matrix (proxy pixels → canvas). */
+    val transform: android.graphics.Matrix? = null,
 ) {
     private val shader by lazy { ColorShader() }
 
@@ -59,6 +61,7 @@ object DocRenderer {
         stroke: StrokeSession? = null,
         preview: LayerPreview? = null,
         smooth: Boolean = true,
+        effects: ((Layer) -> BuiltEffects?)? = null,
     ) {
         val w = doc.width.toFloat()
         val h = doc.height.toFloat()
@@ -74,7 +77,7 @@ object DocRenderer {
         val tilePaint = Paint().apply { isFilterBitmap = smooth }
         for (layer in doc.layers) {
             if (!layer.props.visible) continue
-            drawLayer(canvas, doc.width.toFloat(), doc.height.toFloat(), layer, bounds, tilePaint, stroke?.takeIf { it.layer === layer }, preview?.takeIf { it.layerId == layer.id }, smooth)
+            drawLayer(canvas, doc.width.toFloat(), doc.height.toFloat(), layer, bounds, tilePaint, stroke?.takeIf { it.layer === layer }, preview?.takeIf { it.layerId == layer.id }, smooth, effects)
         }
         if (isolate) canvas.restore()
         canvas.restore()
@@ -90,48 +93,115 @@ object DocRenderer {
         stroke: StrokeSession?,
         preview: LayerPreview?,
         smooth: Boolean,
+        effects: ((Layer) -> BuiltEffects?)?,
     ) {
         val p = layer.props
-        val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
-        if (alpha <= 0f) return
-        val mask = if (layer.maskActive) layer.mask else null
-        val maskStroke = stroke?.takeIf { it.target == StrokeTarget.MASK }
-        val pixelStroke = stroke?.takeIf { it.target == StrokeTarget.PIXELS }
-        val needsLayer = p.blend != Blend.NORMAL || alpha < 1f || mask != null || stroke != null || preview?.fx != null
+        val transforming = preview?.transform != null
+        val style = p.style
+        val built = if (style.needsBuild && !transforming) effects?.invoke(layer) else null
+        val overlay = style.colorOverlay.takeIf { it.on && !transforming }
         val dx = layer.x + (preview?.dragX ?: 0f)
         val dy = layer.y + (preview?.dragY ?: 0f)
-        // Tiles are skipped when off screen; work that out in the layer's own coordinates
-        val local = RectF(bounds).apply { offset(-dx, -dy) }
 
-        if (!needsLayer) {
-            layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
+        if (built == null && overlay == null) {
+            // No effects: the layer's opacity and fill simply multiply
+            val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
+            if (alpha <= 0f) return
+            val mask = if (layer.maskActive && !transforming) layer.mask else null
+            val plain = p.blend == Blend.NORMAL && alpha >= 1f && mask == null && stroke == null && preview?.fx == null && !transforming
+            if (plain) {
+                layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
+                return
+            }
+            canvas.saveLayer(bounds, Paint().apply {
+                this.alpha = (alpha * 255).roundToInt()
+                blendMode = p.blend.mode
+            })
+            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            canvas.restore()
             return
         }
 
-        val lp = Paint().apply {
-            this.alpha = (alpha * 255).roundToInt()
+        // With effects: opacity covers everything, fill only the layer's own pixels (like Photoshop)
+        if (p.opacity <= 0f) return
+        canvas.saveLayer(bounds, Paint().apply {
+            alpha = (p.opacity.coerceIn(0f, 1f) * 255).roundToInt()
             blendMode = p.blend.mode
+        })
+        if (built != null) {
+            if (style.dropShadow.on) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity)
+            if (style.outerGlow.on) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity)
         }
-        canvas.saveLayer(bounds, lp)
+        // Fill fades the pixels only
+        if (p.fill > 0f) {
+            canvas.saveLayer(bounds, Paint().apply { alpha = (p.fill.coerceIn(0f, 1f) * 255).roundToInt() })
+            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            canvas.restore()
+        }
+        if (overlay != null && overlay.opacity > 0f) {
+            // The layer's shape, colored (at full strength, whatever the fill)
+            canvas.saveLayer(bounds, Paint().apply { alpha = (overlay.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            canvas.drawPaint(Paint().apply {
+                color = overlay.color or 0xFF000000.toInt()
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+            })
+            canvas.restore()
+        }
+        if (built != null && style.innerShadow.on) {
+            // Already limited to the layer's shape
+            Effects.drawImage(canvas, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity)
+        }
+        if (built != null && style.stroke.on) {
+            Effects.drawImage(canvas, built, built.stroke, dx, dy, style.stroke.color, style.stroke.opacity)
+        }
+        canvas.restore()
+    }
+
+    /** The layer's own pixels: tiles (or a preview), a stroke in progress, and its mask. */
+    private fun drawContent(
+        canvas: Canvas,
+        docW: Float,
+        docH: Float,
+        layer: Layer,
+        bounds: RectF,
+        tilePaint: Paint,
+        stroke: StrokeSession?,
+        preview: LayerPreview?,
+        smooth: Boolean,
+        dx: Float,
+        dy: Float,
+    ) {
+        val local = RectF(bounds).apply { offset(-dx, -dy) }
+        val t = preview?.transform
+        if (t != null && preview.proxy != null) {
+            // Being transformed: the proxy already has the mask applied
+            canvas.save()
+            canvas.concat(t)
+            canvas.drawBitmap(preview.proxy, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.restore()
+            return
+        }
         if (preview?.fx != null) {
             preview.drawFx(canvas, layer, docW, docH)
         } else {
             layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
         }
+        val pixelStroke = stroke?.takeIf { it.target == StrokeTarget.PIXELS }
+        val maskStroke = stroke?.takeIf { it.target == StrokeTarget.MASK }
         if (pixelStroke != null) {
             canvas.save()
             canvas.translate(dx, dy)
             pixelStroke.applyToPixels(canvas, 0f, 0f, local, smooth = smooth)
             canvas.restore()
         }
+        val mask = if (layer.maskActive) layer.mask else null
         if (mask != null) {
-            val mp = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
-            canvas.saveLayer(bounds, mp)
-            val maskPaint = Paint().apply {
+            canvas.saveLayer(bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+            mask.drawTo(canvas, dx, dy, Paint().apply {
                 isFilterBitmap = smooth
                 color = Color.BLACK
-            }
-            mask.drawTo(canvas, dx, dy, maskPaint, RectF(bounds))
+            }, RectF(bounds))
             if (maskStroke != null) {
                 canvas.save()
                 canvas.translate(dx, dy)
@@ -140,14 +210,13 @@ object DocRenderer {
             }
             canvas.restore()
         }
-        canvas.restore()
     }
 
     /**
      * Draws [layers] (with their masks, opacity and blend modes) over a transparent background,
      * covering canvas area [region] — which may reach past the canvas edges.
      */
-    fun renderLayers(layers: List<Layer>, region: android.graphics.Rect, docW: Int, docH: Int): Bitmap {
+    fun renderLayers(layers: List<Layer>, region: android.graphics.Rect, docW: Int, docH: Int, effects: ((Layer) -> BuiltEffects?)? = null): Bitmap {
         val bmp = Bitmap.createBitmap(region.width().coerceAtLeast(1), region.height().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         bmp.setHasAlpha(true)
         val c = Canvas(bmp)
@@ -156,23 +225,23 @@ object DocRenderer {
         val paint = Paint()
         for (l in layers) {
             if (!l.props.visible) continue
-            drawLayer(c, docW.toFloat(), docH.toFloat(), l, b, paint, null, null, false)
+            drawLayer(c, docW.toFloat(), docH.toFloat(), l, b, paint, null, null, false, effects)
         }
         return bmp
     }
 
     /** The whole flattened image at full size (software rendering, any thread). */
-    fun flatten(doc: Doc, background: Int = Color.TRANSPARENT): Bitmap {
+    fun flatten(doc: Doc, background: Int = Color.TRANSPARENT, effects: ((Layer) -> BuiltEffects?)? = null): Bitmap {
         val bmp = Bitmap.createBitmap(doc.width, doc.height, Bitmap.Config.ARGB_8888)
         bmp.setHasAlpha(true)
         val c = Canvas(bmp)
         if (Color.alpha(background) > 0) c.drawColor(background)
-        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()))
+        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), effects = effects)
         return bmp
     }
 
     /** A small copy of the whole image, longest side [maxPx]. */
-    fun thumbnail(doc: Doc, maxPx: Int, background: Int = Color.TRANSPARENT): Bitmap {
+    fun thumbnail(doc: Doc, maxPx: Int, background: Int = Color.TRANSPARENT, effects: ((Layer) -> BuiltEffects?)? = null): Bitmap {
         val s = min(1f, maxPx.toFloat() / max(doc.width, doc.height))
         val w = (doc.width * s).roundToInt().coerceAtLeast(1)
         val h = (doc.height * s).roundToInt().coerceAtLeast(1)
@@ -180,17 +249,17 @@ object DocRenderer {
         val c = Canvas(bmp)
         if (Color.alpha(background) > 0) c.drawColor(background)
         c.scale(w / doc.width.toFloat(), h / doc.height.toFloat())
-        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()))
+        draw(c, doc, RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), effects = effects)
         return bmp
     }
 
     /** The color you see at one canvas pixel (all visible layers), or null where it's see-through. */
-    fun sample(doc: Doc, x: Int, y: Int): Int? {
+    fun sample(doc: Doc, x: Int, y: Int, effects: ((Layer) -> BuiltEffects?)? = null): Int? {
         if (x !in 0 until doc.width || y !in 0 until doc.height) return null
         val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.translate(-x.toFloat(), -y.toFloat())
-        draw(c, doc, RectF(x.toFloat(), y.toFloat(), x + 1f, y + 1f), smooth = false)
+        draw(c, doc, RectF(x.toFloat(), y.toFloat(), x + 1f, y + 1f), smooth = false, effects = effects)
         val px = bmp.getPixel(0, 0)
         bmp.recycle()
         return if (Color.alpha(px) < 8) null else px or 0xFF000000.toInt()
@@ -261,5 +330,19 @@ object DocRenderer {
         c.clipRect(0f, 0f, docW.toFloat(), docH.toFloat())
         m.drawTo(c, layer.x.toFloat(), layer.y.toFloat(), Paint().apply { isFilterBitmap = true; color = Color.BLACK }, RectF(0f, 0f, docW.toFloat(), docH.toFloat()))
         return bmp
+    }
+
+    /**
+     * Prepares every visible layer's effects for a background render (export, merge, save
+     * thumbnail). [doc] should be a [Doc.shallowCopy]. Images are at most [maxSide] across.
+     */
+    fun buildAllEffects(doc: Doc, maxSide: Int, only: Collection<Layer> = doc.layers): Map<Long, BuiltEffects> {
+        val out = HashMap<Long, BuiltEffects>()
+        for (l in only) {
+            if (!l.props.visible || !l.props.style.needsBuild) continue
+            val mask = if (l.maskActive) l.mask?.tiles else null
+            Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide)?.let { out[l.id] = it }
+        }
+        return out
     }
 }

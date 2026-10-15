@@ -21,11 +21,15 @@ and the same button hides them.
 ### Toolbar
 - **Move** — drag the selected layer with one finger; tap the picture to select the top layer under your
   finger. Tap Move again to switch to **Pan** (one finger moves the view).
+- **Transform** — a box around the selected layer: drag inside to move, corners to scale (proportions
+  locked unless you unlink them), edges to stretch, outside the box or the top handle to rotate (snaps to
+  straight angles). The bar on the picture has flip, rotate 90°, **Distort** (drag each corner anywhere)
+  and Apply; Properties has exact W/H % and angle.
 - **Eyedropper** — touch and drag; the loupe shows the color, lifting picks it into the swatch you're editing.
 - **Brush** — tap again for brush tips: Round, Square, Triangle, Grunge.
 - **Eraser** — tap again for the same tips.
-- **Softness** and **Size** sliders (drag up for softer / bigger). They follow whichever of brush or eraser
-  you're using.
+- **Softness**, **Size** and **Opacity** sliders. They follow whichever of brush or eraser you're using,
+  and the brush appears in the middle of the picture while you drag one.
 - **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
   them to swap.
 
@@ -41,7 +45,12 @@ and the same button hides them.
 - **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
   sharpness, vignette, grain. Live preview on the selected layer, then Apply or Cancel.
 - **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength, previewed on the layer.
-- **Properties** — brush/eraser tip, opacity and exact size; the layer's name and X/Y position; mask controls.
+- **Properties** — transform numbers; brush/eraser tip, opacity and exact size; the layer's name and X/Y
+  position; mask controls.
+- **Layer Style** (or the **fx** button under the layers) — Stroke (outside, inside, center), Drop Shadow,
+  Inner Shadow, Outer Glow and Color Overlay. They follow the layer, never change its pixels, and can be
+  changed or switched off any time. With effects on, Opacity fades everything and Fill fades only the
+  layer's own pixels, like Photoshop. Merge down, flatten and export bake them in.
 - **Layers**
   - Blend mode (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
@@ -61,6 +70,8 @@ in between. Tap the mask thumbnail to paint on the mask, the layer thumbnail to 
   mask and setting.
 - **Export image** saves a flattened PNG, JPG or WebP to `Pictures/Quartz Editor` (shows up in Quartz
   Gallery), optionally sharing it.
+- **Close without saving** (menu) throws away changes since the last save.
+- The menu also rotates the whole image 90° or flips it.
 - **Save project file** writes a `.qedit` file anywhere (Drive, Downloads...). Projects live inside the app,
   so uninstalling removes them — keep a project file of anything important.
 

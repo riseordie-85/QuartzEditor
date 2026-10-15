@@ -52,6 +52,8 @@ data class LayerProps(
     val locked: Boolean = false,
     /** Mask switched off (kept, but not applied). */
     val maskDisabled: Boolean = false,
+    /** Stroke, shadows, glow, color overlay. */
+    val style: LayerStyle = LayerStyle(),
 )
 
 /**

@@ -91,6 +91,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
         Section(vm, PanelSection.ADJUSTMENTS) { AdjustPanel(vm) }
         Section(vm, PanelSection.FILTERS) { FiltersPanel(vm) }
         Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
+        Section(vm, PanelSection.STYLE) { StylePanel(vm) }
         Section(vm, PanelSection.LAYERS) { LayersPanel(vm, onPlaceImage) }
     }
 }
@@ -460,6 +461,7 @@ private fun FiltersPanel(vm: EditorViewModel) {
 
 @Composable
 private fun PropertiesPanel(vm: EditorViewModel) {
+    TransformProperties(vm)
     val tool = vm.tool
     if (tool == Tool.BRUSH || tool == Tool.ERASER) {
         val b = if (tool == Tool.ERASER) vm.eraser else vm.brush

@@ -75,6 +75,7 @@ fun Workspace(vm: EditorViewModel) {
     }
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     var exportOpen by remember { mutableStateOf(false) }
+    var discardOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         Modifier
@@ -134,8 +135,18 @@ fun Workspace(vm: EditorViewModel) {
                         DropdownMenuItem(text = { Text("Place image as layer…") }, onClick = { menu = false; requestPlace() })
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Flatten image") }, onClick = { menu = false; vm.flattenImage() })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Rotate image 90° right") }, onClick = { menu = false; vm.rotateImage(clockwise = true) })
+                        DropdownMenuItem(text = { Text("Rotate image 90° left") }, onClick = { menu = false; vm.rotateImage(clockwise = false) })
+                        DropdownMenuItem(text = { Text("Flip image horizontally") }, onClick = { menu = false; vm.flipImage(horizontal = true) })
+                        DropdownMenuItem(text = { Text("Flip image vertically") }, onClick = { menu = false; vm.flipImage(horizontal = false) })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Close without saving…") }, onClick = { menu = false; discardOpen = true })
                     }
                 }
+
+                // Transforming: cancel / flip / rotate / distort / apply
+                TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
 
                 // Show / hide panels
                 RoundButton(
@@ -200,6 +211,22 @@ fun Workspace(vm: EditorViewModel) {
         }
 
         BusyOverlay(vm.busy)
+    }
+
+    if (discardOpen) {
+        val saved = vm.doc?.projectId != null
+        AlertDialog(
+            onDismissRequest = { discardOpen = false },
+            title = { Text("Close without saving?") },
+            text = {
+                Text(
+                    if (saved) "Changes since this project was last saved will be lost. The saved version stays in Projects."
+                    else "This image hasn't been saved. Everything you did will be lost."
+                )
+            },
+            confirmButton = { TextButton(onClick = { discardOpen = false; vm.discardDocument() }) { Text("Close without saving") } },
+            dismissButton = { TextButton(onClick = { discardOpen = false }) { Text("Keep editing") } },
+        )
     }
 
     if (exportOpen) {

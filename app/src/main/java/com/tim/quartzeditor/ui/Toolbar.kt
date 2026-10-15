@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Colorize
 import androidx.compose.material.icons.outlined.PanTool
+import androidx.compose.material.icons.outlined.Transform
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -89,6 +90,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
         ) {
             val moveIcon = if (vm.tool == Tool.PAN) Icons.Outlined.PanTool else QIcons.Move
             ToolButton(moveIcon, if (vm.tool == Tool.PAN) "Pan (tap again to move layers)" else "Move layer (tap again to pan)", vm.tool == Tool.MOVE || vm.tool == Tool.PAN, buttonSize) { vm.onToolButton(Tool.MOVE) }
+            ToolButton(Icons.Outlined.Transform, "Transform (scale, rotate, flip, distort)", vm.tool == Tool.TRANSFORM, buttonSize) { vm.onToolButton(Tool.TRANSFORM) }
             ToolButton(Icons.Outlined.Colorize, "Eyedropper", vm.tool == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
             Spacer(Modifier.height(6.dp))
             Box {
@@ -100,28 +102,48 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
                 if (vm.brushPickerFor == Tool.ERASER) BrushPicker(vm, Tool.ERASER, buttonSize)
             }
 
-            val sliderH = if (tight) 120.dp else ((availH - buttonSize * 4 - 210.dp) / 2).coerceIn(90.dp, 240.dp)
+            val sliderH = if (tight) 100.dp else ((availH - buttonSize * 5 - 300.dp) / 3).coerceIn(70.dp, 200.dp)
             val b = if (vm.sliderTool == Tool.ERASER) vm.eraser else vm.brush
-            Spacer(Modifier.height(12.dp))
+            val preview: (Boolean) -> Unit = { vm.brushPreview = it }
+            Spacer(Modifier.height(10.dp))
+            SliderCaption("Soft")
             VerticalSlider(
                 value = b.softness,
                 onChange = { v -> vm.updateBrush(vm.sliderTool) { it.copy(softness = v) } },
                 height = sliderH,
                 description = "Softness",
+                onActive = preview,
             )
             ToolLabel("${(b.softness * 100).roundToInt()}%")
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
+            SliderCaption("Size")
             VerticalSlider(
                 value = BrushSizeScale.toT(b.size),
                 onChange = { t -> vm.updateBrush(vm.sliderTool) { it.copy(size = BrushSizeScale.toPx(t).roundToInt().toFloat().coerceAtLeast(1f)) } },
                 height = sliderH,
                 description = "Size",
+                onActive = preview,
             )
             ToolLabel("${b.size.roundToInt()}px")
+            Spacer(Modifier.height(8.dp))
+            SliderCaption("Opacity")
+            VerticalSlider(
+                value = b.opacity,
+                onChange = { v -> vm.updateBrush(vm.sliderTool) { it.copy(opacity = v.coerceAtLeast(0.01f)) } },
+                height = sliderH,
+                description = "Opacity",
+                onActive = preview,
+            )
+            ToolLabel("${(b.opacity * 100).roundToInt()}%")
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))
             ColorSwatches(vm, if (compact) 36.dp else 44.dp, onColorTap)
         }
     }
+}
+
+@Composable
+private fun SliderCaption(text: String) {
+    Text(text, color = Q.textDim, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 2.dp))
 }
 
 @Composable
@@ -147,11 +169,12 @@ private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, size
 
 /** A tall slider like the ones in the mock-up: drag up for more. */
 @Composable
-fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, description: String) {
+fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, description: String, onActive: (Boolean) -> Unit = {}) {
     val density = LocalDensity.current
     var trackPx by remember { mutableFloatStateOf(1f) }
     val current by rememberUpdatedState(value)
     val change by rememberUpdatedState(onChange)
+    val active by rememberUpdatedState(onActive)
     val thumbH = 30.dp
     val thumbPx = with(density) { thumbH.toPx() }
     Box(
@@ -173,12 +196,17 @@ fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, descript
                         change(start)
                     }
                     down.consume()
-                    while (true) {
-                        val e = awaitPointerEvent()
-                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!c.pressed) break
-                        change((start - (c.position.y - y0) / range).coerceIn(0f, 1f))
-                        c.consume()
+                    active(true)
+                    try {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed) break
+                            change((start - (c.position.y - y0) / range).coerceIn(0f, 1f))
+                            c.consume()
+                        }
+                    } finally {
+                        active(false)
                     }
                 }
             },

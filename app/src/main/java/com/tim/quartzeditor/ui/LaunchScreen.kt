@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -182,7 +183,8 @@ private fun RecentPane(vm: EditorViewModel, modifier: Modifier) {
 
 @Composable
 private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
-    Column(Modifier.clickable(onClick = onClick)) {
+    // As wide as its text (the underline must not stretch the tab across the row)
+    Column(Modifier.width(IntrinsicSize.Max).clickable(onClick = onClick)) {
         Text(text, color = if (selected) Color.White else Q.textDim, fontSize = 17.sp)
         Spacer(Modifier.height(4.dp))
         Box(Modifier.height(2.dp).fillMaxWidth().background(if (selected) Q.accent else Color.Transparent))
