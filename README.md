@@ -34,8 +34,8 @@ and the same button hides them.
 - **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
 - **Paint bucket** — tap to fill matching pixels with the foreground color. Tolerance, "only touching
   pixels" and "look at all layers" are in Properties.
-- **Gradient** — drag on the picture: the gradient (from the Gradients panel) runs from where you start to
-  where you let go. Linear, Radial or Reflected; reverse and opacity.
+- **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
+  Linear / Radial / Reflected, reverse and opacity are in Properties.
 - **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
 - **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
@@ -49,33 +49,36 @@ and the same button hides them.
   Save project file, Place image as layer and Flatten.
 
 ### Panels
+Only **Color**, **Properties** and **Layers** live in the column.
+- **Color** and **Properties** fold away by themselves: picking a tool opens Properties with that tool's
+  settings (selection shape and mode, crop ratio, transform numbers, bucket tolerance, gradient presets
+  and type, brush tips and opacity), and tapping a color swatch opens Color. The **pin** on a section's
+  header keeps it open. With Move, Properties shows the selected layer (name, position, mask).
 - **Color** — saturation/brightness square, hue bar, hex, RGB, recent colors and basics.
-- **Gradients** — presets (including foreground→background and foreground→transparent), type, reverse,
-  opacity. Picking one switches to the Gradient tool.
-- **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
-  sharpness, vignette, grain. On a pixel layer: live preview, then Apply or Cancel. On an **adjustment
-  layer** the same sliders (and Filters) stay editable forever and change everything below it.
-- **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength, previewed on the layer.
-- **Properties** — transform numbers; brush/eraser tip, opacity and exact size; the layer's name and X/Y
-  position; mask controls.
-- **Layer Style** (or the **fx** button under the layers) — Stroke (outside, inside, center), Drop Shadow,
-  Inner Shadow, Outer Glow and Color Overlay. They follow the layer, never change its pixels, and can be
-  changed or switched off any time. With effects on, Opacity fades everything and Fill fades only the
-  layer's own pixels, like Photoshop. Merge down, flatten and export bake them in.
-- **Layers**
-  - Blend mode (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
+- **Layers** — like Photoshop, the settings on top (blend mode, opacity, locks, fill) and the buttons at the
+  bottom stay put; only the list between them scrolls. It shows four layers while Color or Properties is
+  open, and fills the column when they're folded.
+  - Blend modes (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
-  - Lock transparent pixels (painting only changes what's already there; the eraser paints the background
-    color) and lock the whole layer.
+  - Lock transparent pixels and lock the whole layer.
   - Each layer: show/hide, thumbnail, mask thumbnail, name (long-press to rename), drag handle to reorder.
   - **Folders**: the arrow folds/unfolds them. Drag a layer just under a folder's row to put it inside;
-    drag it below the folder's contents to take it out. A folder's opacity, blend mode and mask apply to
-    everything in it.
-  - **Adjustment layers**: change everything below them (inside their folder) without touching pixels;
-    paint their mask to limit them.
-  - Bottom bar: fx, add mask, new adjustment layer, new folder, new layer, delete, and ⋮ for duplicate,
-    merge down / merge folder, put in a new folder, flatten, place image, remove background, fill, clear,
-    and mask options (enable/disable, invert, apply, delete).
+    drag it below the folder's contents to take it out.
+  - **Adjustment layers**: change everything below them without touching pixels; paint their mask to limit
+    them. Tap one's icon to edit it.
+  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (new adjustment layer, Adjustments…,
+    Filters…), new folder, new layer, delete, and ⋮ for everything else.
+
+### Floating windows
+**Layer Style**, **Adjustments** and **Filters** open in a window over the picture (from the bottom of the
+Layers panel), so you can see the result while you change them.
+- **Layer Style** — Stroke (outside, inside, center), Drop Shadow, Inner Shadow, Outer Glow, Color Overlay.
+  They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
+  fades only the layer's own pixels. Merge down, flatten and export bake them in.
+- **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
+  sharpness, vignette, grain. On a pixel layer: live preview, then Apply (closing the window cancels). On an
+  adjustment layer they stay editable.
+- **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength.
 
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for

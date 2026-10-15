@@ -68,182 +68,205 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.tim.quartzeditor.engine.Blend
 import com.tim.quartzeditor.engine.Layer
 import kotlin.math.roundToInt
 
 /** [onPlaceImage] opens the photo picker to add an image as a new layer. */
 @Composable
-fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
+fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean, modifier: Modifier = Modifier) {
     val d = vm.doc ?: return
     val active = d.active
     var renaming by remember { mutableStateOf<Layer?>(null) }
+    // Top settings and bottom buttons stay put; only the list between them scrolls (like Photoshop)
+    Column(modifier.padding(horizontal = 12.dp)) {
+        Text("Layers", color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
 
-    // Blend mode and opacity
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        BlendMenu(active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f)) { b ->
-            active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b) } }
-        }
-        Spacer(Modifier.width(8.dp))
-        PercentChip("Opacity", active?.props?.opacity ?: 1f,
-            onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(opacity = v) } } },
-            onDone = { vm.commitProps("Opacity") })
-    }
-    Spacer(Modifier.height(8.dp))
-    // Locks and fill
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Lock:", color = Q.textDim, fontSize = 13.sp)
-        Spacer(Modifier.width(6.dp))
-        LockToggle(QIcons.LockAlpha, "Lock transparent pixels", active?.props?.lockAlpha == true) {
-            active?.let { l -> vm.setProps(l.id, if (l.props.lockAlpha) "Unlock transparency" else "Lock transparency") { it.copy(lockAlpha = !it.lockAlpha) } }
-        }
-        Spacer(Modifier.width(4.dp))
-        LockToggle(Icons.Outlined.Lock, "Lock layer", active?.props?.locked == true) {
-            active?.let { l -> vm.setProps(l.id, if (l.props.locked) "Unlock layer" else "Lock layer") { it.copy(locked = !it.locked) } }
-        }
-        Spacer(Modifier.weight(1f))
-        PercentChip("Fill", active?.props?.fill ?: 1f,
-            onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(fill = v) } } },
-            onDone = { vm.commitProps("Fill") })
-    }
-    Spacer(Modifier.height(8.dp))
-
-    // The layers, top of the stack first
-    val density = LocalDensity.current
-    val rowH = 58.dp
-    val rowPx = with(density) { rowH.toPx() }
-    var dragId by remember { mutableStateOf<Long?>(null) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    // Rows top first; folders that are folded hide what's in them
-    val shown = ArrayList<Layer>()
-    fun addRows(parent: Long) {
-        for (l in d.children(parent).asReversed()) {
-            shown.add(l)
-            if (l.isGroup && !l.collapsed) addRows(l.id)
-        }
-    }
-    addRows(0L)
-    val dragFrom = shown.indexOfFirst { it.id == dragId }
-    val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
-
-    Column(Modifier.fillMaxWidth()) {
-        shown.forEachIndexed { i, l ->
-            val isDragged = l.id == dragId
-            val shift = when {
-                dragFrom < 0 || isDragged -> 0f
-                dragFrom < dragTo && i in (dragFrom + 1)..dragTo -> -rowPx
-                dragFrom > dragTo && i in dragTo until dragFrom -> rowPx
-                else -> 0f
+        // Blend mode and opacity
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BlendMenu(active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f)) { b ->
+                active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b) } }
             }
-            val y = if (isDragged) dragOffset else shift
-            LayerRow(
-                vm = vm,
-                layer = l,
-                selected = l.id == d.activeId,
-                maskSelected = l.id == d.activeId && d.editMask,
-                height = rowH,
-                modifier = Modifier
-                    .zIndex(if (isDragged) 1f else 0f)
-                    .offset { IntOffset(0, y.roundToInt()) },
-                onRename = { renaming = l },
-                handle = Modifier.pointerInput(l.id) {
-                    detectDragGestures(
-                        onDragStart = {
-                            dragId = l.id
-                            dragOffset = 0f
-                        },
-                        onDragEnd = {
-                            val steps = (dragOffset / rowPx).roundToInt()
-                            val id = dragId
-                            val doc = vm.doc
-                            val dragged = id?.let { doc?.layer(it) }
-                            if (doc != null && dragged != null && steps != 0) {
-                                // Rows as they are now (this lambda may be older than the panel)
-                                val rows = ArrayList<Layer>()
-                                fun add(parent: Long) {
-                                    for (x in doc.children(parent).asReversed()) {
-                                        rows.add(x)
-                                        if (x.isGroup && !x.collapsed) add(x.id)
-                                    }
-                                }
-                                add(0L)
-                                val from = rows.indexOf(dragged)
-                                val rest = rows.filter { it !== dragged && !doc.isInside(it, dragged) }
-                                val inside = rows.size - 1 - rest.size
-                                val target = (if (steps > 0) (from + steps - inside).coerceAtLeast(from) else from + steps).coerceIn(0, rest.size)
-                                // The row that ends up just above it decides where it goes
-                                vm.moveLayerUnder(dragged.id, if (target == 0) null else rest[target - 1].id)
-                            }
-                            dragId = null
-                            dragOffset = 0f
-                        },
-                        onDragCancel = {
-                            dragId = null
-                            dragOffset = 0f
-                        },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            dragOffset += amount.y
-                        },
-                    )
-                },
-            )
+            Spacer(Modifier.width(8.dp))
+            PercentChip("Opacity", active?.props?.opacity ?: 1f,
+                onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(opacity = v) } } },
+                onDone = { vm.commitProps("Opacity") })
         }
-    }
+        Spacer(Modifier.height(8.dp))
+        // Locks and fill
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Lock:", color = Q.textDim, fontSize = 13.sp)
+            Spacer(Modifier.width(6.dp))
+            LockToggle(QIcons.LockAlpha, "Lock transparent pixels", active?.props?.lockAlpha == true) {
+                active?.let { l -> vm.setProps(l.id, if (l.props.lockAlpha) "Unlock transparency" else "Lock transparency") { it.copy(lockAlpha = !it.lockAlpha) } }
+            }
+            Spacer(Modifier.width(4.dp))
+            LockToggle(Icons.Outlined.Lock, "Lock layer", active?.props?.locked == true) {
+                active?.let { l -> vm.setProps(l.id, if (l.props.locked) "Unlock layer" else "Lock layer") { it.copy(locked = !it.locked) } }
+            }
+            Spacer(Modifier.weight(1f))
+            PercentChip("Fill", active?.props?.fill ?: 1f,
+                onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(fill = v) } } },
+                onDone = { vm.commitProps("Fill") })
+        }
+        Spacer(Modifier.height(8.dp))
 
-    // Bottom bar: mask, new layer, delete, more
-    Spacer(Modifier.height(6.dp))
-    var more by remember { mutableStateOf(false) }
-    Row(horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(38.dp)
+        // The layers, top of the stack first
+        val density = LocalDensity.current
+        val rowH = 58.dp
+        val rowPx = with(density) { rowH.toPx() }
+        var dragId by remember { mutableStateOf<Long?>(null) }
+        var dragOffset by remember { mutableFloatStateOf(0f) }
+        // Rows top first; folders that are folded hide what's in them
+        val shown = ArrayList<Layer>()
+        fun addRows(parent: Long) {
+            for (l in d.children(parent).asReversed()) {
+                shown.add(l)
+                if (l.isGroup && !l.collapsed) addRows(l.id)
+            }
+        }
+        addRows(0L)
+        val dragFrom = shown.indexOfFirst { it.id == dragId }
+        val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
+
+        val listMod = if (fillList) Modifier.weight(1f) else Modifier.height(rowH * shown.size.coerceIn(1, 4))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .then(listMod)
                 .clip(RoundedCornerShape(10.dp))
-                .clickable { vm.toggleSection(PanelSection.STYLE, open = true) },
+                .verticalScroll(rememberScrollState())
         ) {
-            Text("fx", color = Q.text, fontSize = 18.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold)
-        }
-        BarButton(QIcons.Mask, "Add a mask") { vm.addMask() }
-        BarButton(Icons.Outlined.Contrast, "New adjustment layer") { vm.addAdjustmentLayer() }
-        BarButton(Icons.Outlined.CreateNewFolder, "New folder") { vm.addFolder() }
-        BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
-        BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
-        Box {
-            BarButton(Icons.Outlined.MoreVert, "More layer actions") { more = true }
-            DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                fun item(label: String, action: () -> Unit) = @Composable {
-                    DropdownMenuItem(text = { Text(label) }, onClick = {
-                        more = false
-                        action()
-                    })
+            shown.forEachIndexed { i, l ->
+                val isDragged = l.id == dragId
+                val shift = when {
+                    dragFrom < 0 || isDragged -> 0f
+                    dragFrom < dragTo && i in (dragFrom + 1)..dragTo -> -rowPx
+                    dragFrom > dragTo && i in dragTo until dragFrom -> rowPx
+                    else -> 0f
                 }
-                item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
-                if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
-                item("Put in a new folder") { vm.groupActive() }()
-                item("Flatten image") { vm.flattenImage() }()
-                HorizontalDivider()
-                item("Place image as layer…") { onPlaceImage() }()
-                item("Remove background") { vm.removeBackground() }()
-                item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
-                item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
-                if (active?.hasMask == true) {
-                    HorizontalDivider()
-                    item(if (active.props.maskDisabled) "Enable mask" else "Disable mask") { vm.toggleMaskEnabled() }()
-                    item("Invert mask") { vm.invertMask() }()
-                    item("Apply mask") { vm.applyMask() }()
-                    item("Delete mask") { vm.deleteMask() }()
-                }
-                HorizontalDivider()
-                item("Rename layer…") { renaming = active }()
+                val y = if (isDragged) dragOffset else shift
+                LayerRow(
+                    vm = vm,
+                    layer = l,
+                    selected = l.id == d.activeId,
+                    maskSelected = l.id == d.activeId && d.editMask,
+                    height = rowH,
+                    modifier = Modifier
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .offset { IntOffset(0, y.roundToInt()) },
+                    onRename = { renaming = l },
+                    handle = Modifier.pointerInput(l.id) {
+                        detectDragGestures(
+                            onDragStart = {
+                                dragId = l.id
+                                dragOffset = 0f
+                            },
+                            onDragEnd = {
+                                val steps = (dragOffset / rowPx).roundToInt()
+                                val id = dragId
+                                val doc = vm.doc
+                                val dragged = id?.let { doc?.layer(it) }
+                                if (doc != null && dragged != null && steps != 0) {
+                                    // Rows as they are now (this lambda may be older than the panel)
+                                    val rows = ArrayList<Layer>()
+                                    fun add(parent: Long) {
+                                        for (x in doc.children(parent).asReversed()) {
+                                            rows.add(x)
+                                            if (x.isGroup && !x.collapsed) add(x.id)
+                                        }
+                                    }
+                                    add(0L)
+                                    val from = rows.indexOf(dragged)
+                                    val rest = rows.filter { it !== dragged && !doc.isInside(it, dragged) }
+                                    val inside = rows.size - 1 - rest.size
+                                    val target = (if (steps > 0) (from + steps - inside).coerceAtLeast(from) else from + steps).coerceIn(0, rest.size)
+                                    // The row that ends up just above it decides where it goes
+                                    vm.moveLayerUnder(dragged.id, if (target == 0) null else rest[target - 1].id)
+                                }
+                                dragId = null
+                                dragOffset = 0f
+                            },
+                            onDragCancel = {
+                                dragId = null
+                                dragOffset = 0f
+                            },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                dragOffset += amount.y
+                            },
+                        )
+                    },
+                )
             }
         }
-    }
 
-    renaming?.let { l ->
-        RenameDialog(l.props.name, onDismiss = { renaming = null }) { name ->
-            vm.setProps(l.id, "Rename layer") { it.copy(name = name) }
-            renaming = null
+        // Bottom bar: mask, new layer, delete, more
+        Spacer(Modifier.height(6.dp))
+        var more by remember { mutableStateOf(false) }
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { vm.openPopup(PopupKind.STYLE) },
+            ) {
+                Text("fx", color = Q.text, fontSize = 18.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold)
+            }
+            BarButton(QIcons.Mask, "Add a mask") { vm.addMask() }
+            Box {
+                var adj by remember { mutableStateOf(false) }
+                BarButton(Icons.Outlined.Contrast, "Adjustments") { adj = true }
+                DropdownMenu(expanded = adj, onDismissRequest = { adj = false }) {
+                    DropdownMenuItem(text = { Text("New adjustment layer") }, onClick = { adj = false; vm.addAdjustmentLayer() })
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text(if (active?.isAdjustment == true) "Edit adjustments…" else "Adjustments…") }, onClick = { adj = false; vm.openPopup(PopupKind.ADJUSTMENTS) })
+                    DropdownMenuItem(text = { Text("Filters…") }, onClick = { adj = false; vm.openPopup(PopupKind.FILTERS) })
+                }
+            }
+            BarButton(Icons.Outlined.CreateNewFolder, "New folder") { vm.addFolder() }
+            BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
+            BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
+            Box {
+                BarButton(Icons.Outlined.MoreVert, "More layer actions") { more = true }
+                DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                    fun item(label: String, action: () -> Unit) = @Composable {
+                        DropdownMenuItem(text = { Text(label) }, onClick = {
+                            more = false
+                            action()
+                        })
+                    }
+                    item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
+                    if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
+                    item("Put in a new folder") { vm.groupActive() }()
+                    item("Flatten image") { vm.flattenImage() }()
+                    HorizontalDivider()
+                    item("Place image as layer…") { onPlaceImage() }()
+                    item("Remove background") { vm.removeBackground() }()
+                    item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
+                    item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
+                    if (active?.hasMask == true) {
+                        HorizontalDivider()
+                        item(if (active.props.maskDisabled) "Enable mask" else "Disable mask") { vm.toggleMaskEnabled() }()
+                        item("Invert mask") { vm.invertMask() }()
+                        item("Apply mask") { vm.applyMask() }()
+                        item("Delete mask") { vm.deleteMask() }()
+                    }
+                    HorizontalDivider()
+                    item("Rename layer…") { renaming = active }()
+                }
+            }
+        }
+
+        renaming?.let { l ->
+            RenameDialog(l.props.name, onDismiss = { renaming = null }) { name ->
+                vm.setProps(l.id, "Rename layer") { it.copy(name = name) }
+                renaming = null
+            }
         }
     }
 }
@@ -297,7 +320,10 @@ private fun LayerRow(
                 }
                 IconThumb(if (layer.collapsed) Icons.Outlined.Folder else Icons.Outlined.FolderOpen, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
             }
-            layer.isAdjustment -> IconThumb(Icons.Outlined.Tune, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+            layer.isAdjustment -> IconThumb(Icons.Outlined.Tune, selected && !maskSelected) {
+                vm.selectLayer(layer.id, mask = false)
+                vm.openPopup(PopupKind.ADJUSTMENTS)
+            }
             else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
         }
         if (layer.hasMask) {

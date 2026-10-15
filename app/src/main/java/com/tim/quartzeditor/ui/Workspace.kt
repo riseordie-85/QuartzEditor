@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -211,6 +213,17 @@ fun Workspace(vm: EditorViewModel) {
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             )
         }
+
+        // Layer Style / Adjustments / Filters float over the picture, so the preview stays visible
+        LaunchedEffect(vm.popup) { if (!wide && vm.popup != null) panelsOpen = false }
+        FloatingPanel(
+            vm,
+            Modifier
+                .align(if (wide) Alignment.TopEnd else Alignment.Center)
+                .padding(top = if (wide) 64.dp else 16.dp, bottom = 16.dp, start = 16.dp, end = if (docked) 346.dp else 16.dp)
+                .widthIn(max = 340.dp)
+                .heightIn(max = maxHeight * 0.85f),
+        )
 
         BusyOverlay(vm.busy)
     }

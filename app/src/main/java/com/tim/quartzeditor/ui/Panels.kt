@@ -29,6 +29,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
@@ -76,39 +82,60 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import android.graphics.Color as AColor
 
-/** The right-hand column: collapsible Color, Adjustments, Filters, Properties and Layers sections. */
+/**
+ * The right-hand column: Color and Properties (they fold away by themselves unless pinned) and
+ * Layers, whose list fills whatever room is left.
+ */
 @Composable
 fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
-    val scroll = rememberScrollState()
-    Column(
+    BoxWithConstraints(
         modifier
             .clip(RoundedCornerShape(26.dp))
             .background(Q.panel)
-            .verticalScroll(scroll)
-            .padding(vertical = 8.dp),
     ) {
-        Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
-        Section(vm, PanelSection.GRADIENTS) { GradientsPanel(vm) }
-        Section(vm, PanelSection.ADJUSTMENTS) { AdjustPanel(vm) }
-        Section(vm, PanelSection.FILTERS) { FiltersPanel(vm) }
-        Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
-        Section(vm, PanelSection.STYLE) { StylePanel(vm) }
-        Section(vm, PanelSection.LAYERS) { LayersPanel(vm, onPlaceImage) }
+        val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES)
+        // Layers keeps at least its settings, four rows and its buttons
+        val topMax = (maxHeight - 400.dp).coerceAtLeast(140.dp)
+        Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
+            Column(
+                Modifier
+                    .heightIn(max = topMax)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
+                Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
+            }
+            LayersPanel(vm, onPlaceImage, fillList = !anyOpen, modifier = Modifier.weight(1f, fill = !anyOpen))
+        }
     }
 }
 
 @Composable
 private fun Section(vm: EditorViewModel, s: PanelSection, content: @Composable () -> Unit) {
-    val open = s in vm.openSections
+    val open = vm.isOpen(s)
+    val pinned = s in vm.pinnedSections
     Column(Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { vm.toggleSection(s) }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
         ) {
-            Spacer(Modifier.width(28.dp))
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .clickable { vm.togglePin(s) },
+            ) {
+                Icon(
+                    if (pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                    contentDescription = if (pinned) "Unpin (fold away by itself)" else "Pin open",
+                    tint = if (pinned) Q.accent else Q.textDim,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             Text(s.label, color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
             Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Q.text, modifier = Modifier.size(28.dp))
         }
@@ -116,6 +143,44 @@ private fun Section(vm: EditorViewModel, s: PanelSection, content: @Composable (
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 10.dp)) { content() }
         }
         Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(1.dp).background(Q.divider))
+    }
+}
+
+/** A floating window over the picture (Layer Style, Adjustments, Filters). */
+@Composable
+fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
+    val kind = vm.popup ?: return
+    Column(
+        modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Q.panel)
+            .border(1.dp, Q.divider, RoundedCornerShape(22.dp)),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 6.dp)) {
+            Text(kind.title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable { vm.closePopup() },
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Close", tint = Q.text)
+            }
+        }
+        Column(
+            Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp)
+                .padding(bottom = 12.dp)
+        ) {
+            when (kind) {
+                PopupKind.STYLE -> StylePanel(vm)
+                PopupKind.ADJUSTMENTS -> AdjustPanel(vm)
+                PopupKind.FILTERS -> FiltersPanel(vm)
+            }
+        }
     }
 }
 
@@ -367,7 +432,7 @@ private val HUE_ORDER = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan,
 // ===================================================================== adjustments
 
 @Composable
-private fun AdjustPanel(vm: EditorViewModel) {
+internal fun AdjustPanel(vm: EditorViewModel) {
     val layer = vm.doc?.active
     val fx = vm.currentFx()
     Text(
@@ -395,7 +460,7 @@ private fun FxButtons(vm: EditorViewModel) {
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SmallButton("Cancel", Modifier.weight(1f)) { vm.cancelFx() }
-        SmallButton("Apply", Modifier.weight(1f), primary = true) { vm.applyFx() }
+        SmallButton("Apply", Modifier.weight(1f), primary = true) { vm.applyFx { vm.popup = null } }
     }
 }
 
@@ -403,7 +468,7 @@ private fun FxButtons(vm: EditorViewModel) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FiltersPanel(vm: EditorViewModel) {
+internal fun FiltersPanel(vm: EditorViewModel) {
     LaunchedEffect(vm.doc?.activeId, vm.doc?.active?.pixelVersion) { vm.ensureFxThumb() }
     val fx = vm.currentFx()
     val thumb = vm.fxThumb
@@ -507,6 +572,8 @@ private fun PropertiesPanel(vm: EditorViewModel) {
     }
     val d = vm.doc ?: return
     val l = d.active ?: return
+    // Tools show their own settings; with Move (or Pan) it's the selected layer's
+    if (tool != Tool.MOVE && tool != Tool.PAN) return
     Text("Layer", color = Q.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
     Spacer(Modifier.height(6.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {

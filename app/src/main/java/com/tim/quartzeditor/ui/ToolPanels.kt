@@ -153,8 +153,7 @@ fun ToolOptions(vm: EditorViewModel) {
         }
         Tool.GRADIENT -> {
             Title("Gradient")
-            GradientOptions(vm)
-            Text("Pick colors in the Gradients panel. Drag on the picture: the gradient runs from where you start to where you let go.", color = Q.textDim, fontSize = 12.sp)
+            GradientsPanel(vm)
             Spacer(Modifier.height(10.dp))
         }
         Tool.CROP -> {

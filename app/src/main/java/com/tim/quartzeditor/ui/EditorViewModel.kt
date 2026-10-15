@@ -62,7 +62,10 @@ enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIE
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
-enum class PanelSection(val label: String) { COLOR("Color"), GRADIENTS("Gradients"), ADJUSTMENTS("Adjustments"), FILTERS("Filters"), PROPERTIES("Properties"), STYLE("Layer Style"), LAYERS("Layers") }
+enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), LAYERS("Layers") }
+
+/** Floating windows opened from the bottom of the Layers panel. */
+enum class PopupKind(val title: String) { STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), FILTERS("Filters") }
 
 enum class NewBackground(val label: String) { WHITE("White"), BLACK("Black"), TRANSPARENT("Transparent") }
 
@@ -511,6 +514,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             (t == Tool.BRUSH || t == Tool.ERASER) && tool == t -> brushColumnHidden = !brushColumnHidden
             else -> {
                 tool = t
+                // The tool's settings show in Properties; other unpinned sections fold away
+                openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
                 brushPickerFor = null
                 if (t == Tool.BRUSH || t == Tool.ERASER) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
@@ -554,15 +559,41 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Panel sections that are open. */
-    var openSections by mutableStateOf(
-        prefs.getStringSet("sections", null)?.mapNotNull { n -> PanelSection.entries.firstOrNull { it.name == n } }?.toSet()
-            ?: setOf(PanelSection.COLOR, PanelSection.LAYERS)
+    /** Sections pinned open (they stay open whatever tool you pick). */
+    var pinnedSections by mutableStateOf(
+        prefs.getStringSet("pinned", emptySet())!!.mapNotNull { n -> PanelSection.entries.firstOrNull { it.name == n } }.toSet()
     )
         private set
 
-    fun toggleSection(s: PanelSection, open: Boolean = s !in openSections) {
-        openSections = if (open) openSections + s else openSections - s
-        prefs.edit().putStringSet("sections", openSections.map { it.name }.toSet()).apply()
+    /** Sections opened for the moment (they fold away again when you pick another tool). */
+    var openedSections by mutableStateOf(setOf<PanelSection>())
+        private set
+
+    fun isOpen(s: PanelSection): Boolean = s == PanelSection.LAYERS || s in pinnedSections || s in openedSections
+
+    /** Opens or closes a section. Opening one folds the other unpinned ones away. */
+    fun toggleSection(s: PanelSection, open: Boolean = !isOpen(s)) {
+        openedSections = if (open) setOf(s) else openedSections - s
+        if (!open && s in pinnedSections) togglePin(s)
+    }
+
+    fun togglePin(s: PanelSection) {
+        pinnedSections = if (s in pinnedSections) pinnedSections - s else pinnedSections + s
+        prefs.edit().putStringSet("pinned", pinnedSections.map { it.name }.toSet()).apply()
+    }
+
+    /** The floating Layer Style / Adjustments / Filters window (null = closed). */
+    var popup by mutableStateOf<PopupKind?>(null)
+
+    fun openPopup(k: PopupKind) {
+        popup = k
+        if (k == PopupKind.FILTERS) fxThumb = null
+    }
+
+    /** Closes the floating window; adjustments being tried on a pixel layer are dropped. */
+    fun closePopup() {
+        if ((popup == PopupKind.ADJUSTMENTS || popup == PopupKind.FILTERS) && pendingFx != null) cancelFx()
+        popup = null
     }
 
     fun swapColors() {
@@ -861,7 +892,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             d.activeId = l.id
             d.editMask = true
         }
-        toggleSection(PanelSection.ADJUSTMENTS, open = true)
+        openPopup(PopupKind.ADJUSTMENTS)
         toast("Adjustment layer: use Adjustments or Filters, and paint its mask to limit it")
     }
 
@@ -1734,6 +1765,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.BUCKET, Tool.GRADIENT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
+
         /** Effect images on screen are at most this big (blur hides the difference). */
         const val SCREEN_FX_PX = 4400
         /** Exports and merges use full size. */
