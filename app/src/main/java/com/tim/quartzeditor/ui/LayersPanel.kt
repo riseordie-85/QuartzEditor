@@ -1,0 +1,400 @@
+package com.tim.quartzeditor.ui
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DragHandle
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.tim.quartzeditor.engine.Blend
+import com.tim.quartzeditor.engine.Layer
+import kotlin.math.roundToInt
+
+/** [onPlaceImage] opens the photo picker to add an image as a new layer. */
+@Composable
+fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit) {
+    val d = vm.doc ?: return
+    val active = d.active
+    var renaming by remember { mutableStateOf<Layer?>(null) }
+
+    // Blend mode and opacity
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BlendMenu(active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f)) { b ->
+            active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b) } }
+        }
+        Spacer(Modifier.width(8.dp))
+        PercentChip("Opacity", active?.props?.opacity ?: 1f,
+            onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(opacity = v) } } },
+            onDone = { vm.commitProps("Opacity") })
+    }
+    Spacer(Modifier.height(8.dp))
+    // Locks and fill
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Lock:", color = Q.textDim, fontSize = 13.sp)
+        Spacer(Modifier.width(6.dp))
+        LockToggle(QIcons.LockAlpha, "Lock transparent pixels", active?.props?.lockAlpha == true) {
+            active?.let { l -> vm.setProps(l.id, if (l.props.lockAlpha) "Unlock transparency" else "Lock transparency") { it.copy(lockAlpha = !it.lockAlpha) } }
+        }
+        Spacer(Modifier.width(4.dp))
+        LockToggle(Icons.Outlined.Lock, "Lock layer", active?.props?.locked == true) {
+            active?.let { l -> vm.setProps(l.id, if (l.props.locked) "Unlock layer" else "Lock layer") { it.copy(locked = !it.locked) } }
+        }
+        Spacer(Modifier.weight(1f))
+        PercentChip("Fill", active?.props?.fill ?: 1f,
+            onLive = { v -> active?.let { l -> vm.setPropsLive(l.id) { it.copy(fill = v) } } },
+            onDone = { vm.commitProps("Fill") })
+    }
+    Spacer(Modifier.height(8.dp))
+
+    // The layers, top of the stack first
+    val density = LocalDensity.current
+    val rowH = 58.dp
+    val rowPx = with(density) { rowH.toPx() }
+    var dragId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val shown = d.layers.asReversed().toList()
+    val dragFrom = shown.indexOfFirst { it.id == dragId }
+    val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
+
+    Column(Modifier.fillMaxWidth()) {
+        shown.forEachIndexed { i, l ->
+            val isDragged = l.id == dragId
+            val shift = when {
+                dragFrom < 0 || isDragged -> 0f
+                dragFrom < dragTo && i in (dragFrom + 1)..dragTo -> -rowPx
+                dragFrom > dragTo && i in dragTo until dragFrom -> rowPx
+                else -> 0f
+            }
+            val y = if (isDragged) dragOffset else shift
+            LayerRow(
+                vm = vm,
+                layer = l,
+                selected = l.id == d.activeId,
+                maskSelected = l.id == d.activeId && d.editMask,
+                height = rowH,
+                modifier = Modifier
+                    .zIndex(if (isDragged) 1f else 0f)
+                    .offset { IntOffset(0, y.roundToInt()) },
+                onRename = { renaming = l },
+                handle = Modifier.pointerInput(l.id) {
+                    detectDragGestures(
+                        onDragStart = {
+                            dragId = l.id
+                            dragOffset = 0f
+                        },
+                        onDragEnd = {
+                            // Rows shown top-first: dragging down moves the layer lower in the stack
+                            val steps = (dragOffset / rowPx).roundToInt()
+                            dragId?.let { id -> vm.moveLayerBy(id, -steps) }
+                            dragId = null
+                            dragOffset = 0f
+                        },
+                        onDragCancel = {
+                            dragId = null
+                            dragOffset = 0f
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            dragOffset += amount.y
+                        },
+                    )
+                },
+            )
+        }
+    }
+
+    // Bottom bar: mask, new layer, delete, more
+    Spacer(Modifier.height(6.dp))
+    var more by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        BarButton(QIcons.Mask, "Add a mask") { vm.addMask() }
+        BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
+        BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
+        Box {
+            BarButton(Icons.Outlined.MoreVert, "More layer actions") { more = true }
+            DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                fun item(label: String, action: () -> Unit) = @Composable {
+                    DropdownMenuItem(text = { Text(label) }, onClick = {
+                        more = false
+                        action()
+                    })
+                }
+                item("Duplicate layer") { vm.duplicateLayer() }()
+                item("Merge down") { vm.mergeDown() }()
+                item("Flatten image") { vm.flattenImage() }()
+                HorizontalDivider()
+                item("Place image as layer…") { onPlaceImage() }()
+                item("Remove background") { vm.removeBackground() }()
+                item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
+                item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
+                if (active?.hasMask == true) {
+                    HorizontalDivider()
+                    item(if (active.props.maskDisabled) "Enable mask" else "Disable mask") { vm.toggleMaskEnabled() }()
+                    item("Invert mask") { vm.invertMask() }()
+                    item("Apply mask") { vm.applyMask() }()
+                    item("Delete mask") { vm.deleteMask() }()
+                }
+                HorizontalDivider()
+                item("Rename layer…") { renaming = active }()
+            }
+        }
+    }
+
+    renaming?.let { l ->
+        RenameDialog(l.props.name, onDismiss = { renaming = null }) { name ->
+            vm.setProps(l.id, "Rename layer") { it.copy(name = name) }
+            renaming = null
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LayerRow(
+    vm: EditorViewModel,
+    layer: Layer,
+    selected: Boolean,
+    maskSelected: Boolean,
+    height: androidx.compose.ui.unit.Dp,
+    modifier: Modifier,
+    onRename: () -> Unit,
+    handle: Modifier,
+) {
+    val p = layer.props
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) Q.rowSelected else Q.row)
+            .combinedClickable(onClick = { vm.selectLayer(layer.id, mask = false) }, onLongClick = onRename),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(40.dp)
+                .clickable { vm.setProps(layer.id, if (p.visible) "Hide layer" else "Show layer") { it.copy(visible = !it.visible) } },
+        ) {
+            Icon(if (p.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, contentDescription = if (p.visible) "Hide" else "Show", tint = if (p.visible) Q.text else Q.textDim, modifier = Modifier.size(20.dp))
+        }
+        Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+        if (layer.hasMask) {
+            Spacer(Modifier.width(4.dp))
+            Box {
+                Thumb(layer.maskThumb, outlined = maskSelected, plain = true) { vm.selectLayer(layer.id, mask = true) }
+                if (p.maskDisabled) {
+                    Text("✕", color = Color(0xFFE53935), fontSize = 18.sp, modifier = Modifier.align(Alignment.Center))
+                }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(p.name, color = if (p.visible) Q.text else Q.textDim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val notes = buildList {
+                if (p.blend != Blend.NORMAL) add(p.blend.label)
+                if (p.opacity < 0.995f) add("${(p.opacity * 100).roundToInt()}%")
+                if (p.locked) add("Locked")
+                else if (p.lockAlpha) add("Transparency locked")
+            }
+            if (notes.isNotEmpty()) Text(notes.joinToString(" · "), color = Q.textDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (p.locked) Icon(Icons.Outlined.Lock, contentDescription = "Locked", tint = Q.textDim, modifier = Modifier.size(16.dp))
+        Box(contentAlignment = Alignment.Center, modifier = handle.size(44.dp)) {
+            Icon(Icons.Outlined.DragHandle, contentDescription = "Drag to reorder", tint = Q.text)
+        }
+    }
+}
+
+@Composable
+private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .border(if (outlined) 2.dp else 1.dp, if (outlined) Color.White else Color.White.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+            .padding(2.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .then(if (plain) Modifier.background(Color.White) else Modifier.checker(6f))
+            .clickable(onClick = onClick),
+    ) {
+        if (img != null) Image(img, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+    }
+}
+
+@Composable
+private fun BarButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(24.dp))
+    }
+}
+
+@Composable
+private fun LockToggle(icon: ImageVector, label: String, on: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (on) Q.accent else Q.field)
+            .clickable(onClick = onClick),
+    ) {
+        Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
+private fun BlendMenu(current: Blend, modifier: Modifier, onPick: (Blend) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Q.field)
+                .clickable { open = true }
+                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        ) {
+            Text(current.label, color = Q.text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Blend mode", tint = Q.text)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            var lastGroup = 0
+            Blend.entries.forEach { b ->
+                if (b.group != lastGroup) {
+                    HorizontalDivider()
+                    lastGroup = b.group
+                }
+                DropdownMenuItem(
+                    text = { Text(b.label) },
+                    leadingIcon = { if (b == current) Icon(Icons.Filled.Check, contentDescription = null) else Spacer(Modifier.size(24.dp)) },
+                    onClick = {
+                        open = false
+                        onPick(b)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** "Opacity: 100% ▾" — tap for a slider. */
+@Composable
+private fun PercentChip(label: String, value: Float, onLive: (Float) -> Unit, onDone: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { open = true }
+                .padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
+        ) {
+            Text("$label:", color = Q.textDim, fontSize = 13.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "${(value * 100).roundToInt()}%",
+                color = Q.text,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Q.field)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = Q.text)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Column(Modifier.width(220.dp).padding(horizontal = 14.dp)) {
+                Text("$label ${(value * 100).roundToInt()}%", color = Q.text, fontSize = 14.sp)
+                Slider(
+                    value = value,
+                    onValueChange = onLive,
+                    onValueChangeFinished = onDone,
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0.25f, 0.5f, 0.75f, 1f).forEach { v ->
+                        SmallButton("${(v * 100).roundToInt()}%") {
+                            onLive(v)
+                            onDone()
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun RenameDialog(current: String, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename layer") },
+        text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
+        confirmButton = { TextButton(onClick = { if (text.isNotBlank()) onRename(text.trim()) }) { Text("Rename") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
