@@ -86,11 +86,20 @@ data class FxParams(
     val filterStrength: Float = 1f,
     val duoShadow: Int = DUOTONE_PRESETS[0].first,
     val duoHighlight: Int = DUOTONE_PRESETS[0].second,
+    /** What this mainly is (decides which window an adjustment layer opens and its icon). */
+    val kind: FxKind = FxKind.ADJUST,
+    val levels: Levels? = null,
+    val curves: Curves? = null,
+    /** Gaussian blur radius in canvas pixels (0 = none). */
+    val blur: Float = 0f,
 ) {
     fun adjust(a: Adjust): Float = adjust[a] ?: 0f
 
+    /** Levels or Curves change something (they need the lookup table). */
+    val hasTone: Boolean get() = (levels?.isIdentity == false) || (curves?.isIdentity == false)
+
     val isIdentity: Boolean
-        get() = filter == FilterPreset.NONE && adjust.values.all { it == 0f }
+        get() = filter == FilterPreset.NONE && adjust.values.all { it == 0f } && !hasTone && blur <= 0f
 
     /** Vignette strength 0..1 (slider plus the filter's own). */
     val vignette: Float
@@ -105,6 +114,10 @@ data class FxParams(
             .put("strength", filterStrength.toDouble())
             .put("duoShadow", duoShadow)
             .put("duoHighlight", duoHighlight)
+            .put("kind", kind.name)
+            .put("blur", blur.toDouble())
+            .also { o -> levels?.let { o.put("levels", it.toJson()) } }
+            .also { o -> curves?.let { o.put("curves", it.toJson()) } }
     }
 
     companion object {
@@ -119,6 +132,10 @@ data class FxParams(
                 filterStrength = o.optDouble("strength", 1.0).toFloat(),
                 duoShadow = o.optInt("duoShadow", DUOTONE_PRESETS[0].first),
                 duoHighlight = o.optInt("duoHighlight", DUOTONE_PRESETS[0].second),
+                kind = FxKind.entries.firstOrNull { it.name == o.optString("kind") } ?: FxKind.ADJUST,
+                levels = runCatching { Levels.fromJson(o.optJSONArray("levels")) }.getOrNull(),
+                curves = runCatching { Curves.fromJson(o.optJSONArray("curves")) }.getOrNull(),
+                blur = o.optDouble("blur", 0.0).toFloat(),
             )
         }
     }
@@ -126,14 +143,50 @@ data class FxParams(
 
 /** GPU work that runs off-screen and comes back as a normal bitmap. */
 object Gpu {
-    /** Applies [fx] to [src] at full size. [docW]/[docH] and [left]/[top] place it on the canvas for the vignette. */
-    fun applyFx(src: Bitmap, fx: FxParams, left: Float, top: Float, docW: Float, docH: Float): Bitmap =
-        renderOffscreen(src.width, src.height) { canvas ->
-            val cs = ColorShader()
-            cs.bind(fx, src)
-            canvas.drawRect(0f, 0f, src.width.toFloat(), src.height.toFloat(), cs.paint)
-            drawVignette(canvas, fx.vignette, -left, -top, docW, docH)
+    /**
+     * Applies [fx] to [src] at full size. [docW]/[docH] and [left]/[top] place it on the canvas for
+     * the vignette. [pixelScale] is [src]'s pixels per canvas pixel (for the blur radius).
+     * [clampEdges] blurs as if the edge pixels went on (for a whole picture); otherwise past the
+     * edges is see-through (for a layer, which should have room around it).
+     */
+    fun applyFx(
+        src: Bitmap,
+        fx: FxParams,
+        left: Float,
+        top: Float,
+        docW: Float,
+        docH: Float,
+        pixelScale: Float = 1f,
+        clampEdges: Boolean = false,
+    ): Bitmap {
+        val r = fx.blur * pixelScale
+        val input = if (r > 0.3f) blurred(src, r, if (clampEdges) Shader.TileMode.CLAMP else Shader.TileMode.DECAL) else src
+        try {
+            if (fx.copy(blur = 0f).isIdentity) return if (input === src) src.copy(Bitmap.Config.ARGB_8888, true) else input
+            return renderOffscreen(input.width, input.height) { canvas ->
+                val cs = ColorShader()
+                cs.bind(fx, input)
+                canvas.drawRect(0f, 0f, input.width.toFloat(), input.height.toFloat(), cs.paint)
+                drawVignette(canvas, fx.vignette, -left, -top, docW, docH)
+            }
+        } finally {
+            if (input !== src && !fx.copy(blur = 0f).isIdentity) input.recycle()
         }
+    }
+
+    /** Gaussian blur of the given radius (pixels) as an effect. */
+    fun blurEffect(radius: Float, edges: Shader.TileMode = Shader.TileMode.DECAL): RenderEffect =
+        RenderEffect.createBlurEffect(radius, radius, edges)
+
+    /** A copy of [src] with [pad] see-through pixels added on every side (room for a blur to spread). */
+    fun padded(src: Bitmap, pad: Int): Bitmap {
+        val out = Bitmap.createBitmap(src.width + 2 * pad, src.height + 2 * pad, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(src, pad.toFloat(), pad.toFloat(), null)
+        return out
+    }
+
+    /** How far a blur of [radius] reaches (pixels). */
+    fun blurReach(radius: Float): Int = kotlin.math.ceil(radius * 2f + 4f).toInt()
 
     /**
      * Darkens toward the canvas corners, only where there are already pixels.
@@ -155,8 +208,8 @@ object Gpu {
     }
 
     /** A blurred copy. */
-    fun blurred(src: Bitmap, radius: Float): Bitmap =
-        renderOffscreen(src.width, src.height, RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.DECAL)) {
+    fun blurred(src: Bitmap, radius: Float, edges: Shader.TileMode = Shader.TileMode.DECAL): Bitmap =
+        renderOffscreen(src.width, src.height, RenderEffect.createBlurEffect(radius, radius, edges)) {
             it.drawBitmap(src, 0f, 0f, null)
         }
 
@@ -241,7 +294,22 @@ class ColorShader {
         return android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "image")
     }
 
+    private var lutKey: Any? = Unit
+
+    /** Levels and Curves as a lookup table (an unchanged one when there are none). */
+    private fun bindLut(state: FxParams) {
+        val key: Any? = if (state.hasTone) state.levels to state.curves else null
+        if (key == lutKey) return
+        lutKey = key
+        val bmp = if (key == null) IDENTITY_LUT else Tone.lut(state.levels, state.curves)
+        val s = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        s.filterMode = BitmapShader.FILTER_MODE_LINEAR
+        shader.setInputShader("lut", s)
+    }
+
     private fun setUniforms(state: FxParams, unit: Float) {
+        bindLut(state)
+        shader.setFloatUniform("useLut", if (state.hasTone) 1f else 0f)
         val strength = if (state.filter == FilterPreset.NONE) 0f else state.filterStrength
         shader.setFloatUniform("unit", unit)
         shader.setFloatUniform("exposure", state.adjust(Adjust.EXPOSURE))
@@ -270,8 +338,13 @@ class ColorShader {
     }
 
     companion object {
+        /** Lookup table that changes nothing. */
+        private val IDENTITY_LUT: Bitmap by lazy { Tone.lut(null, null) }
+
         private const val AGSL = """
 uniform shader image;
+uniform shader lut;
+uniform float useLut;
 uniform float unit;
 uniform float exposure;
 uniform float brightness;
@@ -315,6 +388,16 @@ half4 main(float2 p) {
                  + straight(float4(image.eval(p + float2(0.0, unit))))
                  + straight(float4(image.eval(p - float2(0.0, unit))));
         c = c + (c - n * 0.25) * sharpness * 1.5;
+    }
+
+    // Levels and Curves
+    if (useLut > 0.5) {
+        c = clamp(c, 0.0, 1.0);
+        c = float3(
+            lut.eval(float2(c.r * 255.0 + 0.5, 0.5)).r,
+            lut.eval(float2(c.g * 255.0 + 0.5, 0.5)).g,
+            lut.eval(float2(c.b * 255.0 + 0.5, 0.5)).b
+        );
     }
 
     c = c * exp2(exposure * 2.0);

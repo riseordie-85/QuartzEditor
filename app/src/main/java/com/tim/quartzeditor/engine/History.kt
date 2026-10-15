@@ -50,7 +50,9 @@ class StackChange(private val before: DocSnap, private val after: DocSnap, overr
         }
         val a = grids(before)
         val b = grids(after)
-        a.filter { it !in b }.sumOf { it.bytes() } + b.filter { it !in a }.sumOf { it.bytes() }
+        // Pixel selections (magic wand, subject) hold a mask too
+        val sel = if (before.selection !== after.selection) (before.selection?.heldBytes ?: 0L) + (after.selection?.heldBytes ?: 0L) else 0L
+        a.filter { it !in b }.sumOf { it.bytes() } + b.filter { it !in a }.sumOf { it.bytes() } + sel
     }
 
     override fun undo(doc: Doc) = doc.restore(before)

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.Polyline
+import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Rectangle
 import androidx.compose.material.icons.outlined.StarOutline
@@ -104,9 +105,14 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
 }
 
 @Composable
-private fun ToolColumn(vm: EditorViewModel, compact: Boolean, buttonSize: Dp, onColorTap: () -> Unit) {
+private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onColorTap: () -> Unit) {
     BoxWithConstraints(Modifier.width(if (compact) 52.dp else 62.dp).fillMaxHeight()) {
-        val tight = maxHeight < (buttonSize + 6.dp) * 12 + 150.dp
+        // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space) and the two
+        // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
+        val fitted = (maxHeight - 124.dp) / 13.8f
+        val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
+        val swatchSize = buttonSize * 0.9f
+        val tight = fitted < MIN_TOOL_BUTTON
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -122,6 +128,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, buttonSize: Dp, on
                 SelectShape.ELLIPSE -> QIcons.SelectEllipse
                 SelectShape.LASSO -> Icons.Outlined.Gesture
                 SelectShape.POLYGON -> Icons.Outlined.Polyline
+                SelectShape.WAND -> Icons.Outlined.AutoFixHigh
             }
             ToolButton(selIcon, "Select: ${vm.selectShape.label} (tap again for the next shape)", t == Tool.SELECT, buttonSize) { vm.onToolButton(Tool.SELECT) }
             ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
@@ -140,10 +147,12 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, buttonSize: Dp, on
             ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
             ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))
-            ColorSwatches(vm, if (compact) 34.dp else 42.dp, onColorTap)
+            ColorSwatches(vm, swatchSize, onColorTap)
         }
     }
 }
+
+private val MIN_TOOL_BUTTON = 30.dp
 
 /** Brush tips and the three sliders, for whichever of brush or eraser is in use. */
 @Composable

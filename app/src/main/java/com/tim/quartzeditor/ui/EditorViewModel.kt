@@ -16,6 +16,7 @@ import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
@@ -66,7 +67,22 @@ enum class ColorSlot { FOREGROUND, BACKGROUND }
 enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), LAYERS("Layers") }
 
 /** Floating windows opened from the bottom of the Layers panel. */
-enum class PopupKind(val title: String) { STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), FILTERS("Filters") }
+enum class PopupKind(val title: String) {
+    STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), LEVELS("Levels"), CURVES("Curves"), BLUR("Gaussian Blur"), FILTERS("Filters");
+
+    /** Changes pixels (or an adjustment layer), as opposed to Layer Style. */
+    val isFx: Boolean get() = this != STYLE
+
+    companion object {
+        /** The window an adjustment layer of [kind] opens in. */
+        fun forKind(kind: com.tim.quartzeditor.engine.FxKind): PopupKind = when (kind) {
+            com.tim.quartzeditor.engine.FxKind.ADJUST -> ADJUSTMENTS
+            com.tim.quartzeditor.engine.FxKind.LEVELS -> LEVELS
+            com.tim.quartzeditor.engine.FxKind.CURVES -> CURVES
+            com.tim.quartzeditor.engine.FxKind.BLUR -> BLUR
+        }
+    }
+}
 
 enum class NewBackground(val label: String) { WHITE("White"), BLACK("Black"), TRANSPARENT("Transparent") }
 
@@ -118,6 +134,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var cropBox by mutableStateOf<RectF?>(null)
     var cropRatio by mutableStateOf(CropRatio.FREE)
 
+    var wandTolerance by mutableFloatStateOf(prefs.getFloat("wandTol", 0.12f))
+    var wandContiguous by mutableStateOf(prefs.getBoolean("wandContig", true))
+    var wandAllLayers by mutableStateOf(prefs.getBoolean("wandAll", false))
+
     var bucketTolerance by mutableFloatStateOf(prefs.getFloat("bucketTol", 0.12f))
     var bucketContiguous by mutableStateOf(prefs.getBoolean("bucketContig", true))
     var bucketAllLayers by mutableStateOf(prefs.getBoolean("bucketAll", false))
@@ -147,6 +167,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Shape pen points placed so far (canvas pixels), and the one being placed. */
     val penPoints = androidx.compose.runtime.mutableStateListOf<com.tim.quartzeditor.engine.PenPoint>()
     var penDrag by mutableStateOf<com.tim.quartzeditor.engine.PenPoint?>(null)
+
+    /** Pen in point-editing mode (for the selected pen shape), and the point picked in it (-1 = none). */
+    var penEditing by mutableStateOf(false)
+    private var penPickIndex by mutableIntStateOf(-1)
+    private var penPickLayer by mutableLongStateOf(-1L)
+
+    /** The picked point belongs to the layer it was picked on (none once another layer is active, by undo or anything else). */
+    var penSelected: Int
+        get() = if (doc?.activeId == penPickLayer) penPickIndex else -1
+        set(v) {
+            penPickIndex = v
+            penPickLayer = doc?.activeId ?: -1L
+        }
+    internal var penDragStart: com.tim.quartzeditor.engine.ShapeSpec? = null
 
     /** Fill and outline colors to bring back when they're switched on again. */
     internal var lastShapeFill: Int? = null
@@ -566,11 +600,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             nextShapeKind()
             return
         }
+        if (t == Tool.PEN && tool == Tool.PEN && penPoints.isEmpty()) {
+            togglePenEditing()
+            return
+        }
         if (pendingFirst { onToolButton(t) }) return
         if (t != tool) {
             // A shape pen outline in progress becomes a shape
             if (penPoints.size >= 2) finishPen(closed = false) else cancelPen()
             shapeDraft = null
+            penEditing = false
+            penSelected = -1
         }
         polygonPoints.clear()
         selectDraft = null
@@ -662,17 +702,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openPopup(k: PopupKind) {
         val a = doc?.active
-        if ((k == PopupKind.ADJUSTMENTS || k == PopupKind.FILTERS) && a != null && a.isVector) {
+        if (k.isFx && a != null && a.isVector) {
             askRasterize(a) { openPopup(k) }
             return
         }
         popup = k
-        if (k == PopupKind.FILTERS) fxThumb = null
+        if (k == PopupKind.FILTERS || k == PopupKind.LEVELS || k == PopupKind.CURVES) fxThumb = null
     }
 
     /** Closes the floating window; adjustments being tried on a pixel layer are dropped. */
     fun closePopup() {
-        if ((popup == PopupKind.ADJUSTMENTS || popup == PopupKind.FILTERS) && pendingFx != null) cancelFx()
+        if (popup?.isFx == true && pendingFx != null) cancelFx()
         popup = null
     }
 
@@ -967,14 +1007,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** An adjustment layer above the active one: changes everything below it without touching pixels. */
-    fun addAdjustmentLayer() {
+    fun addAdjustmentLayer(kind: com.tim.quartzeditor.engine.FxKind = com.tim.quartzeditor.engine.FxKind.ADJUST) {
         val d = doc ?: return
-        if (pendingFirst { addAdjustmentLayer() }) return
-        stackEdit("New adjustment layer") {
+        if (pendingFirst { addAdjustmentLayer(kind) }) return
+        val (name, fx) = when (kind) {
+            com.tim.quartzeditor.engine.FxKind.ADJUST -> "Adjustments" to FxParams()
+            com.tim.quartzeditor.engine.FxKind.LEVELS -> "Levels" to FxParams(kind = kind, levels = com.tim.quartzeditor.engine.Levels())
+            com.tim.quartzeditor.engine.FxKind.CURVES -> "Curves" to FxParams(kind = kind, curves = com.tim.quartzeditor.engine.Curves())
+            com.tim.quartzeditor.engine.FxKind.BLUR -> "Blur" to FxParams(kind = kind, blur = 8f)
+        }
+        stackEdit("New $name layer") {
             val (at, parent) = insertPoint(d)
             val l = Layer(
                 d.newId(),
-                LayerProps(d.uniqueName("Adjustments"), parent = parent, adjust = FxParams()),
+                LayerProps(d.uniqueName(name), parent = parent, adjust = fx),
                 TileGrid(alphaOnly = false),
                 mask = TileGrid(alphaOnly = true),
                 kind = LayerKind.ADJUSTMENT,
@@ -983,8 +1029,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             d.activeId = l.id
             d.editMask = true
         }
-        openPopup(PopupKind.ADJUSTMENTS)
-        toast("Adjustment layer: use Adjustments or Filters, and paint its mask to limit it")
+        openPopup(PopupKind.forKind(kind))
+        toast("Changes everything below it. Paint its mask to limit where")
     }
 
     fun deleteLayer() {
@@ -1496,10 +1542,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val sel = preview?.takeIf { it.fx != null }?.selection
         runBusy("Applying…", onDone) {
             val grid = withContext(Dispatchers.Default) {
-                val (src, bounds) = DocRenderer.layerBitmap(l) ?: throw IllegalStateException("The layer is empty")
+                val (raw, rawBounds) = DocRenderer.layerBitmap(l) ?: throw IllegalStateException("The layer is empty")
+                // A blur spreads past the pixels: give it room
+                val pad = if (fx.blur > 0f) Gpu.blurReach(fx.blur) else 0
+                val src = if (pad > 0) Gpu.padded(raw, pad).also { raw.recycle() } else raw
+                val bounds = RectF(rawBounds).apply { inset(-pad.toFloat(), -pad.toFloat()) }
                 val ox = l.x + bounds.left
                 val oy = l.y + bounds.top
                 var out = Gpu.applyFx(src, fx, ox, oy, d.width.toFloat(), d.height.toFloat())
+                // A layer covering the canvas (like a photo) blurs with its edges carrying on past the
+                // canvas edge, so they don't fade (the part past the canvas keeps the soft version)
+                if (fx.blur > 0f && ox <= -pad && oy <= -pad && ox + src.width >= d.width + pad && oy + src.height >= d.height + pad) {
+                    val cx = (-ox).roundToInt()
+                    val cy = (-oy).roundToInt()
+                    val crop = Bitmap.createBitmap(src, cx, cy, d.width, d.height)
+                    val edged = Gpu.applyFx(crop, fx, 0f, 0f, d.width.toFloat(), d.height.toFloat(), clampEdges = true)
+                    crop.recycle()
+                    Canvas(out).drawBitmap(edged, cx.toFloat(), cy.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) })
+                    edged.recycle()
+                }
                 if (sel != null) {
                     // Only the selected part changes: original × (1 − selected) + adjusted × selected
                     sel.keepInside(Canvas(out), ox, oy)
@@ -1516,7 +1577,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             pendingFx = null
             preview = null
             if (doc === d && l.tiles === source) {
-                stackEdit(if (fx.filter != com.tim.quartzeditor.engine.FilterPreset.NONE) fx.filter.label else "Adjustments") { l.tiles = grid }
+                val label = when {
+                    fx.filter != com.tim.quartzeditor.engine.FilterPreset.NONE -> fx.filter.label
+                    fx.kind == com.tim.quartzeditor.engine.FxKind.LEVELS -> "Levels"
+                    fx.kind == com.tim.quartzeditor.engine.FxKind.CURVES -> "Curves"
+                    fx.kind == com.tim.quartzeditor.engine.FxKind.BLUR -> "Gaussian Blur"
+                    else -> "Adjustments"
+                }
+                stackEdit(label) { l.tiles = grid }
             }
             fxThumb = null
         }
@@ -1632,7 +1700,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         for (l in layers) {
             if (!l.props.style.needsBuild) continue
             val mask = if (l.maskActive) l.mask?.tiles else null
-            Effects.build(Unit, l.props.style, l.tiles.tiles, mask, FULL_FX_PX)?.let { out[l.id] = it }
+            runCatching { Effects.build(Unit, l.props.style, l.tiles.tiles, mask, FULL_FX_PX) }.getOrNull()?.let { out[l.id] = it }
         }
         return out
     }

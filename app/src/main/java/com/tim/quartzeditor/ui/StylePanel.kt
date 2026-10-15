@@ -32,13 +32,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tim.quartzeditor.engine.BevelFx
+import com.tim.quartzeditor.engine.BevelStyle
 import com.tim.quartzeditor.engine.LayerStyle
 import com.tim.quartzeditor.engine.ShadowFx
 import com.tim.quartzeditor.engine.StrokePosition
 import kotlin.math.roundToInt
 
-private enum class FxKind(val label: String) {
-    STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
+private enum class StyleFx(val label: String) {
+    BEVEL("Bevel & Emboss"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
 }
 
 /** Layer Style: switch effects on and off and tune them. They never change the layer's pixels. */
@@ -51,13 +53,14 @@ fun StylePanel(vm: EditorViewModel) {
     Text("Effects on \"${l.props.name}\". They follow the layer and never change its pixels.", color = Q.textDim, fontSize = 12.sp)
     Spacer(Modifier.height(6.dp))
 
-    FxKind.entries.forEach { kind ->
+    StyleFx.entries.forEach { kind ->
         val on = when (kind) {
-            FxKind.STROKE -> st.stroke.on
-            FxKind.DROP_SHADOW -> st.dropShadow.on
-            FxKind.INNER_SHADOW -> st.innerShadow.on
-            FxKind.OUTER_GLOW -> st.outerGlow.on
-            FxKind.COLOR_OVERLAY -> st.colorOverlay.on
+            StyleFx.BEVEL -> st.bevel.on
+            StyleFx.STROKE -> st.stroke.on
+            StyleFx.DROP_SHADOW -> st.dropShadow.on
+            StyleFx.INNER_SHADOW -> st.innerShadow.on
+            StyleFx.OUTER_GLOW -> st.outerGlow.on
+            StyleFx.COLOR_OVERLAY -> st.colorOverlay.on
         }
         val expanded = open == kind.name
         Column(
@@ -89,16 +92,17 @@ fun StylePanel(vm: EditorViewModel) {
             if (expanded) {
                 Column(Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp)) {
                     when (kind) {
-                        FxKind.STROKE -> StrokeControls(vm, st)
-                        FxKind.DROP_SHADOW -> ShadowControls(vm, st.dropShadow, inner = false)
-                        FxKind.INNER_SHADOW -> ShadowControls(vm, st.innerShadow, inner = true)
-                        FxKind.OUTER_GLOW -> {
+                        StyleFx.BEVEL -> BevelControls(vm, st)
+                        StyleFx.STROKE -> StrokeControls(vm, st)
+                        StyleFx.DROP_SHADOW -> ShadowControls(vm, st.dropShadow, inner = false)
+                        StyleFx.INNER_SHADOW -> ShadowControls(vm, st.innerShadow, inner = true)
+                        StyleFx.OUTER_GLOW -> {
                             val g = st.outerGlow
                             FxColor(vm, g.color) { c -> vm.setStyle("Glow color") { it.copy(outerGlow = it.outerGlow.copy(color = c, on = true)) } }
                             FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> copy(outerGlow = outerGlow.copy(opacity = v, on = true)) }
                             FxSlider(vm, "Size", g.size, 1f..150f, "${g.size.roundToInt()} px") { v -> copy(outerGlow = outerGlow.copy(size = v, on = true)) }
                         }
-                        FxKind.COLOR_OVERLAY -> {
+                        StyleFx.COLOR_OVERLAY -> {
                             val o = st.colorOverlay
                             FxColor(vm, o.color) { c -> vm.setStyle("Overlay color") { it.copy(colorOverlay = it.colorOverlay.copy(color = c, on = true)) } }
                             FxSlider(vm, "Opacity", o.opacity, 0f..1f, "${(o.opacity * 100).roundToInt()}%") { v -> copy(colorOverlay = colorOverlay.copy(opacity = v, on = true)) }
@@ -114,12 +118,13 @@ fun StylePanel(vm: EditorViewModel) {
     }
 }
 
-private fun LayerStyle.toggle(kind: FxKind, on: Boolean): LayerStyle = when (kind) {
-    FxKind.STROKE -> copy(stroke = stroke.copy(on = on))
-    FxKind.DROP_SHADOW -> copy(dropShadow = dropShadow.copy(on = on))
-    FxKind.INNER_SHADOW -> copy(innerShadow = innerShadow.copy(on = on))
-    FxKind.OUTER_GLOW -> copy(outerGlow = outerGlow.copy(on = on))
-    FxKind.COLOR_OVERLAY -> copy(colorOverlay = colorOverlay.copy(on = on))
+private fun LayerStyle.toggle(kind: StyleFx, on: Boolean): LayerStyle = when (kind) {
+    StyleFx.BEVEL -> copy(bevel = bevel.copy(on = on))
+    StyleFx.STROKE -> copy(stroke = stroke.copy(on = on))
+    StyleFx.DROP_SHADOW -> copy(dropShadow = dropShadow.copy(on = on))
+    StyleFx.INNER_SHADOW -> copy(innerShadow = innerShadow.copy(on = on))
+    StyleFx.OUTER_GLOW -> copy(outerGlow = outerGlow.copy(on = on))
+    StyleFx.COLOR_OVERLAY -> copy(colorOverlay = colorOverlay.copy(on = on))
 }
 
 @Composable
@@ -135,6 +140,33 @@ private fun StrokeControls(vm: EditorViewModel, st: LayerStyle) {
             SmallButton(p.label, primary = p == s.position) { vm.setStyle("Stroke position") { it.copy(stroke = it.stroke.copy(position = p, on = true)) } }
         }
     }
+}
+
+@Composable
+private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
+    val b = st.bevel
+    fun LayerStyle.bv(change: BevelFx.() -> BevelFx): LayerStyle = copy(bevel = bevel.change().copy(on = true))
+    Text("Style", color = Q.textDim, fontSize = 13.sp)
+    Spacer(Modifier.height(4.dp))
+    ChipRow(BevelStyle.entries.map { it.label }, b.style.ordinal) { i -> vm.setStyle("Bevel style") { it.bv { copy(style = BevelStyle.entries[i]) } } }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Direction", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(72.dp))
+        SmallButton("Up", primary = b.up) { vm.setStyle("Bevel direction") { it.bv { copy(up = true) } } }
+        SmallButton("Down", primary = !b.up) { vm.setStyle("Bevel direction") { it.bv { copy(up = false) } } }
+    }
+    FxSlider(vm, "Depth", b.depth, 0.1f..5f, "${(b.depth * 100).roundToInt()}%") { v -> bv { copy(depth = v) } }
+    FxSlider(vm, "Size", b.size, 1f..150f, "${b.size.roundToInt()} px") { v -> bv { copy(size = v.roundToInt().toFloat()) } }
+    FxSlider(vm, "Soften", b.soften, 0f..32f, "${b.soften.roundToInt()} px") { v -> bv { copy(soften = v.roundToInt().toFloat()) } }
+    Text("Light", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    FxSlider(vm, "Angle", b.angle, -180f..180f, "${b.angle.roundToInt()}°") { v -> bv { copy(angle = v.roundToInt().toFloat()) } }
+    FxSlider(vm, "Altitude", b.altitude, 0f..90f, "${b.altitude.roundToInt()}°") { v -> bv { copy(altitude = v.roundToInt().toFloat()) } }
+    Text("Highlight", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    FxColor(vm, b.highlight) { c -> vm.setStyle("Bevel highlight") { it.bv { copy(highlight = c) } } }
+    FxSlider(vm, "Opacity", b.highlightOpacity, 0f..1f, "${(b.highlightOpacity * 100).roundToInt()}%") { v -> bv { copy(highlightOpacity = v) } }
+    Text("Shadow", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    FxColor(vm, b.shadow) { c -> vm.setStyle("Bevel shadow") { it.bv { copy(shadow = c) } } }
+    FxSlider(vm, "Opacity", b.shadowOpacity, 0f..1f, "${(b.shadowOpacity * 100).roundToInt()}%") { v -> bv { copy(shadowOpacity = v) } }
 }
 
 @Composable

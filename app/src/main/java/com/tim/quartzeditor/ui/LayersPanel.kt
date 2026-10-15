@@ -37,6 +37,10 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Title
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.ShowChart
+import androidx.compose.material.icons.outlined.BlurOn
+import com.tim.quartzeditor.engine.FxKind
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DragHandle
@@ -248,10 +252,19 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                 var adj by remember { mutableStateOf(false) }
                 BarButton(Icons.Outlined.Contrast, "Adjustments") { adj = true }
                 DropdownMenu(expanded = adj, onDismissRequest = { adj = false }) {
-                    DropdownMenuItem(text = { Text("New adjustment layer") }, onClick = { adj = false; vm.addAdjustmentLayer() })
+                    Text("New adjustment layer", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    FxKind.entries.forEach { k ->
+                        DropdownMenuItem(
+                            text = { Text(FX_KIND_LABELS.getValue(k)) },
+                            leadingIcon = { Icon(fxKindIcon(k), contentDescription = null) },
+                            onClick = { adj = false; vm.addAdjustmentLayer(k) },
+                        )
+                    }
                     HorizontalDivider()
-                    DropdownMenuItem(text = { Text(if (active?.isAdjustment == true) "Edit adjustments…" else "Adjustments…") }, onClick = { adj = false; vm.openPopup(PopupKind.ADJUSTMENTS) })
-                    DropdownMenuItem(text = { Text("Filters…") }, onClick = { adj = false; vm.openPopup(PopupKind.FILTERS) })
+                    Text(if (active?.isAdjustment == true) "Edit this adjustment layer" else "On this layer", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    listOf(PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.BLUR, PopupKind.FILTERS).forEach { k ->
+                        DropdownMenuItem(text = { Text("${k.title}…") }, onClick = { adj = false; vm.openPopup(k) })
+                    }
                 }
             }
             BarButton(Icons.Outlined.CreateNewFolder, "New folder") { vm.addFolder() }
@@ -347,9 +360,12 @@ private fun LayerRow(
                 }
                 IconThumb(if (layer.collapsed) Icons.Outlined.Folder else Icons.Outlined.FolderOpen, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
             }
-            layer.isAdjustment -> IconThumb(Icons.Outlined.Tune, selected && !maskSelected) {
-                vm.selectLayer(layer.id, mask = false)
-                vm.openPopup(PopupKind.ADJUSTMENTS)
+            layer.isAdjustment -> {
+                val kind = p.adjust?.kind ?: FxKind.ADJUST
+                IconThumb(fxKindIcon(kind), selected && !maskSelected) {
+                    vm.selectLayer(layer.id, mask = false)
+                    vm.openPopup(PopupKind.forKind(kind))
+                }
             }
             // Text layers show a T like Photoshop; tapping it on the selected layer edits the text
             layer.isText -> IconThumb(Icons.Outlined.Title, selected && !maskSelected) {
@@ -387,6 +403,20 @@ private fun LayerRow(
 }
 
 private const val LIST_ID = "list"
+
+private val FX_KIND_LABELS = mapOf(
+    FxKind.ADJUST to "Adjustments",
+    FxKind.LEVELS to "Levels",
+    FxKind.CURVES to "Curves",
+    FxKind.BLUR to "Gaussian Blur",
+)
+
+private fun fxKindIcon(k: FxKind): ImageVector = when (k) {
+    FxKind.ADJUST -> Icons.Outlined.Tune
+    FxKind.LEVELS -> Icons.Outlined.BarChart
+    FxKind.CURVES -> Icons.Outlined.ShowChart
+    FxKind.BLUR -> Icons.Outlined.BlurOn
+}
 
 /**
  * A column whose child tagged [LIST_ID] gets the height the others leave: all of it with [fill],

@@ -8,8 +8,8 @@ from the build). Background removal's model is fetched by Google Play services i
 ## Launch screen
 - **Recent Photos in Gallery** (newest first) or **Projects** (your saved work, with all layers). Tap to open.
   Long-press a project to delete it.
-- **New image**: name, width and height in pixels (presets: screen, square, story, HD, 4K, A4), portrait /
-  landscape, background White, Black or Transparent. Up to 4096 px a side.
+- **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
+  portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
 - **Open File Picker**: any image, or a `.qedit` project file.
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
 
@@ -21,9 +21,11 @@ and the same button hides them.
 ### Toolbar
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view).
-- **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso. Drag to select
-  (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last corner).
-  The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
+- **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand. Drag
+  to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
+  corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
+  layers". **Select subject** / **Select background** (Properties, or ⋮ on the bar) find the subject on the
+  device. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
   Feather, Copy or Cut to a new layer, Delete selected pixels, Fill, Mask from selection, Crop to selection.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
 - **Crop** — drag the corners, edges or the box; pick a shape (Free, Original, 1:1, 4:3, 3:4, 16:9, 9:16).
@@ -38,17 +40,22 @@ and the same button hides them.
   Linear / Radial / Reflected, reverse and opacity are in Properties.
 - **Shape** — drag to draw a Rectangle, Ellipse or Star on a new shape layer; tap the tool again for the
   next shape. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
-  the star's points and depth (no depth makes a polygon), and "same width and height". Tap a shape with the
-  tool to pick it; with a shape layer selected, Properties changes that shape.
+  the star's points and depth (no depth makes a polygon), and "same width and height". New shapes always
+  start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
+  layer selected, Properties changes that shape.
 - **Shape pen** — tap to place corners; drag as you place a point to bend the line into a curve. Tap the first
   point (or Close shape) to finish, or Open line for an unclosed line. Two-finger tap or the bar's undo
-  removes the last point.
+  removes the last point. **Edit points** comes on after finishing (or tap the pen again, or Edit points in
+  Properties): drag points and curve handles, tap the outline to add a point, tap a point to make it a
+  corner or a curve or delete it. Done (or the pen again) goes back to drawing.
 - **Text** — tap the picture and type (the bar at the top has the text box, Cancel and Done). Tap existing
   text to change it; drag with the Text tool to move it. Properties: font (Android's, Google Fonts, or your
-  own .ttf/.otf), size, color, alignment, faux bold/italic, underline, letter and line spacing, and Arc.
+  own .ttf/.otf), size, color, alignment, faux bold/italic, underline, ALL CAPS, letter and line spacing,
+  and Arc.
   Outline, shadow and glow come from Layer Style (fx).
 - **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
+- The toolbar's buttons shrink to fit the screen's height (it only scrolls on very short screens).
 - **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
   them to swap.
 
@@ -82,18 +89,27 @@ Only **Color**, **Properties** and **Layers** live in the column.
     Transform (they stay sharp), add masks and layer styles. Painting, fills, filters and adjustments ask to
     **rasterize** them first (turn them into pixels); ⋮ → Rasterize layer does it any time. Text layers
     show a T; tap it on the selected layer to edit the text.
-  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (new adjustment layer, Adjustments…,
-    Filters…), new folder, new layer, delete, and ⋮ for everything else.
+  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (a new Adjustments, Levels, Curves or
+    Gaussian Blur adjustment layer; or Adjustments…, Levels…, Curves…, Gaussian Blur…, Filters… on the
+    layer), new folder, new layer, delete, and ⋮ for everything else.
 
 ### Floating windows
-**Layer Style**, **Adjustments** and **Filters** open in a window over the picture (from the bottom of the
-Layers panel), so you can see the result while you change them.
-- **Layer Style** — Stroke (outside, inside, center), Drop Shadow, Inner Shadow, Outer Glow, Color Overlay.
+**Layer Style**, **Adjustments**, **Levels**, **Curves**, **Gaussian Blur** and **Filters** open in a window
+over the picture (from the bottom of the Layers panel), so you can see the result while you change them.
+- **Layer Style** — Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
+  angle and altitude, highlight and shadow colors), Stroke (outside, inside, center), Drop Shadow, Inner
+  Shadow, Outer Glow, Color Overlay.
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
   fades only the layer's own pixels. Merge down, flatten and export bake them in.
 - **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
   sharpness, vignette, grain. On a pixel layer: live preview, then Apply (closing the window cancels). On an
   adjustment layer they stay editable.
+- **Levels** — shadows, midtones and highlights in, darkest and lightest out, for RGB or each channel,
+  over a histogram; Auto.
+- **Curves** — drag points on the curve (tap to add, drag off the box to remove) for RGB or each channel,
+  with presets.
+- **Gaussian Blur** — radius up to 250 px. As an adjustment layer it blurs everything below it; paint its
+  mask black where things should stay sharp.
 - **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength.
 
 ### Masks

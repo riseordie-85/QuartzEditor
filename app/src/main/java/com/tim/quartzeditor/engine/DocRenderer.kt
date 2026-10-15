@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.RenderEffect
 import android.graphics.RenderNode
+import android.graphics.Shader
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -35,6 +37,9 @@ class LayerPreview(
 ) {
     private val shader by lazy { ColorShader() }
 
+    /** A separate one for the blur preview: as a render effect, its picture comes from the effect. */
+    private val effectShader by lazy { ColorShader() }
+
     fun drawFx(canvas: Canvas, layer: Layer, docW: Float, docH: Float) {
         val p = proxy ?: return
         val b = proxyBounds ?: return
@@ -42,8 +47,40 @@ class LayerPreview(
         canvas.save()
         canvas.translate(layer.x + dragX + b.left, layer.y + dragY + b.top)
         canvas.scale(b.width() / p.width, b.height() / p.height)
-        shader.bind(f, p)
-        canvas.drawRect(0f, 0f, p.width.toFloat(), p.height.toFloat(), shader.paint)
+        // Blur radius in proxy pixels
+        val k = p.width / b.width()
+        val r = f.blur * k
+        if (r > 0.3f && canvas.isHardwareAccelerated) {
+            val colorFx = { effectShader.effect(f, max(1f, max(p.width, p.height) / 1500f)) }
+            val left = layer.x + dragX + b.left
+            val top = layer.y + dragY + b.top
+            val covers = left <= 0f && top <= 0f && left + b.width() >= docW && top + b.height() >= docH
+            val node = RenderNode("fxPreview")
+            if (covers) {
+                // Covers the canvas: blurred like the result, its edges carrying on at the canvas edge
+                val cx = (-left * k).roundToInt()
+                val cy = (-top * k).roundToInt()
+                val cw = (docW * k).roundToInt().coerceAtLeast(1)
+                val ch = (docH * k).roundToInt().coerceAtLeast(1)
+                node.setPosition(cx, cy, cx + cw, cy + ch)
+                val blur = Gpu.blurEffect(r, Shader.TileMode.CLAMP)
+                node.setRenderEffect(if (f.copy(blur = 0f).isIdentity) blur else RenderEffect.createChainEffect(colorFx(), blur))
+                node.beginRecording().drawBitmap(p, -cx.toFloat(), -cy.toFloat(), null)
+                node.endRecording()
+            } else {
+                // Blurred, then adjusted, with room around it for the blur to spread
+                val pad = Gpu.blurReach(r)
+                node.setPosition(-pad, -pad, p.width + pad, p.height + pad)
+                val blur = Gpu.blurEffect(r)
+                node.setRenderEffect(if (f.copy(blur = 0f).isIdentity) blur else RenderEffect.createChainEffect(colorFx(), blur))
+                node.beginRecording().drawBitmap(p, pad.toFloat(), pad.toFloat(), null)
+                node.endRecording()
+            }
+            canvas.drawRenderNode(node)
+        } else {
+            shader.bind(f, p)
+            canvas.drawRect(0f, 0f, p.width.toFloat(), p.height.toFloat(), shader.paint)
+        }
         canvas.restore()
         // The canvas is in canvas pixels here, so the vignette centers on the canvas
         Gpu.drawVignette(canvas, f.vignette, 0f, 0f, docW, docH)
@@ -206,12 +243,35 @@ object DocRenderer {
                 view.mapPoints(pts)
                 kotlin.math.hypot(pts[2] - pts[0], pts[3] - pts[1])
             }
-            val adjusted = node("adjusted").apply {
-                // Sharpen/grain spacing follows the zoom, like the full-size result
-                setRenderEffect(shader.effect(fx, max(1f, scale * max(ctx.docW, ctx.docH) / 1500f)))
+            val blurR = fx.blur * scale
+            val colorFx = { shader.effect(fx, max(1f, scale * max(ctx.docW, ctx.docH) / 1500f)) }
+            val adjusted = if (blurR > 0.3f) {
+                // Blur: only the canvas's part of the screen (plus room for the blur), so its edges
+                // carry on past the canvas edge like the exported picture
+                // (What's below is only recorded for the screen, so the area stops at the screen's edges)
+                val r = RectF(0f, 0f, ctx.docW, ctx.docH).also { view.mapRect(it) }
+                val area = android.graphics.Rect(
+                    kotlin.math.floor(r.left).toInt().coerceAtLeast(0), kotlin.math.floor(r.top).toInt().coerceAtLeast(0),
+                    kotlin.math.ceil(r.right).toInt().coerceAtMost(w), kotlin.math.ceil(r.bottom).toInt().coerceAtMost(h),
+                )
+                RenderNode("adjusted").apply {
+                    if (area.isEmpty) area.set(0, 0, 1, 1)
+                    setPosition(area)
+                    val blur = Gpu.blurEffect(blurR, Shader.TileMode.CLAMP)
+                    setRenderEffect(if (fx.copy(blur = 0f).isIdentity) blur else RenderEffect.createChainEffect(colorFx(), blur))
+                    val c = beginRecording(area.width(), area.height())
+                    c.translate(-area.left.toFloat(), -area.top.toFloat())
+                    c.drawRenderNode(below)
+                    endRecording()
+                }
+            } else {
+                node("adjusted").apply {
+                    // Sharpen/grain spacing follows the zoom, like the full-size result
+                    setRenderEffect(colorFx())
+                    beginRecording(w, h).drawRenderNode(below)
+                    endRecording()
+                }
             }
-            adjusted.beginRecording(w, h).drawRenderNode(below)
-            adjusted.endRecording()
             val next = node("next")
             val nr = next.beginRecording(w, h)
             nr.drawRenderNode(below)
@@ -296,7 +356,7 @@ object DocRenderer {
                 drawNode(pc, l, ctx)
                 continue
             }
-            val adjusted = Gpu.applyFx(pic, fx, area.left * s, area.top * s, ctx.docW * s, ctx.docH * s)
+            val adjusted = Gpu.applyFx(pic, fx, area.left * s, area.top * s, ctx.docW * s, ctx.docH * s, pixelScale = s, clampEdges = true)
             val next = pic.copy(Bitmap.Config.ARGB_8888, true)
             pic.recycle()
             pic = next
@@ -395,6 +455,11 @@ object DocRenderer {
         if (built != null && style.innerShadow.on) {
             // Already limited to the layer's shape
             Effects.drawImage(canvas, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity)
+        }
+        if (built != null && style.bevel.on) {
+            // Highlights lighten, shadows darken (like Photoshop's Screen and Multiply)
+            Effects.drawImage(canvas, built, built.bevelLight, dx, dy, style.bevel.highlight, style.bevel.highlightOpacity, android.graphics.BlendMode.SCREEN)
+            Effects.drawImage(canvas, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, android.graphics.BlendMode.MULTIPLY)
         }
         if (built != null && style.stroke.on) {
             Effects.drawImage(canvas, built, built.stroke, dx, dy, style.stroke.color, style.stroke.opacity)
@@ -604,7 +669,8 @@ object DocRenderer {
         for (l in only) {
             if (!l.hasContent || !l.props.visible || !l.props.style.needsBuild) continue
             val mask = if (l.maskActive) l.mask?.tiles else null
-            Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide)?.let { out[l.id] = it }
+            // A layer whose effects can't be made is drawn without them (never blocks saving or export)
+            runCatching { Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide) }.getOrNull()?.let { out[l.id] = it }
         }
         return out
     }

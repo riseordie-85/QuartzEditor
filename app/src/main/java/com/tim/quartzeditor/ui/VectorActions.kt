@@ -43,8 +43,21 @@ class TextEditSession(val layerId: Long, val before: DocSnap, val isNew: Boolean
 // ===================================================================== settings for new shapes and text
 
 internal fun loadShapeStyle(prefs: SharedPreferences): ShapeSpec =
-    prefs.getString("shapeStyle", null)?.let { runCatching { ShapeSpec.fromJson(JSONObject(it)) }.getOrNull() }
-        ?: ShapeSpec(ShapeKind.RECT, fill = Color.BLACK, stroke = null, strokeWidth = 6f)
+    (prefs.getString("shapeStyle", null)?.let { runCatching { ShapeSpec.fromJson(JSONObject(it)) }.getOrNull() }
+        ?: ShapeSpec(ShapeKind.RECT, fill = Color.BLACK, stroke = null, strokeWidth = 6f))
+        // New shapes always start filled, without an outline
+        .let { it.copy(fill = it.fill ?: Color.BLACK, stroke = null) }
+
+/**
+ * New shapes start filled with no outline. Colors, outline width, corners and star settings
+ * carry over from the last shape; fill and outline switches don't.
+ */
+internal fun EditorViewModel.resetShapeSwitches() {
+    val s = shapeStyle
+    if (s.stroke != null) lastShapeStroke = s.stroke
+    shapeStyle = s.copy(fill = s.fill ?: lastShapeFill ?: Color.BLACK, stroke = null)
+    saveVectorPrefs()
+}
 
 internal fun loadTextStyle(prefs: SharedPreferences): TextSpec =
     prefs.getString("textStyle", null)?.let { runCatching { TextSpec.fromJson(JSONObject(it)) }.getOrNull() }
@@ -303,6 +316,7 @@ internal fun EditorViewModel.addShapeLayer(spec: ShapeSpec, name: String) {
         d.activeId = l.id
         d.editMask = false
     }
+    resetShapeSwitches()
 }
 
 // ===================================================================== shape pen
@@ -321,7 +335,7 @@ fun EditorViewModel.penAdd(p: PenPoint, closeRadius: Float) {
     val first = penPoints.firstOrNull()
     if (first != null && penPoints.size >= 2 && hypot(p.x - first.x, p.y - first.y) <= closeRadius) {
         // Dragging on the first point reshapes its curve as it closes
-        if (p.smooth) penPoints[0] = first.copy(hx = p.hx, hy = p.hy)
+        if (p.smooth) penPoints[0] = first.copy(hx = p.hx, hy = p.hy, ix = -p.hx, iy = -p.hy)
         finishPen(closed = true)
         return
     }
@@ -362,6 +376,9 @@ fun EditorViewModel.finishPen(closed: Boolean) {
         spec = spec.copy(stroke = shapeStyle.fill ?: Color.BLACK, strokeWidth = max(spec.strokeWidth, 6f))
     }
     addShapeLayer(spec, "Shape")
+    // Straight on to adjusting its points
+    penEditing = true
+    penSelected = -1
 }
 
 // ===================================================================== Text tool

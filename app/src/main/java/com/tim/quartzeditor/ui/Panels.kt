@@ -186,6 +186,9 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 PopupKind.STYLE -> StylePanel(vm)
                 PopupKind.ADJUSTMENTS -> AdjustPanel(vm)
                 PopupKind.FILTERS -> FiltersPanel(vm)
+                PopupKind.LEVELS -> LevelsPanel(vm)
+                PopupKind.CURVES -> CurvesPanel(vm)
+                PopupKind.BLUR -> BlurPanel(vm)
             }
         }
     }
@@ -462,7 +465,7 @@ internal fun AdjustPanel(vm: EditorViewModel) {
 }
 
 @Composable
-private fun FxButtons(vm: EditorViewModel) {
+internal fun FxButtons(vm: EditorViewModel) {
     if (vm.pendingFx == null || vm.fxTarget != null) return
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

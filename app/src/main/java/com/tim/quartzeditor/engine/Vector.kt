@@ -65,9 +65,23 @@ enum class ShapeKind(val label: String) {
 
 enum class StrokeAlign(val label: String) { INSIDE("Inside"), CENTER("Center"), OUTSIDE("Outside") }
 
-/** A point of a pen shape. ([hx], [hy]) is its curve handle (zero = a sharp corner). */
-data class PenPoint(val x: Float, val y: Float, val hx: Float = 0f, val hy: Float = 0f) {
-    val smooth: Boolean get() = hx != 0f || hy != 0f
+/**
+ * A point of a pen shape. ([hx], [hy]) is its outgoing curve handle and ([ix], [iy]) its incoming
+ * one, both relative to the point (all zero = a sharp corner). Drawing with the pen makes them
+ * mirror images; point editing can give them different lengths.
+ */
+data class PenPoint(
+    val x: Float,
+    val y: Float,
+    val hx: Float = 0f,
+    val hy: Float = 0f,
+    val ix: Float = -hx,
+    val iy: Float = -hy,
+) {
+    val smooth: Boolean get() = hx != 0f || hy != 0f || ix != 0f || iy != 0f
+
+    /** The same point as a sharp corner. */
+    fun corner(): PenPoint = PenPoint(x, y)
 }
 
 /**
@@ -106,7 +120,9 @@ data class ShapeSpec(
         .put("points", points)
         .put("depth", depth.toDouble())
         .put("path", JSONArray().also { a ->
-            path.forEach { p -> a.put(JSONArray().put(p.x.toDouble()).put(p.y.toDouble()).put(p.hx.toDouble()).put(p.hy.toDouble())) }
+            path.forEach { p ->
+                a.put(JSONArray().put(p.x.toDouble()).put(p.y.toDouble()).put(p.hx.toDouble()).put(p.hy.toDouble()).put(p.ix.toDouble()).put(p.iy.toDouble()))
+            }
         })
         .put("closed", closed)
         .put("fill", fill?.toLong()?.and(0xFFFFFFFFL) ?: JSONObject.NULL)
@@ -127,7 +143,9 @@ data class ShapeSpec(
                 depth = o.optDouble("depth", 0.5).toFloat(),
                 path = if (pts == null) emptyList() else List(pts.length()) { i ->
                     val p = pts.getJSONArray(i)
-                    PenPoint(p.optDouble(0).toFloat(), p.optDouble(1).toFloat(), p.optDouble(2, 0.0).toFloat(), p.optDouble(3, 0.0).toFloat())
+                    val hx = p.optDouble(2, 0.0).toFloat()
+                    val hy = p.optDouble(3, 0.0).toFloat()
+                    PenPoint(p.optDouble(0).toFloat(), p.optDouble(1).toFloat(), hx, hy, p.optDouble(4, -hx.toDouble()).toFloat(), p.optDouble(5, -hy.toDouble()).toFloat())
                 },
                 closed = o.optBoolean("closed", true),
                 fill = if (o.isNull("fill")) null else o.optLong("fill").toInt(),
@@ -179,8 +197,8 @@ data class ShapeSpec(
             if (pts.isEmpty()) return p
             p.moveTo(pts[0].x, pts[0].y)
             fun seg(a: PenPoint, b: PenPoint) {
-                if (!a.smooth && !b.smooth) p.lineTo(b.x, b.y)
-                else p.cubicTo(a.x + a.hx, a.y + a.hy, b.x - b.hx, b.y - b.hy, b.x, b.y)
+                if (a.hx == 0f && a.hy == 0f && b.ix == 0f && b.iy == 0f) p.lineTo(b.x, b.y)
+                else p.cubicTo(a.x + a.hx, a.y + a.hy, b.x + b.ix, b.y + b.iy, b.x, b.y)
             }
             for (i in 1 until pts.size) seg(pts[i - 1], pts[i])
             if (closed && pts.size > 2) {
@@ -214,6 +232,8 @@ data class TextSpec(
     val fauxBold: Boolean = false,
     val fauxItalic: Boolean = false,
     val underline: Boolean = false,
+    /** Shown in capitals (the text itself keeps its own case). */
+    val allCaps: Boolean = false,
     /** Arc: -1 (smile) … 0 (straight) … 1 (rainbow). Single line only. */
     val curve: Float = 0f,
     val matrix: Affine = AFFINE_IDENTITY,
@@ -229,6 +249,7 @@ data class TextSpec(
         .put("bold", fauxBold)
         .put("italic", fauxItalic)
         .put("underline", underline)
+        .put("caps", allCaps)
         .put("curve", curve.toDouble())
         .put("matrix", matrix.toJson())
 
@@ -247,6 +268,7 @@ data class TextSpec(
             fauxBold = o.optBoolean("bold", false),
             fauxItalic = o.optBoolean("italic", false),
             underline = o.optBoolean("underline", false),
+            allCaps = o.optBoolean("caps", false),
             curve = o.optDouble("curve", 0.0).toFloat(),
             matrix = affineFrom(o.optJSONArray("matrix")),
         )
@@ -284,7 +306,7 @@ object VectorArt {
             textSkewX = if (t.fauxItalic) -0.22f else 0f
             isUnderlineText = t.underline
         }
-        val text = t.text.ifEmpty { " " }
+        val text = (if (t.allCaps) t.text.uppercase() else t.text).ifEmpty { " " }
         val fm = paint.fontMetrics
         val slack = size * 0.35f
         val curve = t.curve.coerceIn(-1f, 1f)

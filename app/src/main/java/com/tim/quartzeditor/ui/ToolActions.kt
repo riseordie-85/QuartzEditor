@@ -224,7 +224,7 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
 
 // ===================================================================== selections
 
-private fun EditorViewModel.setSelection(label: String, sel: Selection?) {
+internal fun EditorViewModel.setSelection(label: String, sel: Selection?) {
     val d = doc ?: return
     if (sel === d.selection) return
     // Adjustments being tried are applied to the old selection first
@@ -238,7 +238,27 @@ private fun EditorViewModel.setSelection(label: String, sel: Selection?) {
 fun EditorViewModel.commitSelectionShape(shape: Path) {
     val d = doc ?: return
     selectDraft = null
-    setSelection(if (selectMode == SelectMode.NEW) "Select" else "Change selection", Selection.combine(d.selection, shape, selectMode))
+    val old = d.selection
+    val mode = selectMode
+    val label = if (mode == SelectMode.NEW) "Select" else "Change selection"
+    // Combining with a pixel selection works on pixels: done in the background
+    if (old != null && old.isPixelBased && mode != SelectMode.NEW) setSelectionComputed(label) { Selection.combine(old, shape, mode) }
+    else setSelection(label, Selection.combine(old, shape, mode))
+}
+
+/** Works out a selection in the background (with the busy spinner), then makes it the selection. */
+internal fun EditorViewModel.setSelectionComputed(label: String, busyLabel: String = "Selecting…", compute: suspend () -> Selection?) {
+    val d = doc ?: return
+    if (pendingFirst { setSelectionComputed(label, busyLabel, compute) }) return
+    runBusy(busyLabel) {
+        val sel = withContext(Dispatchers.Default) { compute() }
+        if (doc !== d) return@runBusy
+        if (sel == null && d.selection == null) {
+            toast("Nothing was selected")
+            return@runBusy
+        }
+        setSelection(label, sel)
+    }
 }
 
 /** Tapped without dragging: a new selection mode deselects (like Photoshop). */
@@ -263,7 +283,13 @@ fun EditorViewModel.invertSelection() {
         toast("Nothing is selected")
         return
     }
-    setSelection("Invert selection", Selection.inverse(s, d.width, d.height))
+    if (s.isPixelBased) {
+        val w = d.width
+        val h = d.height
+        setSelectionComputed("Invert selection") { Selection.inverse(s, w, h) }
+    } else {
+        setSelection("Invert selection", Selection.inverse(s, d.width, d.height))
+    }
 }
 
 fun EditorViewModel.featherSelection(px: Float) {

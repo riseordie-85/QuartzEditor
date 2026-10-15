@@ -106,8 +106,11 @@ fun ShapeOptions(vm: EditorViewModel) {
         if (layer != null) {
             if (live) vm.editVectorLive(layer.id) { p -> p.copy(shape = p.shape?.let(change)) }
             else vm.editVector(layer.id, label) { p -> p.copy(shape = p.shape?.let(change)) }
+            // A layer's fill/outline switches don't carry over to new shapes (its colors do)
+            vm.resetShapeSwitches()
+        } else if (!live) {
+            vm.saveVectorPrefs()
         }
-        if (!live) vm.saveVectorPrefs()
     }
     fun done(label: String) {
         if (layer != null) vm.commitVector(label)
@@ -121,11 +124,22 @@ fun ShapeOptions(vm: EditorViewModel) {
             else -> "Shape"
         }
     )
+    if (vm.penEditTarget != null) {
+        Text("Drag points and their handles. Tap a point to pick it, tap the outline to add a point. Tap the pen again (or Done) to draw a new shape.", color = Q.textDim, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+    } else if (layer?.props?.shape?.kind == ShapeKind.PATH && vm.tool == Tool.PEN) {
+        Text("Tap the pen again to edit this shape's points, or tap the picture to draw a new shape.", color = Q.textDim, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+    }
     if (layer == null && vm.tool == Tool.PEN) {
         Text("Tap to place corners. Drag as you place a point to bend the line into a curve. Tap the first point to close the shape.", color = Q.textDim, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
     }
     if (spec.kind == ShapeKind.PATH) {
+        if (layer != null && vm.penEditTarget == null) {
+            SmallButton("Edit points") { vm.startPenEditing() }
+            Spacer(Modifier.height(6.dp))
+        }
         if (layer != null) {
             ToggleRow("Closed shape", spec.closed) { on ->
                 if (on && spec.path.size < 3) return@ToggleRow
@@ -329,6 +343,7 @@ fun TextOptions(vm: EditorViewModel) {
         IconToggle(Icons.Outlined.FormatBold, "Faux bold", spec.fauxBold) { set("Bold") { it.copy(fauxBold = !it.fauxBold) } }
         IconToggle(Icons.Outlined.FormatItalic, "Faux italic", spec.fauxItalic) { set("Italic") { it.copy(fauxItalic = !it.fauxItalic) } }
         IconToggle(Icons.Outlined.FormatUnderlined, "Underline", spec.underline) { set("Underline") { it.copy(underline = !it.underline) } }
+        TextToggle("AA", "All caps", spec.allCaps) { set("All caps") { it.copy(allCaps = !it.allCaps) } }
     }
     Spacer(Modifier.height(4.dp))
     PanelSlider("Letter spacing", spec.tracking, -0.2f..1f, "${(spec.tracking * 1000).roundToInt()}",
@@ -380,11 +395,39 @@ private fun IconToggle(icon: ImageVector, label: String, on: Boolean, onClick: (
     }
 }
 
+@Composable
+private fun TextToggle(text: String, label: String, on: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (on) Q.rowSelected else Q.field)
+            .clickable(onClickLabel = label, onClick = onClick),
+    ) {
+        Text(text, color = Q.text, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+    }
+}
+
 // ===================================================================== bars over the picture
 
 /** Shape pen: undo a point, cancel, finish open, close. */
 @Composable
 fun PenBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
+    val editing = vm.penEditTarget
+    if (editing != null) {
+        val pts = editing.props.shape?.path.orEmpty()
+        val sel = pts.getOrNull(vm.penSelected)
+        Bar(modifier) {
+            Text("Edit points", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp))
+            if (sel != null) {
+                BarChip(if (sel.smooth) "Make corner" else "Make curve", false) { vm.togglePenPointCurve() }
+                BarChip("Delete point", false) { vm.deletePenPoint() }
+            }
+            BarChip("Done", true) { vm.togglePenEditing() }
+        }
+        return
+    }
     if (vm.tool != Tool.PEN || vm.penPoints.isEmpty()) return
     Bar(modifier) {
         BarIcon(Icons.Outlined.Close, "Cancel shape") { vm.cancelPen() }

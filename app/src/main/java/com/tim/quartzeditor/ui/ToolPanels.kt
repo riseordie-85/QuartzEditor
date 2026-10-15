@@ -135,6 +135,25 @@ fun ToolOptions(vm: EditorViewModel) {
             if (vm.selectShape == SelectShape.POLYGON) {
                 Text("Tap to place corners; tap the first corner (or Close) to finish.", color = Q.textDim, fontSize = 12.sp)
             }
+            if (vm.selectShape == SelectShape.WAND) {
+                Spacer(Modifier.height(6.dp))
+                Text("Tap the picture to select pixels of that color.", color = Q.textDim, fontSize = 12.sp)
+                PanelSlider("Tolerance", vm.wandTolerance, 0f..1f, "${(vm.wandTolerance * 255).roundToInt()}", onChange = { vm.wandTolerance = it }, onDone = { vm.prefs.edit().putFloat("wandTol", vm.wandTolerance).apply() })
+                ToggleRow("Only touching pixels", vm.wandContiguous) {
+                    vm.wandContiguous = it
+                    vm.prefs.edit().putBoolean("wandContig", it).apply()
+                }
+                ToggleRow("Look at all layers", vm.wandAllLayers) {
+                    vm.wandAllLayers = it
+                    vm.prefs.edit().putBoolean("wandAll", it).apply()
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SmallButton("Select subject") { vm.selectSubject(background = false) }
+                SmallButton("Background") { vm.selectSubject(background = true) }
+            }
+            Text("Finds the main subject on your device (it may download once through Google Play services).", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.height(10.dp))
         }
         Tool.BUCKET -> {
@@ -269,7 +288,7 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         SelectMode.entries.forEach { m -> BarChip(m.label, vm.selectMode == m) { vm.selectMode = m } }
         Spacer(Modifier.width(4.dp))
         BarIcon(Icons.Outlined.SelectAll, "Select all") { vm.selectAll() }
-        BarIcon(Icons.Outlined.Deselect, "Deselect") { vm.deselect() }
+        BarChip("Deselect", false) { vm.deselect() }
         BarIcon(Icons.Outlined.InvertColors, "Invert selection") { vm.invertSelection() }
         Box {
             var menu by remember { mutableStateOf(false) }
@@ -285,6 +304,9 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     }
                 }
                 Spacer(Modifier.height(6.dp))
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("Select subject") }, onClick = { menu = false; vm.selectSubject(background = false) })
+                DropdownMenuItem(text = { Text("Select background") }, onClick = { menu = false; vm.selectSubject(background = true) })
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text("Copy to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) }, onClick = { menu = false; vm.selectionToLayer(cut = false) })
                 DropdownMenuItem(text = { Text("Cut to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCut, null) }, onClick = { menu = false; vm.selectionToLayer(cut = true) })

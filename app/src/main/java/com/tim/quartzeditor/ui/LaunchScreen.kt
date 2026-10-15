@@ -133,7 +133,8 @@ fun LaunchScreen(vm: EditorViewModel) {
                     Row(card.widthIn(max = 1100.dp).fillMaxWidth().weight(1f, fill = false).heightIn(max = 620.dp)) {
                         RecentPane(vm, Modifier.weight(1f).fillMaxHeight())
                         Spacer(Modifier.width(28.dp))
-                        Column(Modifier.weight(1f)) {
+                        // Scrolls if a short screen (like an unfolded Fold) can't fit it all
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                             NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream")) })
                         }
                     }
@@ -356,8 +357,37 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
             Text("px", color = Q.textDim, modifier = Modifier.padding(bottom = 14.dp))
         }
         Spacer(Modifier.height(10.dp))
+        // Size presets (a menu, so the form stays short) and orientation
         Row(verticalAlignment = Alignment.CenterVertically) {
-            FieldLabel("Orientation")
+            Box(Modifier.weight(1f)) {
+                var open by remember { mutableStateOf(false) }
+                val current = presets.firstOrNull { (it.w == wi && it.h == hi) || (it.w == hi && it.h == wi) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF262626))
+                        .border(1.dp, Color(0xFF555555), RoundedCornerShape(8.dp))
+                        .clickable { open = true }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text(current?.label ?: "Custom size", color = Color.White, fontSize = 17.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Size presets", tint = Color.White)
+                }
+                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    presets.forEach { p ->
+                        DropdownMenuItem(
+                            text = { Text("${p.label}   ${p.w} × ${p.h}") },
+                            onClick = {
+                                open = false
+                                w = p.w.toString()
+                                h = p.h.toString()
+                            },
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.width(10.dp))
             OrientationButton(Icons.Outlined.CropPortrait, "Portrait", hi >= wi) {
                 if (wi > hi) { val t = w; w = h; h = t }
@@ -365,22 +395,6 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
             Spacer(Modifier.width(6.dp))
             OrientationButton(Icons.Outlined.CropLandscape, "Landscape", wi > hi) {
                 if (hi > wi) { val t = w; w = h; h = t }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            presets.forEach { p ->
-                val sel = wi == p.w && hi == p.h
-                Text(
-                    "${p.label}  ${p.w}×${p.h}",
-                    color = Q.text,
-                    fontSize = 12.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (sel) Q.rowSelected else Q.field)
-                        .clickable { w = p.w.toString(); h = p.h.toString() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
             }
         }
         Spacer(Modifier.height(14.dp))
