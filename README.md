@@ -66,6 +66,9 @@ selection tools, the shapes, pen drawing/point editing).
 ### On the picture
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
+- **Grid** (menu → Show grid, or Ctrl+'): evenly spaced lines from the canvas's top-left corner. Grid
+  settings: spacing in pixels (or split the canvas into 2–12 equal parts), subdivisions, color, and Snap to
+  grid — moving layers and Transform boxes, shape corners and pen points snap to its lines while it's shown.
 - **Long press beside the picture** to change the workspace color. Menu → "Checkerboard for see-through"
   switches the transparency checkerboard off (see-through areas show white).
 - Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Export image,
@@ -151,7 +154,7 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
   **Ctrl+Shift+N** new layer, **Ctrl+G** put in a folder, **Ctrl+Alt+G** clip to the layer below,
   **Ctrl+E** merge down.
 - **Ctrl+L** Levels, **Ctrl+M** Curves, **Ctrl+U** Adjustments.
-- View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels.
+- View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels, **Ctrl+'** grid.
 - **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves to Projects.
 
 ## How it works

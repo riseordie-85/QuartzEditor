@@ -113,7 +113,7 @@ fun EditorViewModel.penEditBegin(hit: PenHit) {
 }
 
 /** Drags what [hit] grabbed to canvas point ([cx], [cy]); ([dx], [dy]) is how far the finger moved. */
-fun EditorViewModel.penEditDrag(hit: PenHit, cx: Float, cy: Float, startCx: Float, startCy: Float) {
+fun EditorViewModel.penEditDrag(hit: PenHit, cx: Float, cy: Float, startCx: Float, startCy: Float, snapRadius: Float = 0f) {
     val l = penEditTarget ?: return
     val start = penDragStart ?: return
     val pts = start.path.toMutableList()
@@ -123,9 +123,11 @@ fun EditorViewModel.penEditDrag(hit: PenHit, cx: Float, cy: Float, startCx: Floa
     val q = l.toSpec(cx, cy)
     when (hit) {
         is PenHit.Anchor -> {
-            // Move by how far the finger went (in the shape's own space), handles along
-            val s0 = l.toSpec(startCx, startCy)
-            pts[i] = p.copy(x = p.x + (q.x - s0.x), y = p.y + (q.y - s0.y))
+            // Move by how far the finger went, handles along; the point snaps to the grid
+            val a0 = l.pathMatrix().map(p.x, p.y)
+            val (tx, ty) = snapPoint(a0.x + (cx - startCx), a0.y + (cy - startCy), snapRadius)
+            val target = l.toSpec(tx, ty)
+            pts[i] = p.copy(x = target.x, y = target.y)
         }
         is PenHit.Out -> {
             val hx = q.x - p.x

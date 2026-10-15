@@ -373,8 +373,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     }
                                     if (mode == GestureMode.SHAPING || mode == GestureMode.PEN) {
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                        if (mode == GestureMode.SHAPING) vm.dragShape(startCx, startCy, cx, cy)
-                                        else vm.penPreview(com.tim.quartzeditor.engine.PenPoint(startCx, startCy, cx - startCx, cy - startCy))
+                                        if (mode == GestureMode.SHAPING) dragShapeSnapped(vm, startCx, startCy, cx, cy, 10.dp.toPx() / vm.scale)
+                                        else vm.snapPoint(startCx, startCy, 10.dp.toPx() / vm.scale).let { (px, py) ->
+                                            vm.penPreview(com.tim.quartzeditor.engine.PenPoint(px, py, cx - px, cy - py))
+                                        }
                                     }
                                 }
                                 GestureMode.TRANSFORM -> if (main != null && tStart != null) {
@@ -452,17 +454,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 }
                                 GestureMode.SHAPING -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                    vm.dragShape(startCx, startCy, cx, cy)
+                                    dragShapeSnapped(vm, startCx, startCy, cx, cy, 10.dp.toPx() / vm.scale)
                                 }
                                 GestureMode.PEN -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                    vm.penPreview(com.tim.quartzeditor.engine.PenPoint(startCx, startCy, cx - startCx, cy - startCy))
+                                    val (px, py) = vm.snapPoint(startCx, startCy, 10.dp.toPx() / vm.scale)
+                                    vm.penPreview(com.tim.quartzeditor.engine.PenPoint(px, py, cx - px, cy - py))
                                 }
                                 GestureMode.PEN_EDIT -> if (main != null && penHit != null) {
                                     if (penMoved || (main.position - start).getDistance() > slop) {
                                         penMoved = true
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                        vm.penEditDrag(penHit, cx, cy, startCx, startCy)
+                                        vm.penEditDrag(penHit, cx, cy, startCx, startCy, 10.dp.toPx() / vm.scale)
                                     }
                                 }
                                 GestureMode.BLOCKED, GestureMode.DONE -> Unit
@@ -498,7 +501,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     Tool.PEN -> if (vm.penEditTarget != null) {
                                         vm.penEditTap(startCx, startCy, 24.dp.toPx() / vm.scale)
                                     } else {
-                                        vm.penAdd(com.tim.quartzeditor.engine.PenPoint(startCx, startCy), 24.dp.toPx() / vm.scale)
+                                        val (px, py) = vm.snapPoint(startCx, startCy, 10.dp.toPx() / vm.scale)
+                                        vm.penAdd(com.tim.quartzeditor.engine.PenPoint(px, py), 24.dp.toPx() / vm.scale)
                                     }
                                     Tool.TEXT -> vm.textTap(startCx, startCy)
                                     else -> Unit
@@ -563,6 +567,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 )
                 nc.restore()
             }
+            // Alignment grid
+            drawGrid(vm, s, ox, oy, d.width, d.height)
+
             // Crop box: dim what's cut off, thirds, handles
             vm.cropBox?.let { b ->
                 val l = b.left * s + ox
@@ -810,6 +817,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/** Drags out a shape with both corners snapped to the grid (when it's on). */
+private fun dragShapeSnapped(vm: EditorViewModel, x0: Float, y0: Float, x1: Float, y1: Float, radius: Float) {
+    val (ax, ay) = vm.snapPoint(x0, y0, radius)
+    val (bx, by) = vm.snapPoint(x1, y1, radius)
+    vm.dragShape(ax, ay, bx, by)
 }
 
 private fun checkerShader(cell: Int): BitmapShader {

@@ -221,6 +221,23 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean("checker", showChecker).apply()
     }
 
+    // ------------------------------------------------------------ alignment grid (Grid.kt)
+
+    /** The alignment grid over the canvas. */
+    var showGrid by mutableStateOf(prefs.getBoolean("grid", false))
+        internal set
+    /** Canvas pixels between grid lines. */
+    var gridSpacing by mutableFloatStateOf(prefs.getFloat("gridSpacing", 100f))
+        internal set
+    /** Fainter lines between the main ones (1 = none). */
+    var gridSubdivisions by mutableIntStateOf(prefs.getInt("gridSubdiv", 4))
+        internal set
+    var gridColor by mutableIntStateOf(prefs.getInt("gridColor", 0xFF00B4FF.toInt()))
+        internal set
+    /** Moving, shapes and pen points snap to the grid's lines while it's shown. */
+    var gridSnap by mutableStateOf(prefs.getBoolean("gridSnap", true))
+        internal set
+
     /** Snap lines shown while something snaps (canvas pixels): vertical at these x, horizontal at these y. */
     var snapGuidesX by mutableStateOf<List<Float>>(emptyList())
         internal set

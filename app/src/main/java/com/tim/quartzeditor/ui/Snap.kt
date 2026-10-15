@@ -4,7 +4,7 @@ import android.graphics.RectF
 import kotlin.math.abs
 
 // Snapping while moving layers: their left / middle / right (and top / middle / bottom) snap to the
-// canvas's edges and middle, with a line showing where.
+// canvas's edges and middle (and the grid's lines when it's shown), with a line showing where.
 
 /**
  * Snaps a drag of [content] (canvas pixels) by ([dx], [dy]): returns the drag to use and shows the
@@ -12,16 +12,18 @@ import kotlin.math.abs
  */
 fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Float): Pair<Float, Float> {
     val d = doc
-    if (!snapOn || content == null || d == null || radius <= 0f) {
+    if ((!snapOn && !snapsToGrid) || content == null || d == null || radius <= 0f) {
         clearSnapGuides()
         return dx to dy
     }
     fun axis(lo: Float, hi: Float, size: Float, delta: Float): Pair<Float, Float?> {
-        val targets = floatArrayOf(0f, size / 2f, size)
+        val canvasTargets = if (snapOn) listOf(0f, size / 2f, size) else emptyList()
         var best = 0f
         var bestD = radius
         var at: Float? = null
         for (p in floatArrayOf(lo + delta, (lo + hi) / 2f + delta, hi + delta)) {
+            // The canvas's edges and middle, and the nearest grid line
+            val targets = if (snapsToGrid) canvasTargets + nearestGridLine(p) else canvasTargets
             for (t in targets) {
                 val diff = t - p
                 if (abs(diff) <= bestD) {

@@ -85,6 +85,8 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             KeyEvent.KEYCODE_U -> openPopup(PopupKind.ADJUSTMENTS)
             KeyEvent.KEYCODE_S -> saveToProjects(quiet = false)
             KeyEvent.KEYCODE_0 -> fit()
+            // Ctrl+' shows or hides the grid (like Photoshop)
+            KeyEvent.KEYCODE_APOSTROPHE -> toggleGrid()
             KeyEvent.KEYCODE_1 -> zoomTo(1f)
             KeyEvent.KEYCODE_DEL -> fillWithColor(background)
             else -> return false

@@ -80,6 +80,7 @@ fun Workspace(vm: EditorViewModel) {
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }
+    var gridOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         Modifier
@@ -155,6 +156,12 @@ fun Workspace(vm: EditorViewModel) {
                             trailingIcon = { if (vm.snapOn) Icon(Icons.Outlined.Check, contentDescription = "On") },
                             onClick = { menu = false; vm.toggleSnap() },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Show grid") },
+                            trailingIcon = { if (vm.showGrid) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleGrid() },
+                        )
+                        DropdownMenuItem(text = { Text("Grid settings…") }, onClick = { menu = false; gridOpen = true })
                         DropdownMenuItem(
                             text = { Text("Checkerboard for see-through") },
                             trailingIcon = { if (vm.showChecker) Icon(Icons.Outlined.Check, contentDescription = "On") },
@@ -254,6 +261,7 @@ fun Workspace(vm: EditorViewModel) {
     }
 
     RasterizeDialog(vm)
+    if (gridOpen) GridDialog(vm) { gridOpen = false }
 
     if (discardOpen) {
         val saved = vm.doc?.projectId != null

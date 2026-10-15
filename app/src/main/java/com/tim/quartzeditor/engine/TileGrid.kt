@@ -84,11 +84,15 @@ class TileGrid(val alphaOnly: Boolean) {
      * (in the same coordinates as the canvas) are skipped.
      */
     fun drawTo(canvas: Canvas, dx: Float, dy: Float, paint: Paint?, visible: RectF? = null) {
+        // Tile edges must not be anti-aliased: at in-between zooms the two soft edges of
+        // neighboring tiles don't add up to solid, which shows as faint lines across the picture.
+        // (New Paints are anti-aliased by default.)
+        val p = if (paint == null) PLAIN else if (paint.isAntiAlias) Paint(paint).apply { isAntiAlias = false } else paint
         for ((k, bmp) in tiles) {
             val x = dx + tx(k) * SIZE
             val y = dy + ty(k) * SIZE
             if (visible != null && (x > visible.right || y > visible.bottom || x + SIZE < visible.left || y + SIZE < visible.top)) continue
-            canvas.drawBitmap(bmp, x, y, paint)
+            canvas.drawBitmap(bmp, x, y, p)
         }
     }
 
@@ -102,6 +106,8 @@ class TileGrid(val alphaOnly: Boolean) {
 
     companion object {
         const val SIZE = 512
+
+        private val PLAIN = Paint().apply { isAntiAlias = false }
 
         fun key(tx: Int, ty: Int): Long = (tx.toLong() shl 32) or (ty.toLong() and 0xFFFFFFFFL)
         fun tx(key: Long): Int = (key shr 32).toInt()
