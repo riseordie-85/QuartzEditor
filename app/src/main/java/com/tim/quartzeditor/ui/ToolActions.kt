@@ -395,6 +395,7 @@ fun EditorViewModel.selectionToLayer(cut: Boolean) {
             if (cut) l.tiles = rest
             val n = Layer(d.newId(), LayerProps(d.uniqueName("Layer"), parent = l.props.parent), copyGrid, l.x, l.y)
             d.layers.add(d.indexOf(l.id) + 1, n)
+            d.joinClipGroup(n)
             d.activeId = n.id
             d.editMask = false
             d.selection = null

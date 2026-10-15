@@ -202,6 +202,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal var vectorJob: Job? = null
     internal var vectorLiveLayer: Layer? = null
 
+    /** Space held on a keyboard: one finger moves the view, whatever the tool. */
+    var tempPan by mutableStateOf(false)
+
+    /** Bumped by the Tab key to show or hide the panels. */
+    var panelsToggle by mutableIntStateOf(0)
+
     /** The brush column next to the toolbar can be folded away by tapping Brush/Eraser again. */
     var brushColumnHidden by mutableStateOf(false)
 
@@ -884,7 +890,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Move tool tap: picks the top layer with something visible under the finger. */
     fun selectLayerAt(x: Float, y: Float) {
         val d = doc ?: return
-        val hit = d.layers.asReversed().firstOrNull { it.hasContent && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) }
+        val hit = d.layers.asReversed().firstOrNull {
+            it.hasContent && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) &&
+                // A clipped layer only shows where its base has pixels
+                (!it.props.clip || clipBaseOf(it)?.let { b -> DocRenderer.layerHitTest(b, x.toInt(), y.toInt()) } != false)
+        }
         if (hit != null && hit.id != d.activeId) selectLayer(hit.id)
     }
 
@@ -971,6 +981,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val (at, parent) = insertPoint(d)
             val l = Layer(d.newId(), LayerProps(d.uniqueName("Layer"), parent = parent), TileGrid(alphaOnly = false))
             d.layers.add(at, l)
+            d.joinClipGroup(l)
             d.activeId = l.id
             d.editMask = false
         }
@@ -1026,6 +1037,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 kind = LayerKind.ADJUSTMENT,
             )
             d.layers.add(at, l)
+            d.joinClipGroup(l)
             d.activeId = l.id
             d.editMask = true
         }
@@ -1119,6 +1131,40 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Clipping mask on or off for the active layer: clipped, it only shows where the layer below
+     * it has pixels (Photoshop's Create / Release Clipping Mask).
+     */
+    fun toggleClip() {
+        val d = doc ?: return
+        if (pendingFirst { toggleClip() }) return
+        val l = d.active ?: return
+        if (l.isGroup && !l.props.clip) {
+            toast("Folders can't be clipped. Clip the layers inside, or merge the folder first")
+            return
+        }
+        if (!l.props.clip) {
+            // Clipped to the nearest unclipped layer below it in the same folder
+            val sibs = d.children(l.props.parent)
+            val below = sibs.subList(0, sibs.indexOf(l).coerceAtLeast(0)).lastOrNull { !it.props.clip }
+            if (below == null || !below.hasContent) {
+                toast(if (below == null) "There's no layer below to clip to" else "Clip to a pixel, shape or text layer")
+                return
+            }
+        }
+        setProps(l.id, if (l.props.clip) "Release clipping mask" else "Create clipping mask") { it.copy(clip = !it.clip) }
+    }
+
+    /** The layer this one is clipped to (null when it isn't clipped, or has nothing to clip to). */
+    fun clipBaseOf(l: Layer): Layer? {
+        if (!l.props.clip) return null
+        val d = doc ?: return null
+        val sibs = d.children(l.props.parent)
+        val i = sibs.indexOf(l)
+        if (i <= 0) return null
+        return sibs.subList(0, i).lastOrNull { !it.props.clip }?.takeIf { it.hasContent }
+    }
+
     /** The layer directly below [l] in the same folder, if any. */
     private fun siblingBelow(d: Doc, l: Layer): Layer? {
         val sibs = d.children(l.props.parent)
@@ -1202,7 +1248,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             stackEdit("Merge folder") {
                 val range = d.block(g)
                 val p = g.props
-                val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = p.blend, parent = p.parent), merged)
+                val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = p.blend, parent = p.parent, clip = p.clip), merged)
                 for (k in range.reversed()) d.layers.removeAt(k)
                 d.layers.add(range.first, l)
                 d.activeId = l.id
@@ -1325,6 +1371,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val l = editableActive() ?: return
         if (l.mask != null) {
             selectLayer(l.id, mask = true)
+            if (d.selection != null) toast("This layer already has a mask. Mask from selection (in ⋮) replaces it")
+            return
+        }
+        // With a selection (like Photoshop): the mask shows what's selected and hides the rest
+        if (d.selection != null) {
+            maskFromSelection()
             return
         }
         stackEdit("Add mask") {
@@ -1442,6 +1494,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val (at, parent) = insertPoint(d)
                 val l = Layer(d.newId(), LayerProps(name, parent = parent), grid, left, top)
                 d.layers.add(at, l)
+                d.joinClipGroup(l)
                 d.activeId = l.id
                 d.editMask = false
             }

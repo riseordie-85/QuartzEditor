@@ -113,7 +113,36 @@ object DocRenderer {
         val pixelScale: Float,
         /** Layers to draw at the top (null = the document's top level). */
         val roots: List<Layer>? = null,
-    )
+        /** Clipping: the layers clipped to each base layer (by the base's id), drawn with it. */
+        val clips: Map<Long, List<Layer>> = emptyMap(),
+        /** Drawing a clipping group: its base (the others are cut to its pixels). */
+        val clipBase: Layer? = null,
+    ) {
+        fun with(clips: Map<Long, List<Layer>> = this.clips, clipBase: Layer? = this.clipBase) = Ctx(
+            doc, docW, docH, bounds, tilePaint, stroke, preview, smooth, effects, view, viewW, viewH, pixelScale, roots, clips, clipBase,
+        )
+    }
+
+    /**
+     * Sorts sibling layers (bottom first) into what's drawn on its own and what's clipped: a
+     * clipped layer goes with the nearest unclipped pixel, shape or text layer below it. Clipped
+     * layers with no such base are drawn normally. A hidden base hides its clipped layers.
+     */
+    private fun clipGroups(list: List<Layer>): Pair<List<Layer>, Map<Long, List<Layer>>> {
+        if (list.none { it.props.clip }) return list.filter { it.props.visible } to emptyMap()
+        val shown = ArrayList<Layer>()
+        val clips = HashMap<Long, MutableList<Layer>>()
+        var base: Layer? = null
+        for (l in list) {
+            if (l.props.clip && base != null) {
+                if (base.props.visible && l.props.visible) clips.getOrPut(base.id) { mutableListOf() }.add(l)
+                continue
+            }
+            base = if (!l.props.clip && l.hasContent) l else null
+            if (l.props.visible) shown.add(l)
+        }
+        return shown to clips
+    }
 
     /**
      * @param visible the part of the canvas that's on screen (canvas pixels), to skip hidden tiles
@@ -152,8 +181,17 @@ object DocRenderer {
     }
 
     /** Draws sibling layers bottom to top. Adjustment layers change everything drawn before them in the list. */
-    private fun drawList(canvas: Canvas, list: List<Layer>, ctx: Ctx) {
-        val shown = list.filter { it.props.visible }
+    private fun drawList(canvas: Canvas, list: List<Layer>, ctx0: Ctx, regroup: Boolean = true) {
+        val shown: List<Layer>
+        val ctx: Ctx
+        if (regroup) {
+            val (s, clips) = clipGroups(list)
+            shown = s
+            ctx = ctx0.with(clips = clips, clipBase = null)
+        } else {
+            shown = list.filter { it.props.visible }
+            ctx = ctx0
+        }
         val adjusts = shown.any { it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f }
         if (!adjusts) {
             for (l in shown) drawNode(canvas, l, ctx)
@@ -164,13 +202,53 @@ object DocRenderer {
     }
 
     private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx) {
+        val base = ctx.clipBase
+        if (base != null && l !== base && !l.isAdjustment) {
+            // A clipped layer: drawn on its own, then cut to its base's pixels, then blended on
+            // (its own blend mode applies here, when the cut result goes onto the group)
+            canvas.saveLayer(ctx.bounds, Paint().apply { blendMode = l.props.blend.mode })
+            drawNode(canvas, l, ctx.with(clips = emptyMap(), clipBase = null), blendNormal = true, fullOpacity = false)
+            canvas.saveLayer(ctx.bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
+            val bp = ctx.preview?.takeIf { it.layerId == base.id }
+            drawContent(
+                canvas, ctx.docW, ctx.docH, base, ctx.bounds, ctx.tilePaint, ctx.stroke?.takeIf { it.layer === base }, bp, ctx.smooth,
+                base.x + (bp?.dragX ?: 0f), base.y + (bp?.dragY ?: 0f),
+            )
+            canvas.restore()
+            canvas.restore()
+            return
+        }
+        val members = ctx.clips[l.id]
+        if (base !== l && !members.isNullOrEmpty()) {
+            // A clipping group: the base's opacity and blend mode apply to all of it (like Photoshop)
+            val p = l.props
+            if (p.opacity <= 0f) return
+            canvas.saveLayer(ctx.bounds, Paint().apply {
+                alpha = (p.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+                blendMode = p.blend.mode
+            })
+            drawList(canvas, listOf(l) + members, ctx.with(clips = emptyMap(), clipBase = l), regroup = false)
+            canvas.restore()
+            return
+        }
+        // A clipping group's base: its opacity and blend mode are applied around the whole group
+        val asBase = base === l
+        drawNode(canvas, l, ctx, blendNormal = asBase, fullOpacity = asBase)
+    }
+
+    /**
+     * [blendNormal]: blended Normally (its blend mode is applied around it instead);
+     * [fullOpacity]: its opacity likewise.
+     */
+    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean) {
         when (l.kind) {
             LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
                 ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.takeIf { it.layerId == l.id }, ctx.smooth, ctx.effects,
+                blendNormal = blendNormal, fullOpacity = fullOpacity,
             )
             LayerKind.GROUP -> {
-                val p = l.props
+                val p = l.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
                 val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
                 if (alpha <= 0f) return
                 val dragX = ctx.preview?.takeIf { it.layerId == l.id }?.dragX ?: 0f
@@ -398,8 +476,10 @@ object DocRenderer {
         preview: LayerPreview?,
         smooth: Boolean,
         effects: ((Layer) -> BuiltEffects?)?,
+        blendNormal: Boolean = false,
+        fullOpacity: Boolean = false,
     ) {
-        val p = layer.props
+        val p = layer.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
         val transforming = preview?.transform != null
         val style = p.style
         val built = if (style.needsBuild && !transforming) effects?.invoke(layer) else null

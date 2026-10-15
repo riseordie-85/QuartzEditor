@@ -116,6 +116,7 @@ object ProjectIO {
                     .put("style", p.style.toJson())
                     .put("kind", l.kind.name)
                     .put("parent", p.parent)
+                    .put("clip", p.clip)
                     .put("collapsed", l.collapsed)
                     .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
                     .also { o -> p.shape?.let { o.put("shape", it.toJson()) } }
@@ -208,6 +209,7 @@ object ProjectIO {
                 adjust = FxParams.fromJson(o.optJSONObject("adjust")),
                 shape = o.optJSONObject("shape")?.let { runCatching { ShapeSpec.fromJson(it) }.getOrNull() },
                 text = o.optJSONObject("text")?.let { runCatching { TextSpec.fromJson(it) }.getOrNull() },
+                clip = o.optBoolean("clip", false),
             )
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null

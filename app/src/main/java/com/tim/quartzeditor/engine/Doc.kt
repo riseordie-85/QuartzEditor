@@ -68,6 +68,11 @@ data class LayerProps(
     val shape: ShapeSpec? = null,
     /** Text layers: the text and how it looks. */
     val text: TextSpec? = null,
+    /**
+     * Clipping mask: only shows where the layer below it (its base, the nearest unclipped
+     * pixel, shape or text layer in the same folder) has pixels.
+     */
+    val clip: Boolean = false,
 )
 
 /**
@@ -220,6 +225,16 @@ class Doc(width: Int, height: Int, name: String) {
         height = s.height
         selection = s.selection
         renderVersion++
+    }
+
+    /**
+     * A layer just added inside a clipping group (with a clipped layer right above it) joins the
+     * group, like Photoshop, so the layers above stay clipped to the same base.
+     */
+    fun joinClipGroup(l: Layer) {
+        if (l.isGroup || l.props.clip) return
+        val above = layers.getOrNull(indexOf(l.id) + 1) ?: return
+        if (above.props.parent == l.props.parent && above.props.clip) l.props = l.props.copy(clip = true)
     }
 
     // ------------------------------------------------------------ folders

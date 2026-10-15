@@ -37,6 +37,8 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Title
+import androidx.compose.material.icons.outlined.SubdirectoryArrowRight
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.BlurOn
@@ -282,11 +284,13 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
                     if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
                     item("Put in a new folder") { vm.groupActive() }()
+                    if (active != null && !active.isGroup) item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }()
                     if (active?.isVector == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
                     item("Flatten image") { vm.flattenImage() }()
                     HorizontalDivider()
                     item("Place image as layer…") { onPlaceImage() }()
                     item("Remove background") { vm.removeBackground() }()
+                    if (d.selection != null) item("Mask from selection") { vm.maskFromSelection() }()
                     item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
                     item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
                     if (active?.hasMask == true) {
@@ -345,6 +349,12 @@ private fun LayerRow(
         // Indent what's inside folders
         val depth = vm.doc?.depth(layer) ?: 0
         if (depth > 0) Spacer(Modifier.width((12 * depth).dp))
+        // Clipped to the layer below: an arrow pointing down to it (like Photoshop)
+        val clipBase = vm.clipBaseOf(layer)
+        if (clipBase != null) {
+            Icon(Icons.Outlined.SubdirectoryArrowRight, contentDescription = "Clipped to ${clipBase.props.name}", tint = Q.textDim, modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = 90f })
+            Spacer(Modifier.width(2.dp))
+        }
         when {
             layer.isGroup -> {
                 Box(
@@ -387,6 +397,7 @@ private fun LayerRow(
             Text(p.name, color = if (p.visible) Q.text else Q.textDim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val notes = buildList {
                 if (layer.isShape) add("Shape")
+                if (clipBase != null) add("Clipped to ${clipBase.props.name}")
                 if (p.blend != Blend.NORMAL) add(p.blend.label)
                 if (p.opacity < 0.995f) add("${(p.opacity * 100).roundToInt()}%")
                 if (p.style.any) add("fx")

@@ -63,6 +63,11 @@ fun EditorViewModel.startPenEditing() {
     if (pendingFirst { startPenEditing() }) return
     if (tool != Tool.PEN) onToolButton(Tool.PEN)
     if (tool != Tool.PEN) return
+    val a = doc?.active
+    if (!(a != null && a.isShape && a.props.shape?.kind == ShapeKind.PATH)) {
+        toast("Select a shape drawn with the pen to edit its points")
+        return
+    }
     penEditing = true
     penSelected = -1
 }

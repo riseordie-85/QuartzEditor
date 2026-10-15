@@ -7,6 +7,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -122,27 +128,33 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
         ) {
             val t = vm.tool
             val moveIcon = if (t == Tool.PAN) Icons.Outlined.PanTool else QIcons.Move
-            ToolButton(moveIcon, if (t == Tool.PAN) "Pan (tap again to move layers)" else "Move layer (tap again to pan)", t == Tool.MOVE || t == Tool.PAN, buttonSize) { vm.onToolButton(Tool.MOVE) }
-            val selIcon = when (vm.selectShape) {
-                SelectShape.RECT -> QIcons.SelectRect
-                SelectShape.ELLIPSE -> QIcons.SelectEllipse
-                SelectShape.LASSO -> Icons.Outlined.Gesture
-                SelectShape.POLYGON -> Icons.Outlined.Polyline
-                SelectShape.WAND -> Icons.Outlined.AutoFixHigh
-            }
-            ToolButton(selIcon, "Select: ${vm.selectShape.label} (tap again for the next shape)", t == Tool.SELECT, buttonSize) { vm.onToolButton(Tool.SELECT) }
+            ToolButton(
+                moveIcon, if (t == Tool.PAN) "Pan (tap again to move layers)" else "Move layer (tap again to pan)", t == Tool.MOVE || t == Tool.PAN, buttonSize,
+                options = listOf(
+                    ToolOption(QIcons.Move, "Move layer", t == Tool.MOVE) { vm.chooseMove(pan = false) },
+                    ToolOption(Icons.Outlined.PanTool, "Pan", t == Tool.PAN) { vm.chooseMove(pan = true) },
+                ),
+            ) { vm.onToolButton(Tool.MOVE) }
+            ToolButton(
+                selectIcon(vm.selectShape), "Select: ${vm.selectShape.label} (tap again for the next shape, hold for all)", t == Tool.SELECT, buttonSize,
+                options = SelectShape.entries.map { s -> ToolOption(selectIcon(s), s.label, t == Tool.SELECT && vm.selectShape == s) { vm.chooseSelectShape(s) } },
+            ) { vm.onToolButton(Tool.SELECT) }
             ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
-            ToolButton(Icons.Outlined.Transform, "Transform (scale, rotate, flip, distort)", t == Tool.TRANSFORM, buttonSize) { vm.onToolButton(Tool.TRANSFORM) }
+            ToolButton(QIcons.Transform, "Transform (scale, rotate, flip, distort)", t == Tool.TRANSFORM, buttonSize) { vm.onToolButton(Tool.TRANSFORM) }
             ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
             ToolButton(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET, buttonSize) { vm.onToolButton(Tool.BUCKET) }
             ToolButton(Icons.Outlined.Gradient, "Gradient", t == Tool.GRADIENT, buttonSize) { vm.onToolButton(Tool.GRADIENT) }
-            val shapeIcon = when (vm.shapeKind) {
-                com.tim.quartzeditor.engine.ShapeKind.ELLIPSE -> Icons.Outlined.Circle
-                com.tim.quartzeditor.engine.ShapeKind.STAR -> Icons.Outlined.StarOutline
-                else -> Icons.Outlined.Rectangle
-            }
-            ToolButton(shapeIcon, "Shape: ${vm.shapeKind.label} (tap again for the next shape)", t == Tool.SHAPE, buttonSize) { vm.onToolButton(Tool.SHAPE) }
-            ToolButton(QIcons.Pen, "Shape pen", t == Tool.PEN, buttonSize) { vm.onToolButton(Tool.PEN) }
+            ToolButton(
+                shapeIcon(vm.shapeKind), "Shape: ${vm.shapeKind.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE, buttonSize,
+                options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } },
+            ) { vm.onToolButton(Tool.SHAPE) }
+            ToolButton(
+                QIcons.Pen, "Shape pen (hold for point editing)", t == Tool.PEN, buttonSize,
+                options = listOf(
+                    ToolOption(QIcons.Pen, "Draw a shape", t == Tool.PEN && !vm.penEditing) { vm.choosePen(edit = false) },
+                    ToolOption(Icons.Outlined.Polyline, "Edit points", t == Tool.PEN && vm.penEditing) { vm.choosePen(edit = true) },
+                ),
+            ) { vm.onToolButton(Tool.PEN) }
             ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
             ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
             ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
@@ -239,20 +251,71 @@ private fun ToolLabel(text: String) {
     Text(text, color = Q.text, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, size: Dp, ring: Boolean = false, onClick: () -> Unit) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .padding(vertical = 3.dp)
-            .size(size)
-            .clip(if (ring) CircleShape else RoundedCornerShape(10.dp))
-            .background(if (selected) Color.White.copy(alpha = 0.16f) else Color.Transparent)
-            .then(if (selected && ring) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
-            .clickable(onClick = onClick),
-    ) {
-        Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(size * 0.55f))
+private fun ToolButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    size: Dp,
+    ring: Boolean = false,
+    /** Other tools in this button: a long press lists them. */
+    options: List<ToolOption>? = null,
+    onClick: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .padding(vertical = 3.dp)
+                .size(size)
+                .clip(if (ring) CircleShape else RoundedCornerShape(10.dp))
+                .background(if (selected) Color.White.copy(alpha = 0.16f) else Color.Transparent)
+                .then(if (selected && ring) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
+                .combinedClickable(onClick = onClick, onLongClick = if (options != null) ({ open = true }) else null),
+        ) {
+            Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(size * 0.55f))
+            // A small corner mark: there's more in here
+            if (options != null) {
+                Box(Modifier.align(Alignment.BottomEnd).padding(4.dp).size(4.dp).clip(CircleShape).background(Q.textDim))
+            }
+        }
+        if (options != null) {
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }, offset = DpOffset(size + 8.dp, -size)) {
+                options.forEach { o ->
+                    DropdownMenuItem(
+                        text = { Text(o.label) },
+                        leadingIcon = { Icon(o.icon, contentDescription = null) },
+                        trailingIcon = if (o.current) ({ Icon(Icons.Outlined.Check, contentDescription = "Current", tint = Q.accent) }) else null,
+                        onClick = {
+                            open = false
+                            o.onPick()
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+/** One of the tools a toolbar button holds. */
+private class ToolOption(val icon: ImageVector, val label: String, val current: Boolean, val onPick: () -> Unit)
+
+private val SHAPE_CHOICES = listOf(com.tim.quartzeditor.engine.ShapeKind.RECT, com.tim.quartzeditor.engine.ShapeKind.ELLIPSE, com.tim.quartzeditor.engine.ShapeKind.STAR)
+
+private fun selectIcon(s: SelectShape): ImageVector = when (s) {
+    SelectShape.RECT -> QIcons.SelectRect
+    SelectShape.ELLIPSE -> QIcons.SelectEllipse
+    SelectShape.LASSO -> Icons.Outlined.Gesture
+    SelectShape.POLYGON -> Icons.Outlined.Polyline
+    SelectShape.WAND -> Icons.Outlined.AutoFixHigh
+}
+
+private fun shapeIcon(k: com.tim.quartzeditor.engine.ShapeKind): ImageVector = when (k) {
+    com.tim.quartzeditor.engine.ShapeKind.ELLIPSE -> Icons.Outlined.Circle
+    com.tim.quartzeditor.engine.ShapeKind.STAR -> Icons.Outlined.StarOutline
+    else -> Icons.Outlined.Rectangle
 }
 
 /** A tall slider like the ones in the mock-up: drag up for more. */

@@ -313,6 +313,7 @@ internal fun EditorViewModel.addShapeLayer(spec: ShapeSpec, name: String) {
         val props = LayerProps(d.uniqueName(name), parent = parent, shape = spec)
         val l = Layer(d.newId(), props, VectorArt.rasterize(props, VectorArt.clipFor(0, 0, d.width, d.height)), kind = LayerKind.SHAPE)
         d.layers.add(at, l)
+        d.joinClipGroup(l)
         d.activeId = l.id
         d.editMask = false
     }
@@ -411,6 +412,7 @@ private fun EditorViewModel.newText(x: Float, y: Float) {
     val spec = textStyle.copy(text = "", size = size, matrix = translation(x, y))
     val l = Layer(d.newId(), LayerProps("Text", parent = parent, text = spec), TileGrid(alphaOnly = false), kind = LayerKind.TEXT)
     d.layers.add(at, l)
+    d.joinClipGroup(l)
     d.activeId = l.id
     d.editMask = false
     d.invalidate()

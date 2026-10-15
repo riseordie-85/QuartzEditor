@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,14 @@ fun Workspace(vm: EditorViewModel) {
         val compact = maxWidth < 600.dp || maxHeight < 480.dp
         var panelsOpen by rememberSaveable { mutableStateOf(wide) }
         val docked = wide && panelsOpen
+        // Tab on a keyboard shows or hides the panels
+        var seenToggle by remember { mutableIntStateOf(vm.panelsToggle) }
+        LaunchedEffect(vm.panelsToggle) {
+            if (vm.panelsToggle != seenToggle) {
+                seenToggle = vm.panelsToggle
+                panelsOpen = !panelsOpen
+            }
+        }
 
         BackHandler {
             when {

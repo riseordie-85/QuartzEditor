@@ -19,6 +19,8 @@ right (the arrow button at the bottom right); on tablets and the unfolded Fold t
 and the same button hides them.
 
 ### Toolbar
+Buttons with a dot in the corner hold more than one tool: **long-press** for the list (Move/Pan, the
+selection tools, the shapes, pen drawing/point editing).
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view).
 - **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand. Drag
@@ -83,6 +85,10 @@ Only **Color**, **Properties** and **Layers** live in the column.
   - Each layer: show/hide, thumbnail, mask thumbnail, name (long-press to rename), drag handle to reorder.
   - **Folders**: the arrow folds/unfolds them. Drag a layer just under a folder's row to put it inside;
     drag it below the folder's contents to take it out.
+  - **Clipping masks**: ⋮ → **Clip to layer below** (or Ctrl+Alt+G) shows a layer only where the layer
+    under it has pixels: a texture or photo inside text, a color only on one object, an adjustment that
+    only changes one layer. Clipped layers show an arrow; stack several on one base. The base's opacity
+    and blend mode apply to the whole group. Merge down a clipped layer to bake it in.
   - **Adjustment layers**: change everything below them without touching pixels; paint their mask to limit
     them. Tap one's icon to edit it.
   - **Shape and text layers** stay editable: change them in Properties, scale, rotate or distort them with
@@ -114,7 +120,7 @@ over the picture (from the bottom of the Layers panel), so you can see the resul
 
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for
-in between. Tap the mask thumbnail to paint on the mask, the layer thumbnail to paint pixels.
+in between. With a selection, the mask button makes a mask that shows only what's selected. Tap the mask thumbnail to paint on the mask, the layer thumbnail to paint pixels.
 **Remove background** makes a mask from the subject (on-device), which you can touch up with the brush.
 
 ### Saving
@@ -126,6 +132,24 @@ in between. Tap the mask thumbnail to paint on the mask, the layer thumbnail to 
 - The menu also rotates the whole image 90° or flips it.
 - **Save project file** writes a `.qedit` file anywhere (Drive, Downloads...). Projects live inside the app,
   so uninstalling removes them — keep a project file of anything important.
+
+## Keyboard shortcuts
+With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd):
+- Tools: **V** move, **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
+  (Shift+M switches), **L** lasso/polygonal (Shift+L), **W** magic wand, **C** crop, **Ctrl+T** transform,
+  **I** eyedropper, **G** gradient/bucket (Shift+G), **U** shape (Shift+U next shape), **P** pen, **A** edit
+  points, **T** text, **B** brush, **E** eraser.
+- Brush: **[ ]** size, **Shift+[ ]** softer/harder, **1…0** opacity 10…100% (with Move: the layer's opacity).
+- Colors: **X** swap, **D** black and white.
+- Undo **Ctrl+Z**, redo **Ctrl+Shift+Z** or **Ctrl+Y**.
+- Selections: **Ctrl+A** all, **Ctrl+D** deselect, **Ctrl+Shift+I** invert, **Delete** delete selected
+  pixels (no selection: delete the layer), **Alt+Delete** fill foreground, **Ctrl+Delete** fill background.
+- Layers: **Ctrl+J** duplicate (copy the selection to a new layer; **Ctrl+Shift+J** cut it),
+  **Ctrl+Shift+N** new layer, **Ctrl+G** put in a folder, **Ctrl+Alt+G** clip to the layer below,
+  **Ctrl+E** merge down.
+- **Ctrl+L** Levels, **Ctrl+M** Curves, **Ctrl+U** Adjustments.
+- View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels.
+- **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves to Projects.
 
 ## How it works
 - Layers are stored as 512 px tiles that only exist where there are pixels, so empty layers cost nothing

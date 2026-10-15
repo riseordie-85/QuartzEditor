@@ -149,7 +149,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var lastPos = start
                         var longPressDone = false
                         var endTime = t0
-                        val tool = vm.tool
+                        // Space held on a keyboard pans with any tool
+                        val tool = if (vm.tempPan) Tool.PAN else vm.tool
 
                         if (vm.doc == null) return@awaitEachGesture
                         vm.brushPickerFor = null
