@@ -44,6 +44,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -148,6 +149,17 @@ fun Workspace(vm: EditorViewModel) {
                         DropdownMenuItem(text = { Text("Place image as layer…") }, onClick = { menu = false; requestPlace() })
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Flatten image") }, onClick = { menu = false; vm.flattenImage() })
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Snap to center and edges") },
+                            trailingIcon = { if (vm.snapOn) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleSnap() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Checkerboard for see-through") },
+                            trailingIcon = { if (vm.showChecker) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleChecker() },
+                        )
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Rotate image 90° right") }, onClick = { menu = false; vm.rotateImage(clockwise = true) })
                         DropdownMenuItem(text = { Text("Rotate image 90° left") }, onClick = { menu = false; vm.rotateImage(clockwise = false) })

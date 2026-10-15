@@ -202,6 +202,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal var vectorJob: Job? = null
     internal var vectorLiveLayer: Layer? = null
 
+    /** Moving layers snaps their edges and middle to the canvas's edges and middle. */
+    var snapOn by mutableStateOf(prefs.getBoolean("snap", true))
+        private set
+
+    /** See-through areas as a checkerboard (off: plain white). */
+    var showChecker by mutableStateOf(prefs.getBoolean("checker", true))
+        private set
+
+    fun toggleSnap() {
+        snapOn = !snapOn
+        prefs.edit().putBoolean("snap", snapOn).apply()
+        toast(if (snapOn) "Snapping on" else "Snapping off")
+    }
+
+    fun toggleChecker() {
+        showChecker = !showChecker
+        prefs.edit().putBoolean("checker", showChecker).apply()
+    }
+
+    /** Snap lines shown while something snaps (canvas pixels): vertical at these x, horizontal at these y. */
+    var snapGuidesX by mutableStateOf<List<Float>>(emptyList())
+        internal set
+    var snapGuidesY by mutableStateOf<List<Float>>(emptyList())
+        internal set
+
+    /** Canvas area of what's being moved (its visible pixels), worked out when the move starts. */
+    internal var moveContent: RectF? = null
+
     /** Space held on a keyboard: one finger moves the view, whatever the tool. */
     var tempPan by mutableStateOf(false)
 
@@ -847,12 +875,29 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         moveLayer = l
         preview = LayerPreview(l.id)
+        // Where its pixels are (for snapping), worked out in the background
+        moveContent = null
+        val parts = (if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)).filter { it.hasContent }.map { Triple(HashMap(it.tiles.tiles), it.x, it.y) }
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.Default) {
+                var u: RectF? = null
+                for ((tiles, x, y) in parts) {
+                    val b = Transformer.contentBounds(tiles) ?: continue
+                    val rb = RectF(b).apply { offset(x.toFloat(), y.toFloat()) }
+                    u = u?.apply { union(rb) } ?: rb
+                }
+                u
+            }
+            if (moveLayer === l) moveContent = r
+        }
         return true
     }
 
-    fun moveTo(dx: Float, dy: Float) {
+    /** Drag offset ([dx], [dy]) in canvas pixels; it snaps within [snapRadius] canvas pixels. */
+    fun moveTo(dx: Float, dy: Float, snapRadius: Float = 0f) {
         val l = moveLayer ?: return
-        preview = LayerPreview(l.id, dragX = dx, dragY = dy)
+        val (sx, sy) = snapDelta(moveContent, dx, dy, snapRadius)
+        preview = LayerPreview(l.id, dragX = sx, dragY = sy)
         doc?.invalidate()
     }
 
@@ -862,6 +907,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val p = preview
         moveLayer = null
         preview = null
+        clearSnapGuides()
         val dx = (p?.dragX ?: 0f).roundToInt()
         val dy = (p?.dragY ?: 0f).roundToInt()
         if (dx == 0 && dy == 0) {
@@ -882,6 +928,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun cancelMove() {
+        clearSnapGuides()
         moveLayer = null
         preview = null
         doc?.invalidate()

@@ -22,7 +22,9 @@ and the same button hides them.
 Buttons with a dot in the corner hold more than one tool: **long-press** for the list (Move/Pan, the
 selection tools, the shapes, pen drawing/point editing).
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
-  layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view).
+  layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view). While moving
+  (and moving a Transform box), the layer's edges and middle **snap** to the canvas's edges and middle,
+  with a pink line showing where. Menu → "Snap to center and edges" turns it off.
 - **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand. Drag
   to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
   corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
@@ -64,7 +66,8 @@ selection tools, the shapes, pen drawing/point editing).
 ### On the picture
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
-- **Long press beside the picture** to change the workspace color.
+- **Long press beside the picture** to change the workspace color. Menu → "Checkerboard for see-through"
+  switches the transparency checkerboard off (see-through areas show white).
 - Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Export image,
   Save project file, Place image as layer and Flatten.
 

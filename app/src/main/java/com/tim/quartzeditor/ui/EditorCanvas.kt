@@ -328,7 +328,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 }
                                 GestureMode.MOVE -> if (main != null) {
                                     val d = main.position - start
-                                    vm.moveTo(d.x / vm.scale, d.y / vm.scale)
+                                    vm.moveTo(d.x / vm.scale, d.y / vm.scale, 10.dp.toPx() / vm.scale)
                                 }
                                 GestureMode.PAN -> {
                                     val d = pressed.first().positionChange()
@@ -369,7 +369,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         }
                                     }
                                     if (mode == GestureMode.MOVE) {
-                                        vm.moveTo((main.position.x - start.x) / vm.scale, (main.position.y - start.y) / vm.scale)
+                                        vm.moveTo((main.position.x - start.x) / vm.scale, (main.position.y - start.y) / vm.scale, 10.dp.toPx() / vm.scale)
                                     }
                                     if (mode == GestureMode.SHAPING || mode == GestureMode.PEN) {
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
@@ -399,9 +399,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                                 tStart.copy(keepAspect = cur.keepAspect).dragEdge(h.i, target, target)
                                             }
                                         }
-                                        TransformHit.Move -> vm.updateTransform { cur ->
-                                            // Whole pixels, so a plain move stays sharp
-                                            tStart.copy(keepAspect = cur.keepAspect).moved(ddx.roundToInt().toFloat(), ddy.roundToInt().toFloat())
+                                        TransformHit.Move -> {
+                                            // Snaps the box's edges and middle to the canvas's
+                                            val box = android.graphics.RectF(q0.minOf { it.x }, q0.minOf { it.y }, q0.maxOf { it.x }, q0.maxOf { it.y })
+                                            val (sx, sy) = vm.snapDelta(box, ddx, ddy, 10.dp.toPx() / vm.scale)
+                                            vm.updateTransform { cur ->
+                                                // Whole pixels, so a plain move stays sharp
+                                                tStart.copy(keepAspect = cur.keepAspect).moved(sx.roundToInt().toFloat(), sy.roundToInt().toFloat())
+                                            }
                                         }
                                         TransformHit.Rotate -> {
                                             val c = tStart.center
@@ -468,6 +473,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         // All fingers up
                         val duration = endTime - t0
                         cursor = null
+                        vm.clearSnapGuides()
                         when (mode) {
                             GestureMode.STROKE -> vm.endStroke()
                             GestureMode.BLOCKED -> vm.onBlockedStroke()
@@ -540,8 +546,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 // Soft edge so the canvas stands out from the workspace
                 val shadow = Paint().apply { color = android.graphics.Color.argb(90, 0, 0, 0) }
                 nc.drawRect(left + 3f, top + 3f, right + 3f, bottom + 3f, shadow)
-                checker.setLocalMatrix(Matrix().apply { setTranslate(left, top) })
-                nc.drawRect(left, top, right, bottom, Paint().apply { shader = checker })
+                if (vm.showChecker) {
+                    checker.setLocalMatrix(Matrix().apply { setTranslate(left, top) })
+                    nc.drawRect(left, top, right, bottom, Paint().apply { shader = checker })
+                } else {
+                    nc.drawRect(left, top, right, bottom, Paint().apply { color = android.graphics.Color.WHITE })
+                }
                 nc.save()
                 nc.translate(ox, oy)
                 nc.scale(s, s)
@@ -609,6 +619,20 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 for (p in q) {
                     drawRect(Color.Black.copy(alpha = 0.6f), Offset(p.x - hs - line, p.y - hs - line), androidx.compose.ui.geometry.Size(2 * (hs + line), 2 * (hs + line)))
                     drawRect(Color.White, Offset(p.x - hs, p.y - hs), androidx.compose.ui.geometry.Size(2 * hs, 2 * hs))
+                }
+            }
+
+            // Snap lines
+            if (vm.snapGuidesX.isNotEmpty() || vm.snapGuidesY.isNotEmpty()) {
+                val guide = Color(0xFFFF2DAA)
+                val w = 1.5.dp.toPx()
+                for (x in vm.snapGuidesX) {
+                    val sx = x * s + ox
+                    drawLine(guide, Offset(sx, top), Offset(sx, bottom), w)
+                }
+                for (y in vm.snapGuidesY) {
+                    val sy = y * s + oy
+                    drawLine(guide, Offset(left, sy), Offset(right, sy), w)
                 }
             }
 
