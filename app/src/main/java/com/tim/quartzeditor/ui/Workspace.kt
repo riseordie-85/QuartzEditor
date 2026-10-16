@@ -152,7 +152,7 @@ fun Workspace(vm: EditorViewModel) {
                         DropdownMenuItem(text = { Text("Export image…") }, onClick = { menu = false; exportOpen = true })
                         DropdownMenuItem(text = { Text("Save project file…") }, onClick = {
                             menu = false
-                            saveProject.launch("${vm.doc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}")
+                            saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}")
                         })
                         DropdownMenuItem(text = { Text("Place image as layer…") }, onClick = { menu = false; requestPlace() })
                         HorizontalDivider()
@@ -325,14 +325,14 @@ fun Workspace(vm: EditorViewModel) {
 
     if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
     if (renameOpen) {
-        RenameDialog(vm.doc?.name ?: "", title = "Rename image", onDismiss = { renameOpen = false }) {
+        RenameDialog(vm.rootDoc?.name ?: "", title = "Rename image", onDismiss = { renameOpen = false }) {
             vm.renameDocument(it)
             renameOpen = false
         }
     }
     if (exportOpen) {
         ExportDialog(
-            name = vm.doc?.name ?: "Untitled",
+            name = vm.rootDoc?.name ?: "Untitled",
             onDismiss = { exportOpen = false },
             onExport = { format, share, fileName ->
                 exportOpen = false

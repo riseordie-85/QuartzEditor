@@ -768,14 +768,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         closeTabsChangedBy(history.peekUndo())
+        val at = smartPositions(d)
         history.undo(d)?.let { toast("Undo: $it") }
+        redrawMovedSmart(d, at)
     }
 
     fun redo() {
         val d = doc ?: return
         if (stroke != null || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
         closeTabsChangedBy(history.peekRedo())
+        val at = smartPositions(d)
         history.redo(d)?.let { toast("Redo: $it") }
+        redrawMovedSmart(d, at)
     }
 
     // ================================================================== layer styles

@@ -400,15 +400,20 @@ fun EditorViewModel.setLayerPosition(id: Long, x: Int, y: Int) {
     if (l.x == x && l.y == y) return
     val dx = x - l.x
     val dy = y - l.y
+    val smartRedo = ArrayList<Layer>()
     stackEdit("Move") {
         // A folder moves everything in it
         for (m in if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)) {
             val clipped = vectorClipped(m, m.x, m.y, d.width, d.height)
+            if (smartClipped(m, m.x, m.y, d)) smartRedo.add(m)
             m.x += dx
             m.y += dy
             if (clipped) redrawVectorNow(m)
+            if (smartClipped(m, m.x, m.y, d)) smartRedo.add(m)
         }
     }
+    // A smart layer that reached past the canvas is drawn again from its contents
+    for (m in smartRedo.distinct()) redrawSmartSoon(d, m)
 }
 
 internal fun EditorViewModel.editableActive(): Layer? {

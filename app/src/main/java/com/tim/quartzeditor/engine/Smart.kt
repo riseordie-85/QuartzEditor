@@ -61,19 +61,26 @@ object SmartArt {
     private var flatVersion = -1
     private var flat: Bitmap? = null
 
-    /** The contents as one picture at full size, with layer styles. */
+    /**
+     * [contents] as one picture at full size, with layer styles. [source] is what's drawn (a copy of
+     * [contents] made on the main thread when they may be edited meanwhile) and [version] is
+     * [contents]' render version when that copy was made.
+     */
     @Synchronized
-    fun flatten(contents: Doc): Bitmap {
+    fun flatten(contents: Doc, source: Doc = contents, version: Int = contents.renderVersion): Bitmap {
         val f = flat
-        if (f != null && !f.isRecycled && flatFor === contents && flatVersion == contents.renderVersion) return f
-        val fx = DocRenderer.buildAllEffects(contents, max(contents.width, contents.height))
-        val bmp = DocRenderer.flatten(contents, effects = { fx[it.id] })
-        bmp.setHasMipMap(true)
+        if (f != null && !f.isRecycled && flatFor === contents && flatVersion == version) return f
+        val bmp = draw(source)
         flat?.takeIf { it !== bmp }?.recycle()
         flat = bmp
         flatFor = contents
-        flatVersion = contents.renderVersion
+        flatVersion = version
         return bmp
+    }
+
+    private fun draw(d: Doc): Bitmap {
+        val fx = DocRenderer.buildAllEffects(d, max(d.width, d.height))
+        return DocRenderer.flatten(d, effects = { fx[it.id] }).also { it.setHasMipMap(true) }
     }
 
     /** Forgets the cached picture (it's big). */
@@ -86,51 +93,165 @@ object SmartArt {
 
     /**
      * The layer's tiles for [spec]: the contents drawn through its placement, within [clip]
-     * (layer-local; keeps memory sane for placements far past the canvas).
+     * (layer-local; keeps memory sane for placements far past the canvas). [source] and [version]
+     * as for [flatten]. With [keep] false (saving a copy), the cached picture is left alone.
      */
-    fun rasterize(spec: SmartSpec, clip: Rect): TileGrid {
+    fun rasterize(
+        spec: SmartSpec,
+        clip: Rect,
+        source: Doc = spec.contents,
+        version: Int = spec.contents.renderVersion,
+        keep: Boolean = true,
+    ): TileGrid {
         val b = spec.bounds()
         val area = Rect(floor(b.left).toInt() - 1, floor(b.top).toInt() - 1, ceil(b.right).toInt() + 1, ceil(b.bottom).toInt() + 1)
         if (!area.intersect(clip) || area.isEmpty) return TileGrid(alphaOnly = false)
         val out = Bitmap.createBitmap(area.width(), area.height(), Bitmap.Config.ARGB_8888)
         out.setHasAlpha(true)
-        synchronized(this) {
-            val src = flatten(spec.contents)
+        fun drawFrom(src: Bitmap) {
             val c = Canvas(out)
             c.translate(-area.left.toFloat(), -area.top.toFloat())
             c.concat(spec.matrix())
             c.drawBitmap(src, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         }
-        return TileGrid.fromBitmap(out, area.left, area.top, alphaOnly = false).also {
+        try {
+            if (keep) {
+                synchronized(this) { drawFrom(flatten(spec.contents, source, version)) }
+            } else {
+                val src = draw(source)
+                try {
+                    drawFrom(src)
+                } finally {
+                    src.recycle()
+                }
+            }
+            return TileGrid.fromBitmap(out, area.left, area.top, alphaOnly = false).also { it.dropEmptyTiles() }
+        } finally {
             out.recycle()
-            it.dropEmptyTiles()
         }
     }
 }
 
 /**
- * A smart layer's contents were edited (in their own tab): the contents as they were and are, and
- * the layer's pixels drawn from each.
+ * A smart layer's contents as they are now, kept for undo. Unlike [DocSnap] it keeps each layer's
+ * tiles as they are now (tiles are never drawn into once in a layer, only replaced, so holding the
+ * same bitmaps is enough), and the same for smart layers inside it.
+ */
+class ContentsSnap private constructor(
+    private val doc: DocSnap,
+    private val pixels: List<Pair<HashMap<Long, Bitmap>, HashMap<Long, Bitmap>?>>,
+    private val inner: List<Pair<Doc, ContentsSnap>>,
+) {
+    val width: Int get() = doc.width
+    val height: Int get() = doc.height
+
+    /** Puts [into] (the same contents this was taken from) back as it was. */
+    fun restore(into: Doc) {
+        into.restore(doc)
+        for ((i, ls) in doc.layers.withIndex()) {
+            val l = ls.layer
+            val (t, m) = pixels[i]
+            // Fresh grids, so later edits don't change the ones kept here
+            l.tiles = TileGrid(alphaOnly = false).also { it.tiles.putAll(t) }
+            l.mask = m?.let { src -> TileGrid(alphaOnly = true).also { it.tiles.putAll(src) } }
+            l.pixelVersion++
+        }
+        for ((d, s) in inner) s.restore(d)
+        into.renderVersion++
+    }
+
+    /** Every bitmap this keeps (to count what undo holds). */
+    fun bitmaps(into: MutableSet<Bitmap> = java.util.Collections.newSetFromMap(java.util.IdentityHashMap())): MutableSet<Bitmap> {
+        for ((t, m) in pixels) {
+            into.addAll(t.values)
+            m?.let { into.addAll(it.values) }
+        }
+        for ((_, s) in inner) s.bitmaps(into)
+        return into
+    }
+
+    /**
+     * Where the contents' corner went if they were cropped since (in the old contents' pixels), when
+     * a layer that's still there unchanged shows it; null when none does.
+     */
+    fun shiftIn(now: Doc): Pair<Int, Int>? {
+        for ((i, ls) in doc.layers.withIndex()) {
+            val l = now.layer(ls.layer.id) ?: continue
+            if (l !== ls.layer) continue
+            val t = pixels[i].first
+            if (t.isEmpty() || t.size != l.tiles.tiles.size) continue
+            if (t.any { (k, b) -> l.tiles.tiles[k] !== b }) continue
+            return (ls.x - l.x) to (ls.y - l.y)
+        }
+        return null
+    }
+
+    companion object {
+        fun of(d: Doc): ContentsSnap {
+            val snap = d.snapshot()
+            val pixels = snap.layers.map { ls -> HashMap(ls.tiles.tiles) to ls.mask?.let { HashMap(it.tiles) } }
+            val inner = snap.layers.mapNotNull { ls -> ls.props.smart?.let { it.contents to of(it.contents) } }
+            return ContentsSnap(snap, pixels, inner)
+        }
+    }
+}
+
+/**
+ * Where a smart layer's contents go once they've changed size (cropped, turned, resized): the same
+ * scale as before, lined up where they were (or centered). [quad] is the placement, [before] the
+ * contents as they were placed.
+ */
+fun placedAfterResize(quad: FloatArray, before: ContentsSnap, now: Doc): FloatArray {
+    val w = now.width.toFloat()
+    val h = now.height.toFloat()
+    if (now.width == before.width && now.height == before.height) return quad
+    val shift = before.shiftIn(now)
+    val sx = shift?.first?.toFloat() ?: ((before.width - w) / 2f)
+    val sy = shift?.second?.toFloat() ?: ((before.height - h) / 2f)
+    // The new contents' corners, in the old contents' pixels, then placed as the old ones were
+    val corners = floatArrayOf(sx, sy, sx + w, sy, sx + w, sy + h, sx, sy + h)
+    val old = Matrix().apply {
+        val bw = before.width.toFloat()
+        val bh = before.height.toFloat()
+        setPolyToPoly(floatArrayOf(0f, 0f, bw, 0f, bw, bh, 0f, bh), 0, quad, 0, 4)
+    }
+    old.mapPoints(corners)
+    return corners
+}
+
+/**
+ * A smart layer's contents were edited (in their own tab): the contents as they were and are, the
+ * layer's settings (its placement changes when the contents change size), and its pixels from each.
  */
 class SmartContentsChange(
     private val layer: Layer,
     val contents: Doc,
-    private val before: DocSnap,
-    private val after: DocSnap,
+    private val before: ContentsSnap,
+    private val after: ContentsSnap,
+    private val beforeProps: LayerProps,
+    private val afterProps: LayerProps,
     private val beforeTiles: TileGrid,
     private val afterTiles: TileGrid,
 ) : Change {
     override val label = "Edit smart layer"
-    override val cost: Long = afterTiles.bytes()
+    override val cost: Long = run {
+        val a = before.bitmaps()
+        val b = after.bitmaps()
+        a.filter { it !in b }.sumOf { it.allocationByteCount.toLong() } +
+            b.filter { it !in a }.sumOf { it.allocationByteCount.toLong() } +
+            beforeTiles.bytes() + afterTiles.bytes()
+    }
 
     override fun undo(doc: Doc) {
-        contents.restore(before)
+        before.restore(contents)
+        layer.props = beforeProps
         layer.tiles = beforeTiles
         doc.touched(layer)
     }
 
     override fun redo(doc: Doc) {
-        contents.restore(after)
+        after.restore(contents)
+        layer.props = afterProps
         layer.tiles = afterTiles
         doc.touched(layer)
     }

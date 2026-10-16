@@ -6,7 +6,7 @@ import android.net.Uri
 import com.tim.quartzeditor.data.Media
 import com.tim.quartzeditor.engine.Change
 import com.tim.quartzeditor.engine.Doc
-import com.tim.quartzeditor.engine.DocSnap
+import com.tim.quartzeditor.engine.ContentsSnap
 import com.tim.quartzeditor.engine.History
 import com.tim.quartzeditor.engine.Layer
 import com.tim.quartzeditor.engine.LayerKind
@@ -15,6 +15,7 @@ import com.tim.quartzeditor.engine.SmartArt
 import com.tim.quartzeditor.engine.SmartContentsChange
 import com.tim.quartzeditor.engine.SmartSpec
 import com.tim.quartzeditor.engine.TileGrid
+import com.tim.quartzeditor.engine.placedAfterResize
 import com.tim.quartzeditor.engine.Transformer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -49,7 +50,7 @@ class EditorTab(val doc: Doc, var history: History, val parent: EditorTab?, val 
     var view: Triple<Float, Float, Float>? = null
 
     /** The contents as they were when last put into the smart layer. */
-    var baseline: DocSnap? = null
+    var baseline: ContentsSnap? = null
 
     /** [history]'s version then (anything newer is an edit not yet in the smart layer). */
     var committedVersion = 0
@@ -178,7 +179,7 @@ fun EditorViewModel.openSmartContents(layerId: Long) {
     }
     val h = History(budgetBytes = (Runtime.getRuntime().maxMemory() * 0.15).toLong())
     val tab = EditorTab(spec.contents, h, here, layerId).apply {
-        baseline = spec.contents.snapshot()
+        baseline = ContentsSnap.of(spec.contents)
         committedVersion = h.version
     }
     // Opened right after the tab it came from (and after that tab's other tabs)
@@ -207,7 +208,16 @@ fun EditorViewModel.switchTab(i: Int) {
     if (i == tabIndex || i !in tabs.indices) return
     if (pendingFirst { switchTab(i) }) return
     val target = tabs[i]
-    commitTabs(listOf(currentTab)) { enterTab(tabs.indexOf(target)) }
+    // The tab being left and the ones it's inside, up to (not including) one the target is inside,
+    // so each one's edits reach the layer above it on the way
+    val here = currentTab
+    val leaving = ArrayList<EditorTab>()
+    var t: EditorTab? = here
+    while (t != null && t !== target && !isInside(target, t)) {
+        leaving.add(t)
+        t = t.parent
+    }
+    commitTabs(leaving) { enterTab(tabs.indexOf(target)) }
 }
 
 /** Closes tab [i] (a smart layer's contents), putting its edits into the smart layer. */
@@ -229,21 +239,24 @@ fun EditorViewModel.closeTab(i: Int) {
  * Puts the edits of [list] (in order) into their smart layers, in the background, then runs
  * [then].
  */
-private fun EditorViewModel.commitTabs(list: List<EditorTab?>, then: () -> Unit) {
-    val todo = list.filterNotNull().filter { it.hasNewEdits }
-    if (todo.isEmpty()) {
-        saveView()
+private fun EditorViewModel.commitTabs(list: List<EditorTab>, then: () -> Unit) {
+    saveView()
+    // Whether a tab has edits is checked as it comes up: putting an inner tab's edits in adds one to
+    // the tab it came from
+    if (list.none { it.hasNewEdits }) {
         then()
         return
     }
-    saveView()
     runBusy("Updating smart layer…", onDone = then) {
-        for (t in todo) commitNow(t, background = true)
+        for (t in list) if (t.hasNewEdits) commitNow(t)
     }
 }
 
-/** Puts [t]'s edits into its smart layer (one undo step in the tab it came from). */
-private suspend fun EditorViewModel.commitNow(t: EditorTab, background: Boolean) {
+/**
+ * Puts [t]'s edits into its smart layer (one undo step in the tab it came from). Runs with the busy
+ * overlay up, so the contents can't change meanwhile.
+ */
+private suspend fun EditorViewModel.commitNow(t: EditorTab) {
     val parent = t.parent ?: return
     val pd = parent.doc
     val l = pd.layer(t.layerId)?.takeIf { it.props.smart?.contents === t.doc }
@@ -251,28 +264,78 @@ private suspend fun EditorViewModel.commitNow(t: EditorTab, background: Boolean)
         t.committedVersion = t.history.version
         return
     }
-    val spec = l.props.smart ?: return
+    val oldSpec = l.props.smart ?: return
+    val before = t.baseline ?: ContentsSnap.of(t.doc)
+    // Contents cropped, turned or resized: placed at the same scale, not stretched into the old corners
+    val spec = oldSpec.withQuad(placedAfterResize(oldSpec.quad, before, t.doc))
     val clip = Transformer.limitFor(pd.width, pd.height).apply { offset(-l.x, -l.y) }
-    val grid = if (background) withContext(Dispatchers.Default) { SmartArt.rasterize(spec, clip) } else SmartArt.rasterize(spec, clip)
-    val before = t.baseline ?: t.doc.snapshot()
-    val after = t.doc.snapshot()
+    val version = t.doc.renderVersion
+    val grid = withContext(Dispatchers.Default) { SmartArt.rasterize(spec, clip, version = version) }
+    val after = ContentsSnap.of(t.doc)
+    val beforeProps = l.props
+    val afterProps = if (spec === oldSpec) beforeProps else beforeProps.copy(smart = spec)
     val beforeTiles = l.tiles
+    l.props = afterProps
     l.tiles = grid
     pd.touched(l)
-    parent.history.record(SmartContentsChange(l, t.doc, before, after, beforeTiles, grid))
+    parent.history.record(SmartContentsChange(l, t.doc, before, after, beforeProps, afterProps, beforeTiles, grid))
     t.baseline = after
     t.committedVersion = t.history.version
 }
 
-/** Puts every open tab's edits into the picture right away (before saving). */
-internal fun EditorViewModel.commitAllTabsNow() {
-    saveView()
-    val open = tabs.drop(1).filter { it.hasNewEdits }
-    if (open.isEmpty()) return
-    // Innermost first
-    for (t in open.sortedByDescending { depth(it) }) {
-        kotlinx.coroutines.runBlocking { commitNow(t, background = false) }
+/** Whether any open tab has edits not yet in its smart layer. */
+internal val EditorViewModel.tabsHaveEdits: Boolean get() = tabs.any { it.hasNewEdits }
+
+/**
+ * A copy of the picture to save or export (made on the main thread; cheap), including what's being
+ * edited in smart layers' tabs. Their layers in the copy are drawn again by [SaveCopy.finish], in
+ * the background; nothing in the picture or its undo changes.
+ */
+internal class SaveCopy(val doc: Doc, private val redraw: List<Pair<List<Long>, FloatArray>>) {
+    /** Draws the copy's smart layers that tabs changed (innermost first). Background thread. */
+    fun finish() {
+        for ((path, quad) in redraw) {
+            var pd = doc
+            var l: Layer? = null
+            for ((n, id) in path.withIndex()) {
+                l = pd.layer(id) ?: break
+                if (n < path.lastIndex) pd = l.props.smart?.contents ?: break
+            }
+            val layer = l?.takeIf { it.id == path.last() } ?: continue
+            val sp = layer.props.smart?.withQuad(quad) ?: continue
+            layer.props = layer.props.copy(smart = sp)
+            val clip = Transformer.limitFor(pd.width, pd.height).apply { offset(-layer.x, -layer.y) }
+            layer.tiles = SmartArt.rasterize(sp, clip, keep = false)
+        }
     }
+}
+
+internal fun EditorViewModel.saveCopy(): SaveCopy? {
+    saveView()
+    val root = rootDoc ?: return null
+    val copy = root.shallowCopy()
+    // Tabs with edits, and every tab they're inside (their layers change too)
+    val stale = LinkedHashSet<EditorTab>()
+    for (t in tabs) if (t.hasNewEdits) {
+        var p: EditorTab? = t
+        while (p?.parent != null) {
+            stale.add(p)
+            p = p.parent
+        }
+    }
+    val redraw = stale.sortedByDescending { depth(it) }.mapNotNull { t ->
+        val l = t.parent?.doc?.layer(t.layerId) ?: return@mapNotNull null
+        val sp = l.props.smart?.takeIf { it.contents === t.doc } ?: return@mapNotNull null
+        val quad = t.baseline?.let { placedAfterResize(sp.quad, it, t.doc) } ?: sp.quad
+        val path = ArrayList<Long>()
+        var p: EditorTab? = t
+        while (p?.parent != null) {
+            path.add(0, p.layerId)
+            p = p.parent
+        }
+        path to quad
+    }
+    return SaveCopy(copy, redraw)
 }
 
 private fun depth(t: EditorTab): Int {
@@ -400,14 +463,36 @@ internal fun smartClipped(l: Layer, x: Int, y: Int, d: Doc): Boolean {
 /** Draws smart layer [l]'s pixels again from its contents, in the background (after moving it). */
 internal fun EditorViewModel.redrawSmartSoon(d: Doc, l: Layer) {
     val spec = l.props.smart ?: return
-    val source = l.tiles
+    val before = l.tiles
     val clip = Transformer.limitFor(d.width, d.height).apply { offset(-l.x, -l.y) }
+    // The contents as they are now (they could be opened and edited meanwhile)
+    val version = spec.contents.renderVersion
+    val source = spec.contents.shallowCopy()
     viewModelScope.launch {
-        val grid = withContext(Dispatchers.Default) { runCatching { SmartArt.rasterize(spec, clip) }.getOrNull() } ?: return@launch
+        val grid = withContext(Dispatchers.Default) {
+            runCatching { SmartArt.rasterize(spec, clip, source, version) }.getOrNull()
+        } ?: return@launch
         // Only if nothing else changed it meanwhile
-        if (doc === d && l.tiles === source && l.props.smart === spec) {
+        if (doc === d && l.tiles === before && l.props.smart === spec) {
             l.tiles = grid
             d.touched(l)
         }
+    }
+}
+
+/** Where each smart layer is (to see which ones an undo or redo moved). */
+internal fun smartPositions(d: Doc): Map<Layer, Pair<Int, Int>> =
+    d.layers.filter { it.isSmart }.associateWith { it.x to it.y }
+
+/**
+ * After undo or redo: smart layers it moved that reach past where pixels are kept are drawn again
+ * from their contents (the pixels kept with a move are the ones from before it was redrawn).
+ */
+internal fun EditorViewModel.redrawMovedSmart(d: Doc, before: Map<Layer, Pair<Int, Int>>) {
+    for (l in d.layers) {
+        if (!l.isSmart) continue
+        val (x, y) = before[l] ?: continue
+        if (x == l.x && y == l.y) continue
+        if (smartClipped(l, x, y, d) || smartClipped(l, l.x, l.y, d)) redrawSmartSoon(d, l)
     }
 }

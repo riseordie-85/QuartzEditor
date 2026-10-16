@@ -114,8 +114,8 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
 fun EditorViewModel.closeDocument() {
     if (doc == null) return
     if (pendingFirst { closeDocument() }) return
-    // Smart layers' tabs: their edits go into the picture, and the picture's own tab is what's saved
-    commitAllTabsNow()
+    // The picture is what's saved (with what's being edited in smart layers' tabs)
+    if ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsHaveEdits) saveToProjects(quiet = false)
     tabs.firstOrNull()?.let { root ->
         if (doc !== root.doc) {
             doc = root.doc
@@ -123,8 +123,6 @@ fun EditorViewModel.closeDocument() {
         }
     }
     val d = doc ?: return
-    val save = history.editsSinceSave > 0
-    if (save) saveToProjects(quiet = false)
     tabs = emptyList()
     tabIndex = 0
     com.tim.quartzeditor.engine.SmartArt.release()
@@ -156,23 +154,26 @@ fun EditorViewModel.discardDocument() {
 /** Saves to the app's projects in the background (also called when the app is put away). */
 fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
     if (doc == null) return
-    // Edits in smart layers' tabs go into the picture first; the picture itself is what's saved
-    commitAllTabsNow()
+    // The picture itself is what's saved, with what's being edited in smart layers' tabs
     val d = rootDoc ?: return
     val h = tabs.firstOrNull()?.history ?: history
-    if (h.editsSinceSave == 0) return
+    if (h.editsSinceSave == 0 && !tabsHaveEdits) return
     if (d.projectId == null) d.projectId = ProjectIO.newId()
-    val copy = d.shallowCopy()
+    val sc = saveCopy() ?: return
+    val copy = sc.doc
     val color = canvasColor
     val edits = h.editsSinceSave
     viewModelScope.launch {
         try {
             // One save at a time, so two saves of the same project can't mix
-            saveLock.withLock { withContext(Dispatchers.IO) { ProjectIO.saveToProjects(ctx, copy, color) } }
+            saveLock.withLock {
+                withContext(Dispatchers.Default) { sc.finish() }
+                withContext(Dispatchers.IO) { ProjectIO.saveToProjects(ctx, copy, color) }
+            }
             h.markSaved(edits)
             if (!quiet) toast("Saved to Projects")
             projectsVersion++
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             toast("Couldn't save the project (${e.message})")
         }
     }
@@ -187,11 +188,11 @@ fun EditorViewModel.deleteProject(id: String) {
 fun EditorViewModel.saveProjectFile(uri: Uri) {
     if (doc == null) return
     if (pendingFirst { saveProjectFile(uri) }) return
-    commitAllTabsNow()
-    val d = rootDoc ?: return
-    val copy = d.shallowCopy()
+    val sc = saveCopy() ?: return
+    val copy = sc.doc
     val color = canvasColor
     runBusy("Saving…") {
+        withContext(Dispatchers.Default) { sc.finish() }
         withContext(Dispatchers.IO) {
             ctx.contentResolver.openOutputStream(uri, "wt")?.use { ProjectIO.write(copy, it.buffered(), color) }
                 ?: throw IllegalStateException("Couldn't write that file")
@@ -205,11 +206,11 @@ fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
     if (doc == null) return
     if (pendingFirst { export(format, onSaved) }) return
     // The whole picture (with what's being edited in smart layers' tabs)
-    commitAllTabsNow()
-    val d = rootDoc ?: return
-    val copy = d.shallowCopy()
+    val sc = saveCopy() ?: return
+    val copy = sc.doc
     runBusy("Exporting…") {
         val uri = withContext(Dispatchers.Default) {
+            sc.finish()
             val bg = if (format.alpha) Color.TRANSPARENT else Color.WHITE
             val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
             val bmp = DocRenderer.flatten(copy, bg, effects = { fx[it.id] })
