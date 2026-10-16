@@ -269,7 +269,7 @@ internal fun BarIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
 internal fun BarChip(text: String, on: Boolean, onClick: () -> Unit) {
     Text(
         text,
-        color = Color.White,
+        color = if (on) Color.White else Q.text,
         fontSize = 13.sp,
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))

@@ -170,7 +170,7 @@ private fun Card(vm: EditorViewModel, l: Layer, picked: Boolean, modifier: Modif
             .clip(shape)
             .background(Q.field)
             .then(if (l.hasContent) Modifier.checker(6f) else Modifier)
-            .border(if (picked) 2.5.dp else 1.dp, if (picked) Q.accent else Color.White.copy(alpha = 0.3f), shape),
+            .border(if (picked) 2.5.dp else 1.dp, if (picked) Q.accent else Q.text.copy(alpha = 0.3f), shape),
     ) {
         when {
             l.isGroup -> Icon(Icons.Outlined.Folder, contentDescription = l.props.name, tint = Q.text, modifier = Modifier.size(26.dp))
@@ -195,6 +195,6 @@ private fun StripButton(icon: androidx.compose.ui.graphics.vector.ImageVector, l
             .background(Q.toolbar.copy(alpha = 0.92f))
             .clickable(onClick = onClick),
     ) {
-        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(24.dp))
     }
 }

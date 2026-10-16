@@ -104,8 +104,8 @@ fun PatternGrid(vm: EditorViewModel, selected: String, colorA: Int, colorB: Int,
             modifier = Modifier
                 .size(THUMB)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(alpha = 0.08f))
-                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                .background(Q.text.copy(alpha = 0.08f))
+                .border(1.dp, Q.text.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
                 .clickable { addPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
         ) {
             Icon(Icons.Outlined.Add, contentDescription = "Add a pattern from your photos", tint = Q.textDim)
@@ -130,7 +130,7 @@ private fun PatternThumb(vm: EditorViewModel, p: PatternEntry, fg: Int, bg: Int,
             .size(THUMB)
             .clip(RoundedCornerShape(8.dp))
             .background(Q.field)
-            .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+            .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Q.text.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
             .combinedClickable(
                 onClick = { onPick(p.key) },
                 onLongClick = { if (!p.builtIn) menu = true },

@@ -296,14 +296,14 @@ private fun CurveEditor(
         drawRect(Q.field)
         drawHistogram(hist, color)
         // Quarter grid and the straight line for reference
-        val grid = Color.White.copy(alpha = 0.12f)
+        val grid = Q.text.copy(alpha = 0.12f)
         for (k in 1..3) {
             val x = size.width * k / 4f
             val y = size.height * k / 4f
             drawLine(grid, Offset(x, 0f), Offset(x, size.height), 1f)
             drawLine(grid, Offset(0f, y), Offset(size.width, y), 1f)
         }
-        drawLine(Color.White.copy(alpha = 0.2f), Offset(0f, size.height), Offset(size.width, 0f), 1f)
+        drawLine(Q.text.copy(alpha = 0.2f), Offset(0f, size.height), Offset(size.width, 0f), 1f)
         val table = Tone.curveTable(pts)
         val path = Path()
         for (i in 0..255) {
@@ -311,7 +311,7 @@ private fun CurveEditor(
             val y = (1f - table[i]) * size.height
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        drawPath(path, if (color == Color(0xFFBDBDBD)) Color.White else color, style = Stroke(2.dp.toPx()))
+        drawPath(path, if (color == Color(0xFFBDBDBD)) Q.text else color, style = Stroke(2.dp.toPx()))
         pts.forEachIndexed { i, p ->
             val o = Offset(p.x * size.width, (1f - p.y) * size.height)
             drawCircle(Color.Black.copy(alpha = 0.6f), 7.dp.toPx(), o)

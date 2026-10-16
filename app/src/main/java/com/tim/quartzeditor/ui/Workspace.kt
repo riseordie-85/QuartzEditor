@@ -83,6 +83,7 @@ fun Workspace(vm: EditorViewModel) {
     var discardOpen by remember { mutableStateOf(false) }
     var gridOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         Modifier
@@ -175,6 +176,8 @@ fun Workspace(vm: EditorViewModel) {
                         DropdownMenuItem(text = { Text("Rotate image 90° left") }, onClick = { menu = false; vm.rotateImage(clockwise = false) })
                         DropdownMenuItem(text = { Text("Flip image horizontally") }, onClick = { menu = false; vm.flipImage(horizontal = true) })
                         DropdownMenuItem(text = { Text("Flip image vertically") }, onClick = { menu = false; vm.flipImage(horizontal = false) })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Settings…") }, onClick = { menu = false; settingsOpen = true })
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("Close without saving…") }, onClick = { menu = false; discardOpen = true })
                     }
@@ -302,6 +305,7 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
 
+    if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
     if (renameOpen) {
         RenameDialog(vm.doc?.name ?: "", title = "Rename image", onDismiss = { renameOpen = false }) {
             vm.renameDocument(it)

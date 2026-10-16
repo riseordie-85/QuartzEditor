@@ -223,7 +223,7 @@ fun PanelSlider(
                 onValueChange = onChange,
                 onValueChangeFinished = onDone,
                 valueRange = range,
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
+                colors = SliderDefaults.colors(thumbColor = Q.sliderThumb, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
                 modifier = Modifier.weight(1f).height(30.dp),
             )
             if (display.isNotEmpty()) {
@@ -277,7 +277,7 @@ fun SmallButton(text: String, modifier: Modifier = Modifier, primary: Boolean = 
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Text(text, color = if (enabled) Color.White else Q.textDim, fontSize = 14.sp, maxLines = 1)
+        Text(text, color = if (!enabled) Q.textDim else if (primary) Color.White else Q.text, fontSize = 14.sp, maxLines = 1)
     }
 }
 
@@ -393,7 +393,7 @@ fun ColorDots(colors: List<Int>, selected: Int?, onPick: (Int) -> Unit) {
                     .size(24.dp)
                     .clip(CircleShape)
                     .background(Color(c))
-                    .border(if (c == selected) 2.dp else 1.dp, if (c == selected) Q.accent else Color.White.copy(alpha = 0.3f), CircleShape)
+                    .border(if (c == selected) 2.dp else 1.dp, if (c == selected) Q.accent else Q.text.copy(alpha = 0.3f), CircleShape)
                     .clickable { onPick(c) }
             )
         }
@@ -410,7 +410,7 @@ private fun SlotChip(label: String, color: Int, selected: Boolean, onClick: () -
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
-        Box(Modifier.size(16.dp).clip(CircleShape).background(Color(color)).border(1.dp, Color.White.copy(alpha = 0.5f), CircleShape))
+        Box(Modifier.size(16.dp).clip(CircleShape).background(Color(color)).border(1.dp, Q.text.copy(alpha = 0.5f), CircleShape))
         Spacer(Modifier.width(6.dp))
         Text(label, color = Q.text, fontSize = 13.sp)
     }
@@ -577,7 +577,7 @@ internal fun FiltersPanel(vm: EditorViewModel) {
                         .size(width = 44.dp, height = 24.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Brush.horizontalGradient(listOf(Color(a), Color(b))))
-                        .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                        .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Q.text.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
                         .clickable {
                             vm.editFx(fx.copy(duoShadow = a, duoHighlight = b))
                             vm.editFxDone()

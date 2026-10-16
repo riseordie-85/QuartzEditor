@@ -273,7 +273,7 @@ private fun ColorChip(color: Int, onClick: () -> Unit) {
             .clip(RoundedCornerShape(8.dp))
             .checker(6f)
             .background(Color(color))
-            .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .border(1.dp, Q.text.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
     )
 }
@@ -585,7 +585,7 @@ fun ColorPickDialog(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
-                Box(Modifier.size(width = 44.dp, height = 28.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp)))
+                Box(Modifier.size(width = 44.dp, height = 28.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)).border(1.dp, Q.text.copy(alpha = 0.4f), RoundedCornerShape(8.dp)))
             }
             Spacer(Modifier.height(12.dp))
             val h = hsv(color)

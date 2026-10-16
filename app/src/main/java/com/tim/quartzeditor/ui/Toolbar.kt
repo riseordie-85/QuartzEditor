@@ -113,7 +113,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
         ToolColumn(vm, compact, buttonSize, onColorTap)
         AnimatedVisibility(showBrush, enter = expandHorizontally(), exit = shrinkHorizontally()) {
             Row {
-                Box(Modifier.width(1.dp).fillMaxHeight().padding(vertical = 18.dp).background(Color.White.copy(alpha = 0.12f)))
+                Box(Modifier.width(1.dp).fillMaxHeight().padding(vertical = 18.dp).background(Q.text.copy(alpha = 0.12f)))
                 BrushColumn(vm, compact)
             }
         }
@@ -228,7 +228,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                         .padding(vertical = 3.dp)
                         .size(if (compact) 40.dp else 46.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (sel) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.10f))
+                        .background(if (sel) Q.text.copy(alpha = 0.85f) else Q.text.copy(alpha = 0.10f))
                         .clickable { vm.updateBrush(forTool) { it.copy(tip = tip) } },
                 ) {
                     Image(img, contentDescription = tip.label, modifier = Modifier.size(if (compact) 28.dp else 32.dp))
@@ -307,8 +307,8 @@ private fun ToolButton(
                 .padding(vertical = 3.dp)
                 .size(size)
                 .clip(if (ring) CircleShape else RoundedCornerShape(10.dp))
-                .background(if (selected) Color.White.copy(alpha = 0.16f) else Color.Transparent)
-                .then(if (selected && ring) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
+                .background(if (selected) Q.text.copy(alpha = 0.16f) else Color.Transparent)
+                .then(if (selected && ring) Modifier.border(2.dp, Q.text, CircleShape) else Modifier)
                 .combinedClickable(onClick = onClick, onLongClick = if (options != null) ({ open = true }) else null),
         ) {
             Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(size * 0.55f))
@@ -408,7 +408,7 @@ fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, descript
                 .fillMaxHeight()
                 .padding(vertical = thumbH / 2)
                 .clip(RoundedCornerShape(2.dp))
-                .background(Color.White.copy(alpha = 0.35f))
+                .background(Q.text.copy(alpha = 0.35f))
         )
         val range = (with(density) { height.toPx() } - thumbPx).coerceAtLeast(0f)
         Box(
@@ -416,7 +416,7 @@ fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, descript
                 .offset { IntOffset(0, ((1f - value.coerceIn(0f, 1f)) * range).roundToInt()) }
                 .size(width = 36.dp, height = thumbH)
                 .clip(RoundedCornerShape(9.dp))
-                .background(Color.White)
+                .background(Q.text)
         )
     }
 }
@@ -480,7 +480,7 @@ private fun Swatch(color: Color, selected: Boolean, size: Dp) {
     Box(
         Modifier
             .size(size)
-            .border(if (selected) 3.dp else 1.dp, if (selected) Q.accent else Color.White.copy(alpha = 0.5f), CircleShape)
+            .border(if (selected) 3.dp else 1.dp, if (selected) Q.accent else Q.text.copy(alpha = 0.5f), CircleShape)
             .padding(if (selected) 4.dp else 1.dp)
             .clip(CircleShape)
             .background(color)

@@ -48,6 +48,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -105,6 +106,8 @@ private fun saveSizePresets(prefs: android.content.SharedPreferences, list: List
 /** Start screen: recent photos or projects on one side, a new blank image on the other. */
 @Composable
 fun LaunchScreen(vm: EditorViewModel) {
+    var settingsOpen by remember { mutableStateOf(false) }
+    if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let { vm.openPicked(it) }
     }
@@ -138,6 +141,11 @@ fun LaunchScreen(vm: EditorViewModel) {
                     )
                     Spacer(Modifier.width(12.dp))
                     Text("Quartz Editor", color = Color.White, fontSize = if (wide) 40.sp else 30.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(12.dp))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(44.dp).clip(CircleShape).clickable { settingsOpen = true },
+                    ) { Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = Color.White) }
                 }
                 Spacer(Modifier.height(if (wide) 20.dp else 12.dp))
                 val card = Modifier
@@ -201,7 +209,7 @@ private fun RecentPane(vm: EditorViewModel, modifier: Modifier) {
 private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
     // As wide as its text (the underline must not stretch the tab across the row)
     Column(Modifier.width(IntrinsicSize.Max).clickable(onClick = onClick)) {
-        Text(text, color = if (selected) Color.White else Q.textDim, fontSize = 17.sp)
+        Text(text, color = if (selected) Color.White else Q.launchDim, fontSize = 17.sp)
         Spacer(Modifier.height(4.dp))
         Box(Modifier.height(2.dp).fillMaxWidth().background(if (selected) Q.accent else Color.Transparent))
     }
@@ -232,7 +240,7 @@ private fun GalleryGrid(vm: EditorViewModel) {
     }
     if (!access) {
         Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Allow photo access to see your recent photos here.", color = Q.textDim, fontSize = 14.sp)
+            Text("Allow photo access to see your recent photos here.", color = Q.launchDim, fontSize = 14.sp)
             Spacer(Modifier.height(12.dp))
             SmallButton("Allow access", primary = true) {
                 val perms = buildList {
@@ -246,7 +254,7 @@ private fun GalleryGrid(vm: EditorViewModel) {
     }
     val list = photos ?: return
     if (list.isEmpty()) {
-        Text("No photos yet.", color = Q.textDim)
+        Text("No photos yet.", color = Q.launchDim)
         return
     }
     LazyVerticalGrid(
@@ -263,7 +271,7 @@ private fun GalleryGrid(vm: EditorViewModel) {
                 modifier = Modifier
                     .aspectRatio(1f)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(Q.field)
+                    .background(Q.launchField)
                     .clickable { vm.openImage(p.uri) },
             )
         }
@@ -280,7 +288,7 @@ private fun ProjectsGrid(vm: EditorViewModel) {
         projects = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ProjectIO.list(context) }
     }
     if (projects.isEmpty()) {
-        Text("Projects you work on are saved here automatically, with all their layers.", color = Q.textDim, fontSize = 14.sp)
+        Text("Projects you work on are saved here automatically, with all their layers.", color = Q.launchDim, fontSize = 14.sp)
         return
     }
     LazyVerticalGrid(
@@ -303,10 +311,10 @@ private fun ProjectsGrid(vm: EditorViewModel) {
                         .fillMaxWidth()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Q.field),
+                        .background(Q.launchField),
                 )
-                Text(p.name, color = Q.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                Text("${p.width} × ${p.height}", color = Q.textDim, fontSize = 11.sp)
+                Text(p.name, color = Q.launchText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text("${p.width} × ${p.height}", color = Q.launchDim, fontSize = 11.sp)
             }
         }
     }
@@ -360,7 +368,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
             cursorBrush = SolidColor(Q.accent),
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         )
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Q.textDim))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Q.launchDim))
         Spacer(Modifier.height(14.dp))
 
         Row(verticalAlignment = Alignment.Bottom) {
@@ -374,7 +382,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
                 NumberBox(h, { h = it.filter(Char::isDigit).take(5) })
             }
             Spacer(Modifier.width(10.dp))
-            Text("px", color = Q.textDim, modifier = Modifier.padding(bottom = 14.dp))
+            Text("px", color = Q.launchDim, modifier = Modifier.padding(bottom = 14.dp))
         }
         Spacer(Modifier.height(10.dp))
         // Size presets (a menu, so the form stays short) and orientation
@@ -408,7 +416,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
                             // Your own sizes can be removed
                             trailingIcon = if (own) ({
                                 Icon(
-                                    Icons.Outlined.Close, contentDescription = "Remove ${p.label}", tint = Q.textDim,
+                                    Icons.Outlined.Close, contentDescription = "Remove ${p.label}", tint = Q.launchDim,
                                     modifier = Modifier.clip(CircleShape).clickable {
                                         mine = mine - p
                                         saveSizePresets(vm.prefs, mine)
@@ -472,7 +480,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
 
 @Composable
 private fun FieldLabel(text: String) {
-    Text(text, color = Q.textDim, fontSize = 15.sp, modifier = Modifier.padding(bottom = 6.dp))
+    Text(text, color = Q.launchDim, fontSize = 15.sp, modifier = Modifier.padding(bottom = 6.dp))
 }
 
 @Composable
@@ -500,7 +508,7 @@ private fun OrientationButton(icon: androidx.compose.ui.graphics.vector.ImageVec
         modifier = Modifier
             .size(40.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(if (selected) Q.accent else Q.field)
+            .background(if (selected) Q.accent else Q.launchField)
             .clickable(onClick = onClick),
     ) {
         Icon(icon, contentDescription = label, tint = Color.White)
@@ -558,6 +566,6 @@ private fun BigButton(text: String, modifier: Modifier, enabled: Boolean = true,
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 16.dp),
     ) {
-        Text(text, color = if (enabled) Color.White else Q.textDim, fontSize = 17.sp, maxLines = 1)
+        Text(text, color = if (enabled) Color.White else Q.launchDim, fontSize = 17.sp, maxLines = 1)
     }
 }

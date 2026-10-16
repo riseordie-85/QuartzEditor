@@ -42,7 +42,7 @@ fun WarpBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
     @Suppress("UNUSED_VARIABLE") val v = w.version
     Bar(modifier) {
         BarIcon(Icons.Outlined.Close, "Cancel ${w.kind.label.lowercase()}") { vm.cancelWarp() }
-        Text(w.kind.label, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 6.dp))
+        Text(w.kind.label, color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 6.dp))
         BarIcon(Icons.AutoMirrored.Outlined.Undo, "Undo the last change") { vm.warpUndo() }
         BarIcon(Icons.Outlined.RestartAlt, "Reset") { vm.resetWarp() }
         if (w.kind == WarpKind.PUPPET && w.pinSelected in w.pinTo.indices) {

@@ -322,7 +322,7 @@ private fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
                 .size(28.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color(current))
-                .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .border(1.dp, Q.text.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -367,7 +367,7 @@ private fun GlossPicker(current: com.tim.quartzeditor.engine.GlossContour, onPic
                         val py = size.height - y * size.height
                         if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
                     }
-                    drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                    drawPath(path, Q.text, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                 }
                 Text(gc.label, color = Q.textDim, fontSize = 10.sp, maxLines = 1)
             }

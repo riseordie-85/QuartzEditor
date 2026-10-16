@@ -157,7 +157,7 @@ internal fun GradientTile(
                 .clip(RoundedCornerShape(6.dp))
                 .checker(8f)
                 .background(gradientBrush(g.resolve(vm.foreground, vm.background), g.positions))
-                .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Q.text.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
                 .combinedClickable(onClick = onPick, onLongClick = { if (userIndex != null && onEdit != null) menu = true })
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -176,8 +176,8 @@ internal fun NewGradientTile(width: Dp, height: Dp, onClick: () -> Unit) {
         modifier = Modifier
             .size(width = width, height = height)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color.White.copy(alpha = 0.08f))
-            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+            .background(Q.text.copy(alpha = 0.08f))
+            .border(1.dp, Q.text.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
             .clickable(onClick = onClick),
     ) {
         Icon(Icons.Outlined.Add, contentDescription = "New gradient", tint = Q.textDim, modifier = Modifier.size(18.dp))
@@ -255,7 +255,7 @@ fun GradientEditorDialog(
                             .clip(RoundedCornerShape(8.dp))
                             .checker(10f)
                             .background(gradientBrush(s.map { it.color }, s.map { it.pos }))
-                            .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .border(1.dp, Q.text.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
                             .pointerInput(Unit) {
                                 // A tap adds a color there (the color the gradient already has at that spot)
                                 detectTapGestures { o ->
@@ -303,7 +303,7 @@ fun GradientEditorDialog(
                             .clip(RoundedCornerShape(8.dp))
                             .checker(6f)
                             .background(Color(st.color))
-                            .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                            .border(1.dp, Q.text.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
                             .clickable { pickingColor = true }
                     )
                     Spacer(Modifier.width(8.dp))

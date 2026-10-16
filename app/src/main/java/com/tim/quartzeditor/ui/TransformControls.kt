@@ -60,7 +60,7 @@ fun TransformBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
             if (m == TransformMode.FREE && st.distort) return@forEach
             Text(
                 m.label,
-                color = Color.White,
+                color = if (st.mode == m) Color.White else Q.text,
                 fontSize = 13.sp,
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
@@ -130,7 +130,7 @@ fun TransformProperties(vm: EditorViewModel) {
                     .background(if (st.keepAspect) Q.accent else Q.field)
                     .clickable { vm.updateTransform { it.copy(keepAspect = !it.keepAspect) } },
             ) {
-                Icon(if (st.keepAspect) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = "Keep proportions", tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(if (st.keepAspect) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = "Keep proportions", tint = if (st.keepAspect) Color.White else Q.text, modifier = Modifier.size(18.dp))
             }
             Text("H", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(20.dp))
             PanelField("${(st.scaleY * 100).roundToInt()}", onCommit = { v ->

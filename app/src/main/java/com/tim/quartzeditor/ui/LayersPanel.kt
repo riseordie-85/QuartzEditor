@@ -589,7 +589,7 @@ private fun IconThumb(icon: ImageVector, outlined: Boolean, onClick: () -> Unit)
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(44.dp)
-            .border(if (outlined) 2.dp else 1.dp, if (outlined) Color.White else Color.White.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+            .border(if (outlined) 2.dp else 1.dp, if (outlined) Q.text else Q.text.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
             .clip(RoundedCornerShape(4.dp))
             .background(Q.field)
             .clickable(onClick = onClick),
@@ -603,7 +603,7 @@ private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Bool
     Box(
         Modifier
             .size(44.dp)
-            .border(if (outlined) 2.dp else 1.dp, if (outlined) Color.White else Color.White.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+            .border(if (outlined) 2.dp else 1.dp, if (outlined) Q.text else Q.text.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
             .padding(2.dp)
             .clip(RoundedCornerShape(3.dp))
             .then(if (plain) Modifier.background(Color.White) else Modifier.checker(6f))
