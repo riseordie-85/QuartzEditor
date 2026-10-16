@@ -94,20 +94,25 @@ private fun evenly(n: Int) = List(n) { if (n <= 1) 0f else it / (n - 1f) }
 /** The ready-made gradients, then yours. */
 val EditorViewModel.allGradients: List<GradientPreset> get() = GradientPreset.ALL + userGradients
 
-/** Adds [g] as a new gradient (or puts it in place of your gradient [replacing]) and picks it for the Gradient tool. */
-fun EditorViewModel.saveGradient(g: GradientPreset, replacing: GradientPreset?) {
+/**
+ * Adds [g] as a new gradient (or puts it in place of your gradient number [replacing]); with
+ * [pickForTool] the Gradient tool picks it.
+ */
+fun EditorViewModel.saveGradient(g: GradientPreset, replacing: Int?, pickForTool: Boolean) {
     val mine = g.copy(custom = true, dynamic = GradientPreset.Dynamic.NONE)
     val list = userGradients.toMutableList()
-    val at = replacing?.let { list.indexOf(it) } ?: -1
+    val at = replacing?.takeIf { it in list.indices } ?: -1
     if (at >= 0) list[at] = mine else list.add(mine)
     saveUserGradients(list)
-    gradientPreset = GradientPreset.ALL.size + (if (at >= 0) at else list.lastIndex)
-    saveGradientPrefs()
+    if (pickForTool) {
+        gradientPreset = GradientPreset.ALL.size + (if (at >= 0) at else list.lastIndex)
+        saveGradientPrefs()
+    }
 }
 
-fun EditorViewModel.deleteGradient(g: GradientPreset) {
-    val i = userGradients.indexOf(g)
-    if (i < 0) return
+/** Deletes your gradient number [i]. */
+fun EditorViewModel.deleteGradient(i: Int) {
+    if (i !in userGradients.indices) return
     saveUserGradients(userGradients.filterIndexed { n, _ -> n != i })
     val index = GradientPreset.ALL.size + i
     // The Gradient tool's pick stays on the same gradient (or goes back to the first)
@@ -140,7 +145,9 @@ internal fun GradientTile(
     width: Dp,
     height: Dp,
     onPick: () -> Unit,
-    onEdit: ((GradientPreset) -> Unit)?,
+    /** Your gradient's number among yours (null for ready-made ones); with it, holding offers Edit and Delete. */
+    userIndex: Int?,
+    onEdit: ((Int) -> Unit)?,
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -151,12 +158,12 @@ internal fun GradientTile(
                 .checker(8f)
                 .background(gradientBrush(g.resolve(vm.foreground, vm.background), g.positions))
                 .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
-                .combinedClickable(onClick = onPick, onLongClick = { if (g.custom && onEdit != null) menu = true })
+                .combinedClickable(onClick = onPick, onLongClick = { if (userIndex != null && onEdit != null) menu = true })
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             Text(g.name, color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            DropdownMenuItem(text = { Text("Edit…") }, onClick = { menu = false; onEdit?.invoke(g) })
-            DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; vm.deleteGradient(g) })
+            DropdownMenuItem(text = { Text("Edit…") }, onClick = { menu = false; userIndex?.let { onEdit?.invoke(it) } })
+            DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; userIndex?.let { vm.deleteGradient(it) } })
         }
     }
 }
@@ -193,8 +200,11 @@ private class Stop(color: Int, pos: Float) {
 fun GradientEditorDialog(
     vm: EditorViewModel,
     start: GradientPreset,
-    editing: GradientPreset?,
+    /** Which of your gradients is being changed (null: a new one). */
+    editing: Int?,
     onDone: () -> Unit,
+    /** Saving also picks it for the Gradient tool. */
+    pickForTool: Boolean,
     /** Called with the gradient just saved. */
     onSaved: (GradientPreset) -> Unit = {},
 ) {
@@ -204,7 +214,7 @@ fun GradientEditorDialog(
         mutableStateListOf<Stop>().apply { cols.indices.forEach { add(Stop(cols[it], pos[it])) } }
     }
     var picked by remember { mutableIntStateOf(0) }
-    var name by remember { mutableStateOf(editing?.name ?: "My gradient ${vm.userGradients.size + 1}") }
+    var name by remember { mutableStateOf(editing?.let { vm.userGradients.getOrNull(it)?.name } ?: "My gradient ${vm.userGradients.size + 1}") }
     var pickingColor by remember { mutableStateOf(false) }
 
     fun ordered() = stops.sortedBy { it.pos }
@@ -269,7 +279,7 @@ fun GradientEditorDialog(
                                     .pointerInput(st) {
                                         detectTapGestures { picked = stops.indexOf(st) }
                                     }
-                                    .pointerInput(st) {
+                                    .pointerInput(st, widthPx) {
                                         detectDragGestures(onDragStart = { picked = stops.indexOf(st) }) { change, drag ->
                                             change.consume()
                                             st.pos = (st.pos + drag.x / widthPx).coerceIn(0f, 1f)
@@ -334,7 +344,7 @@ fun GradientEditorDialog(
                     SmallButton("Save as new") {
                         val s = ordered()
                         val g = GradientPreset(name.ifBlank { "Gradient" }, s.map { it.color }, positions = s.map { it.pos }, custom = true)
-                        vm.saveGradient(g, null)
+                        vm.saveGradient(g, null, pickForTool)
                         onSaved(g)
                         onDone()
                     }
@@ -343,7 +353,7 @@ fun GradientEditorDialog(
                 SmallButton("Save", primary = true) {
                     val s = ordered()
                     val g = GradientPreset(name.ifBlank { "Gradient" }, s.map { it.color }, positions = s.map { it.pos }, custom = true)
-                    vm.saveGradient(g, editing)
+                    vm.saveGradient(g, editing, pickForTool)
                     onSaved(g)
                     onDone()
                 }

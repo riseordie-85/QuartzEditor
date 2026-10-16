@@ -195,20 +195,21 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
 private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
     val g = st.gradientFill
     fun LayerStyle.gf(change: GradientFx.() -> GradientFx): LayerStyle = copy(gradientFill = gradientFill.change().copy(on = true))
-    var editor by remember { mutableStateOf<Pair<GradientPreset, GradientPreset?>?>(null) }
+    var editor by remember { mutableStateOf<Pair<GradientPreset, Int?>?>(null) }
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        vm.allGradients.forEach { p ->
+        vm.allGradients.forEachIndexed { i, p ->
+            val mine = (i - GradientPreset.ALL.size).takeIf { it >= 0 }
             val cols = p.resolve(vm.foreground, vm.background)
             val sel = cols == g.colors && (p.positions ?: emptyList<Float>()) == (g.positions ?: emptyList<Float>())
             GradientTile(vm, p, sel, 52.dp, 26.dp, onPick = {
                 vm.setStyle("Gradient fill") { it.gf { copy(colors = cols, positions = p.positions) } }
-            }, onEdit = { e -> editor = e to e })
+            }, userIndex = mine, onEdit = { n -> editor = vm.userGradients[n] to n })
         }
         // A new one starts from the layer's gradient fill
         NewGradientTile(52.dp, 26.dp) { editor = GradientPreset("Gradient", g.colors, positions = g.positions) to null }
     }
     editor?.let { (start, editing) ->
-        GradientEditorDialog(vm, start, editing, onDone = { editor = null }, onSaved = { saved ->
+        GradientEditorDialog(vm, start, editing, onDone = { editor = null }, pickForTool = false, onSaved = { saved ->
             vm.setStyle("Gradient fill") { it.gf { copy(colors = saved.colors, positions = saved.positions) } }
         })
     }

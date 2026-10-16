@@ -92,9 +92,15 @@ object GradientPainter {
             GradientType.RADIAL -> RadialGradient(start.x, start.y, len, arr, pos?.toFloatArray(), Shader.TileMode.CLAMP)
             GradientType.REFLECTED -> {
                 // Same colors both ways from the start point
-                val mirrored = (cols.reversed() + cols.drop(1)).toIntArray()
-                val mp = pos?.let { p -> (p.reversed().map { 0.5f - it / 2f } + p.drop(1).map { 0.5f + it / 2f }).toFloatArray() }
-                LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, mp, Shader.TileMode.CLAMP)
+                if (pos == null) {
+                    val mirrored = (cols.reversed() + cols.drop(1)).toIntArray()
+                    LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, null, Shader.TileMode.CLAMP)
+                } else {
+                    // Both halves in full: the first color stays flat across the middle when it doesn't start at 0
+                    val mirrored = (cols.reversed() + cols).toIntArray()
+                    val mp = (pos.reversed().map { 0.5f - it / 2f } + pos.map { 0.5f + it / 2f }).toFloatArray()
+                    LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, mp, Shader.TileMode.CLAMP)
+                }
             }
         }
     }

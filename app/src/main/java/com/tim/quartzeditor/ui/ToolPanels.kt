@@ -66,15 +66,16 @@ fun GradientsPanel(vm: EditorViewModel) {
     )
     Spacer(Modifier.height(8.dp))
     // The gradient being made or changed (null: none)
-    var editor by remember { mutableStateOf<Pair<GradientPreset, GradientPreset?>?>(null) }
+    var editor by remember { mutableStateOf<Pair<GradientPreset, Int?>?>(null) }
     val all = vm.allGradients
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), maxItemsInEachRow = 4) {
         all.forEachIndexed { i, p ->
+            val mine = (i - GradientPreset.ALL.size).takeIf { it >= 0 }
             GradientTile(vm, p, i == vm.gradientPreset, 62.dp, 30.dp, onPick = {
                 vm.gradientPreset = i
                 vm.saveGradientPrefs()
                 if (vm.tool != Tool.GRADIENT) vm.onToolButton(Tool.GRADIENT)
-            }, onEdit = { g -> editor = g to g })
+            }, userIndex = mine, onEdit = { n -> editor = vm.userGradients[n] to n })
         }
         // A new one starts from the gradient picked now
         NewGradientTile(62.dp, 30.dp) { editor = all.getOrElse(vm.gradientPreset) { GradientPreset.ALL[0] } to null }
@@ -85,7 +86,7 @@ fun GradientsPanel(vm: EditorViewModel) {
         (current?.name ?: "") + if (current?.custom == true) " · hold it to edit or delete" else "",
         color = Q.text, fontSize = 12.sp,
     )
-    editor?.let { (start, editing) -> GradientEditorDialog(vm, start, editing, onDone = { editor = null }) }
+    editor?.let { (start, editing) -> GradientEditorDialog(vm, start, editing, onDone = { editor = null }, pickForTool = true) }
     Spacer(Modifier.height(8.dp))
     GradientOptions(vm)
 }

@@ -151,7 +151,8 @@ over the picture (from the bottom of the Layers panel), so you can see the resul
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
   fades only the layer's own pixels. Merge down, flatten and export bake them in. **Apply layer style**
   (Layers ⋮, next to Rasterize layer, or hold the layer) bakes them into the layer's own pixels and clears
-  the style; shapes and text become pixel layers. Opacity, blend mode, mask and clipping stay as they are.
+  the style; shapes and text become pixel layers. Opacity, blend mode and clipping stay as they are. A mask
+  that's on is applied too (so the result looks exactly the same); a mask that's off is kept.
 - **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
   sharpness, vignette, grain. On a pixel layer: live preview, then Apply (closing the window cancels). On an
   adjustment layer they stay editable.
