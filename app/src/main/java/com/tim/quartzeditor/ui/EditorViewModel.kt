@@ -142,6 +142,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var bucketContiguous by mutableStateOf(prefs.getBoolean("bucketContig", true))
     var bucketAllLayers by mutableStateOf(prefs.getBoolean("bucketAll", false))
 
+    /** The paint bucket fills with the pattern instead of the foreground color (PatternActions.kt). */
+    var bucketPattern by mutableStateOf(prefs.getBoolean("bucketPattern", false))
+    /** The pattern used for pattern fills, and its size (1 = as made). */
+    var patternKey by mutableStateOf(prefs.getString("patternKey", null) ?: "b:checker")
+    var patternScale by mutableFloatStateOf(prefs.getFloat("patternScale", 1f))
+    /** Your own patterns (the ready-made ones are always there). */
+    var userPatterns by mutableStateOf(com.tim.quartzeditor.engine.Patterns.mine(app))
+
     var gradientPreset by mutableIntStateOf(prefs.getInt("gradPreset", 0))
     var gradientType by mutableStateOf(com.tim.quartzeditor.engine.GradientType.entries.getOrElse(prefs.getInt("gradType", 0)) { com.tim.quartzeditor.engine.GradientType.LINEAR })
     var gradientReverse by mutableStateOf(prefs.getBoolean("gradReverse", false))
@@ -662,6 +670,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (t == Tool.SHAPE && tool == Tool.SHAPE) {
             nextShapeKind()
+            return
+        }
+        if (t == Tool.BUCKET && tool == Tool.BUCKET) {
+            // Tapping the paint bucket again: color or pattern
+            setBucketPattern(!bucketPattern)
+            toast(if (bucketPattern) "Pattern fill" else "Paint bucket")
             return
         }
         if (t == Tool.PEN && tool == Tool.PEN && penPoints.isEmpty()) {

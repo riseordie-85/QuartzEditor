@@ -40,8 +40,14 @@ selection tools, the shapes, pen drawing/point editing).
   itself), **Perspective** (drag a corner; the other end of that side moves the opposite way), **Distort**
   (corners anywhere) and Apply. With several layers picked, they transform together.
 - **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
-- **Paint bucket** — tap to fill matching pixels with the foreground color. Tolerance, "only touching
-  pixels" and "look at all layers" are in Properties.
+- **Paint bucket / Pattern fill** — tap to fill matching pixels with the foreground color, or with a
+  pattern (tap the tool again, or hold it, to switch). Tolerance, "only touching pixels" and "look at all
+  layers" are in Properties. With Pattern picked, Properties shows every pattern: 12 ready-made ones drawn
+  in your foreground and background colors, and your own (hold one to delete it; **+** adds one from your
+  photos). Size goes from 12% to 400%, and patterns line up with the canvas's corner on any layer.
+  "Make from selection" saves what you see inside the selection (or the whole picture) as a new pattern;
+  "Fill selection" / "Fill layer" fills with the pattern straight away (also in the Select ⋮ and
+  Layers ⋮ menus). On a mask, light parts of the pattern show and dark parts hide.
 - **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
   Linear / Radial / Reflected, reverse and opacity are in Properties.
 - **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from

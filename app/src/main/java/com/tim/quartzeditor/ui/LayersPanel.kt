@@ -336,6 +336,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     item("Remove background") { vm.removeBackground() }()
                     if (d.selection != null) item("Mask from selection") { vm.maskFromSelection() }()
                     item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
+                    item("Fill with pattern") { vm.fillWithPattern() }()
                     item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
                     if (active?.hasMask == true) {
                         HorizontalDivider()

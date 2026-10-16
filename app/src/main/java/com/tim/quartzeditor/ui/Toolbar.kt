@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.Transform
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.FormatColorFill
+import androidx.compose.material.icons.outlined.Texture
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.Polyline
@@ -145,7 +146,14 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
             ToolButton(QIcons.Transform, "Transform (scale, rotate, flip, distort)", t == Tool.TRANSFORM, buttonSize) { vm.onToolButton(Tool.TRANSFORM) }
             ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
-            ToolButton(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET, buttonSize) { vm.onToolButton(Tool.BUCKET) }
+            ToolButton(
+                if (vm.bucketPattern) Icons.Outlined.Texture else Icons.Outlined.FormatColorFill,
+                if (vm.bucketPattern) "Pattern fill (tap again for the paint bucket)" else "Paint bucket (tap again for pattern fill)", t == Tool.BUCKET, buttonSize,
+                options = listOf(
+                    ToolOption(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET && !vm.bucketPattern) { vm.chooseBucket(pattern = false) },
+                    ToolOption(Icons.Outlined.Texture, "Pattern fill", t == Tool.BUCKET && vm.bucketPattern) { vm.chooseBucket(pattern = true) },
+                ),
+            ) { vm.onToolButton(Tool.BUCKET) }
             ToolButton(Icons.Outlined.Gradient, "Gradient", t == Tool.GRADIENT, buttonSize) { vm.onToolButton(Tool.GRADIENT) }
             ToolButton(
                 shapeIcon(vm.shapeKind), "Shape: ${vm.shapeKind.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE, buttonSize,

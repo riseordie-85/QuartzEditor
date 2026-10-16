@@ -157,7 +157,13 @@ fun ToolOptions(vm: EditorViewModel) {
             Spacer(Modifier.height(10.dp))
         }
         Tool.BUCKET -> {
-            Title("Paint bucket")
+            Title(if (vm.bucketPattern) "Pattern fill" else "Paint bucket")
+            ChipRow(listOf("Color", "Pattern"), if (vm.bucketPattern) 1 else 0) { vm.setBucketPattern(it == 1) }
+            Spacer(Modifier.height(8.dp))
+            if (vm.bucketPattern) {
+                PatternPicker(vm)
+                Spacer(Modifier.height(8.dp))
+            }
             PanelSlider("Tolerance", vm.bucketTolerance, 0f..1f, "${(vm.bucketTolerance * 100).roundToInt()}%", onChange = { vm.bucketTolerance = it }, onDone = { vm.prefs.edit().putFloat("bucketTol", vm.bucketTolerance).apply() })
             ToggleRow("Only touching pixels", vm.bucketContiguous) {
                 vm.bucketContiguous = it
@@ -167,7 +173,7 @@ fun ToolOptions(vm: EditorViewModel) {
                 vm.bucketAllLayers = it
                 vm.prefs.edit().putBoolean("bucketAll", it).apply()
             }
-            Text("Tap the picture to fill with the foreground color.", color = Q.textDim, fontSize = 12.sp)
+            Text(if (vm.bucketPattern) "Tap the picture to fill that area with the pattern." else "Tap the picture to fill with the foreground color.", color = Q.textDim, fontSize = 12.sp)
             Spacer(Modifier.height(10.dp))
         }
         Tool.GRADIENT -> {
@@ -312,6 +318,8 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 DropdownMenuItem(text = { Text("Cut to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCut, null) }, onClick = { menu = false; vm.selectionToLayer(cut = true) })
                 DropdownMenuItem(text = { Text("Delete selected pixels") }, onClick = { menu = false; vm.clearSelected() })
                 DropdownMenuItem(text = { Text("Fill with foreground color") }, onClick = { menu = false; vm.fillWithColor(vm.foreground) })
+                DropdownMenuItem(text = { Text("Fill with pattern") }, onClick = { menu = false; vm.fillWithPattern() })
+                DropdownMenuItem(text = { Text("Define pattern from selection") }, onClick = { menu = false; vm.definePattern() })
                 DropdownMenuItem(text = { Text("Mask from selection") }, onClick = { menu = false; vm.maskFromSelection() })
                 DropdownMenuItem(text = { Text("Crop to selection") }, onClick = { menu = false; vm.cropToSelection() })
             }

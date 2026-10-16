@@ -20,6 +20,7 @@ import com.tim.quartzeditor.engine.GradientSpec
 import com.tim.quartzeditor.engine.Layer
 import com.tim.quartzeditor.engine.LayerPreview
 import com.tim.quartzeditor.engine.LayerProps
+import com.tim.quartzeditor.engine.PatternPainter
 import com.tim.quartzeditor.engine.SelectMode
 import com.tim.quartzeditor.engine.Selection
 import com.tim.quartzeditor.engine.StrokeSession
@@ -52,29 +53,45 @@ internal fun EditorViewModel.paintTiles(
     draw: (Canvas, RectF) -> Unit,
 ) {
     val d = doc ?: return
-    val grid = (if (toMask) l.mask else l.tiles) ?: return
+    runBusy("$label…") { paintTilesNow(d, l, toMask, area, label, skipMissing, null, draw) }
+}
+
+/**
+ * The work of [paintTiles], for code already running with the busy overlay up. [onlyKeys] limits
+ * it to those tiles. Returns false when nothing changed (or the picture moved on meanwhile).
+ */
+internal suspend fun EditorViewModel.paintTilesNow(
+    d: Doc,
+    l: Layer,
+    toMask: Boolean,
+    area: RectF,
+    label: String,
+    skipMissing: Boolean,
+    onlyKeys: Set<Long>?,
+    draw: (Canvas, RectF) -> Unit,
+): Boolean {
+    val grid = (if (toMask) l.mask else l.tiles) ?: return false
     val local = RectF(area).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
-    val keys = grid.keysIn(local)
+    val keys = grid.keysIn(local).let { k -> if (onlyKeys == null) k else k.filter { it in onlyKeys } }
     val existing = keys.associateWith { grid[it] }
-    runBusy("$label…") {
-        val made = withContext(Dispatchers.Default) {
-            keys.mapNotNull { k ->
-                val e = existing[k]
-                if (e == null && skipMissing) return@mapNotNull null
-                val tile = grid.editableCopy(e)
-                val c = Canvas(tile)
-                c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
-                draw(c, local)
-                k to tile
-            }
+    val made = withContext(Dispatchers.Default) {
+        keys.mapNotNull { k ->
+            val e = existing[k]
+            if (e == null && skipMissing) return@mapNotNull null
+            val tile = grid.editableCopy(e)
+            val c = Canvas(tile)
+            c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
+            draw(c, local)
+            k to tile
         }
-        val now = if (toMask) l.mask else l.tiles
-        if (doc !== d || now !== grid || made.isEmpty()) return@runBusy
-        val saved = HashMap<Long, Bitmap?>()
-        for ((k, t) in made) saved[k] = grid.swap(k, t)
-        history.record(TilePatch(l, grid, saved, label))
-        d.touched(l)
     }
+    val now = if (toMask) l.mask else l.tiles
+    if (doc !== d || now !== grid || made.isEmpty()) return false
+    val saved = HashMap<Long, Bitmap?>()
+    for ((k, t) in made) saved[k] = grid.swap(k, t)
+    history.record(TilePatch(l, grid, saved, label))
+    d.touched(l)
+    return true
 }
 
 // ===================================================================== fills and gradients
@@ -169,7 +186,7 @@ fun EditorViewModel.cancelGradient() {
 
 // ===================================================================== paint bucket
 
-/** Fills the area around canvas point ([x], [y]) that matches its color (within the tolerance). */
+/** Fills the area around canvas point ([x], [y]) that matches its color (within the tolerance), with the foreground color or the pattern. */
 fun EditorViewModel.bucketFill(x: Float, y: Float) {
     val d = doc ?: return
     if (pendingFirst { bucketFill(x, y) }) return
@@ -189,6 +206,11 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
     val ly = l.y
     val w = d.width
     val h = d.height
+    val pattern = if (bucketPattern) currentPattern() ?: run {
+        toast("Pick a pattern first")
+        return
+    } else null
+    val scale = patternScale
     runBusy("Filling…") {
         val coverage = withContext(Dispatchers.Default) {
             // What the bucket looks at: this layer, or everything you see
@@ -209,6 +231,22 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
             TileGrid.fromBitmap(bmp, -lx, -ly, alphaOnly = true).also { bmp.recycle() }
         }
         if (doc !== d || coverage.isEmpty) return@runBusy
+        if (pattern != null) {
+            // Pattern fill: the pattern, kept to the bucket's area (coverage is in the layer's coordinates)
+            val keepPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
+            val keep: (Canvas) -> Unit = { c ->
+                c.saveLayer(null, keepPaint)
+                coverage.drawTo(c, 0f, 0f, null)
+                c.restore()
+            }
+            val lock = !toMask && l.props.lockAlpha
+            val area = RectF(0f, 0f, w.toFloat(), h.toFloat())
+            paintTilesNow(d, l, toMask, area, "Pattern fill", skipMissing = lock, onlyKeys = coverage.tiles.keys.toSet()) { c, local ->
+                if (toMask) PatternPainter.paintMask(c, local, pattern, scale, lx.toFloat(), ly.toFloat(), keep)
+                else PatternPainter.paintPixels(c, local, pattern, scale, lx.toFloat(), ly.toFloat(), lock, keep)
+            }
+            return@runBusy
+        }
         // Applied like a brush stroke at full strength, so locks and masks behave the same
         val s = StrokeSession(
             l, if (toMask) StrokeTarget.MASK else StrokeTarget.PIXELS, false, foreground, background, 1f,
