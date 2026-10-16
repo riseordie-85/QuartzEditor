@@ -131,8 +131,8 @@ class WarpMesh(val area: RectF, val cols: Int, val rows: Int) {
                 val b = a + 1
                 val c = a + stride
                 val d = c + 1
-                // Each cell is drawn as two triangles: (a, b, c) and (b, d, c)
-                for (tri in arrayOf(intArrayOf(a, b, c), intArrayOf(b, d, c))) {
+                // drawBitmapMesh splits each cell along a–d: (a, c, d) and (a, d, b)
+                for (tri in arrayOf(intArrayOf(a, c, d), intArrayOf(a, d, b))) {
                     val w = barycentric(x, y, tri) ?: continue
                     var rx = 0f
                     var ry = 0f
@@ -550,12 +550,13 @@ object WarpMath {
         val bmp = Bitmap.createBitmap(out.width(), out.height(), Bitmap.Config.ALPHA_8)
         val c = Canvas(bmp)
         c.translate(-out.left.toFloat(), -out.top.toFloat())
-        // The mask as it was, without the part that was warped...
+        // The mask as it was, without the part that was warped (where it was, and where it went)...
         for ((key, tile) in grid) c.drawBitmap(tile, (lx + TileGrid.tx(key) * TileGrid.SIZE).toFloat(), (ly + TileGrid.ty(key) * TileGrid.SIZE).toFloat(), null)
-        c.drawRect(
-            Rect(src).apply { offset(lx, ly) },
-            Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR) },
-        )
+        val clear = Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR) }
+        c.drawRect(Rect(src).apply { offset(lx, ly) }, clear)
+        val solid = Bitmap.createBitmap(2, 2, Bitmap.Config.ALPHA_8).apply { eraseColor(android.graphics.Color.BLACK) }
+        c.drawBitmapMesh(solid, cols, rows, pts, 0, null, 0, clear)
+        solid.recycle()
         // ...and that part, warped
         warped?.let { (w, area) ->
             c.drawBitmap(w, area.left.toFloat(), area.top.toFloat(), null)

@@ -15,6 +15,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 // Face-aware Liquify: faces are found on the device (ML Kit face detection through Google Play
@@ -75,6 +76,32 @@ class FaceFeatures(
 ) {
     /** Distance between the eyes. */
     val eyeGap: Float get() = hypot(eyes[1].x - eyes[0].x, eyes[1].y - eyes[0].y)
+
+    /** Every point that marks a feature, in a fixed order (for moving them along with an edit). */
+    fun points(): List<PointF> = eyes + listOf(noseTip, mouth) + mouthCorners + listOf(upperLipTop, lowerLipBottom, faceCenter, forehead, chin) + jaw
+
+    /** The same face with its feature points replaced by [p] (in the order of [points]). */
+    fun withPoints(p: List<PointF>): FaceFeatures {
+        var i = 0
+        fun next() = p[i++]
+        val eyes2 = listOf(next(), next())
+        val nose2 = next()
+        val mouth2 = next()
+        val corners2 = listOf(next(), next())
+        val ul2 = next()
+        val ll2 = next()
+        val center2 = next()
+        val forehead2 = next()
+        val chin2 = next()
+        val jaw2 = listOf(next(), next())
+        val gx = eyes2[1].x - eyes2[0].x
+        val gy = eyes2[1].y - eyes2[0].y
+        val g = hypot(gx, gy).coerceAtLeast(1f)
+        return FaceFeatures(
+            box, gx / g, gy / g, eyes2, eyeW, eyeH, nose2, noseW, noseLen, mouth2, corners2, mouthW, mouthH,
+            ul2, upperLipThick, ll2, lowerLipThick, center2, faceW, faceH, forehead2, chin2, jaw2,
+        )
+    }
 }
 
 object FaceAware {
@@ -87,7 +114,8 @@ object FaceAware {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+            // Contours would limit it to one face: first find them all
+            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .setMinFaceSize(0.05f)
             .build()
         val detector = FaceDetection.getClient(options)
@@ -105,16 +133,19 @@ object FaceAware {
         } finally {
             runCatching { detector.close() }
         }
-        // Contours come for the most prominent face only: each other face is looked at again on its own
+        // Then each face on its own, big enough for its outline to be traced (contours need about
+        // 200 px faces); landmarks alone if that doesn't work
         val out = ArrayList<FaceFeatures>()
         for (f in faces.sortedByDescending { it.boundingBox.width() * it.boundingBox.height() }) {
-            val direct = if (f.getContour(FaceContour.FACE) != null) runCatching { features(f, k, offX, offY) }.getOrNull() else null
-            if (direct != null) {
-                out.add(direct)
-                continue
-            }
             val again = cropAround(image, f.boundingBox)?.let { (crop, cx, cy) ->
-                findOne(crop, k, offX + cx * k, offY + cy * k).also { if (crop !== image) crop.recycle() }
+                val side = max(f.boundingBox.width(), f.boundingBox.height()).coerceAtLeast(1)
+                val up = (320f / side).coerceIn(1f, 2000f / max(crop.width, crop.height))
+                val big = if (up > 1.01f) Bitmap.createScaledBitmap(crop, (crop.width * up).toInt().coerceAtLeast(1), (crop.height * up).toInt().coerceAtLeast(1), true) else crop
+                val real = big.width / crop.width.toFloat()
+                findOne(big, k / real, offX + cx * k, offY + cy * k).also {
+                    if (big !== crop) big.recycle()
+                    if (crop !== image) crop.recycle()
+                }
             }
             (again ?: runCatching { features(f, k, offX, offY) }.getOrNull())?.let { out.add(it) }
         }
@@ -161,14 +192,29 @@ object FaceAware {
         val bb = f.boundingBox
         val box = RectF(bb.left * k + offX, bb.top * k + offY, bb.right * k + offX, bb.bottom * k + offY)
 
-        // Eyes (the subject's left eye is usually on the picture's right)
-        val eyeA = contour(FaceContour.LEFT_EYE)
-        val eyeB = contour(FaceContour.RIGHT_EYE)
-        val ca = eyeA?.let(::centroid) ?: landmark(FaceLandmark.LEFT_EYE) ?: error("no eyes")
-        val cb = eyeB?.let(::centroid) ?: landmark(FaceLandmark.RIGHT_EYE) ?: error("no eyes")
-        val (e0, e1) = if (ca.x <= cb.x) ca to cb else cb to ca
-        val p0 = if (ca.x <= cb.x) eyeA else eyeB
-        val p1 = if (ca.x <= cb.x) eyeB else eyeA
+        // Eyes: the subject's right eye first (on the picture's left when the face is upright), so
+        // the face's axes turn with the face, even upside down
+        val eyeR = contour(FaceContour.RIGHT_EYE)
+        val eyeL = contour(FaceContour.LEFT_EYE)
+        val cr = eyeR?.let(::centroid) ?: landmark(FaceLandmark.RIGHT_EYE) ?: error("no eyes")
+        val cl = eyeL?.let(::centroid) ?: landmark(FaceLandmark.LEFT_EYE) ?: error("no eyes")
+        // If the labels ever disagree with where the mouth is, the mouth wins (it's below the eyes)
+        val roughMouth = listOfNotNull(
+            contour(FaceContour.UPPER_LIP_BOTTOM)?.let(::centroid), landmark(FaceLandmark.MOUTH_BOTTOM),
+            landmark(FaceLandmark.MOUTH_LEFT), landmark(FaceLandmark.MOUTH_RIGHT),
+        ).firstOrNull()
+        val flip = roughMouth != null && run {
+            val ax = cl.x - cr.x
+            val ay = cl.y - cr.y
+            // "Down" for these axes is (−ay, ax)
+            val mx = roughMouth.x - (cr.x + cl.x) / 2f
+            val my = roughMouth.y - (cr.y + cl.y) / 2f
+            mx * -ay + my * ax < 0f
+        }
+        val e0 = if (flip) cl else cr
+        val e1 = if (flip) cr else cl
+        val p0 = if (flip) eyeL else eyeR
+        val p1 = if (flip) eyeR else eyeL
         val dx = e1.x - e0.x
         val dy = e1.y - e0.y
         val gap = hypot(dx, dy).coerceAtLeast(1f)
@@ -267,9 +313,11 @@ object FaceAware {
 
     /**
      * Moves the points [pts] (x, y each; canvas pixels) by the face sliders [values] (−1..1 each)
-     * for face [f]. The edges of the mesh ([border] true for points that must stay) don't move.
+     * for face [f]. [edge] is how far each point is from the mesh's edge (canvas pixels): changes
+     * fade out towards it, slowly enough that nothing folds over, and the edge itself never moves.
      */
-    fun apply(pts: FloatArray, border: BooleanArray, f: FaceFeatures, values: Map<FaceSlider, Float>) {
+    fun apply(pts: FloatArray, edge: FloatArray, f: FaceFeatures, values: Map<FaceSlider, Float>) {
+        val fadeOver = 0.15f * max(f.faceW, f.faceH)
         val ux = f.ux
         val uy = f.uy
         val vx = -uy
@@ -281,7 +329,8 @@ object FaceAware {
             val reach = max(rx, ry)
             var k = 0
             while (k < pts.size) {
-                if (border[k / 2]) {
+                val e = edge[k / 2]
+                if (e <= 0f) {
                     k += 2
                     continue
                 }
@@ -296,7 +345,9 @@ object FaceAware {
                 val t2 = (a / rx) * (a / rx) + (b / ry) * (b / ry)
                 if (t2 < 1f) {
                     val s = 1f - t2
-                    val w = s * s
+                    // The biggest change is under 0.1 of the face's size, so fading over 0.15 of it
+                    // keeps every point from passing its neighbours or the edge
+                    val w = s * s * min(1f, e / fadeOver)
                     val (na, nb) = change(a, b, w)
                     pts[k] = c.x + na * ux + nb * vx
                     pts[k + 1] = c.y + na * uy + nb * vy
@@ -352,6 +403,12 @@ object FaceAware {
         }
     }
 
-    /** Which mesh points are on its edge (those never move). */
-    fun borderOf(mesh: WarpMesh): BooleanArray = BooleanArray(mesh.count) { k -> mesh.isBorder(k % mesh.stride, k / mesh.stride) }
+    /** How far each mesh point started from the mesh's edge (canvas pixels; 0 on the edge). */
+    fun edgeOf(mesh: WarpMesh): FloatArray = FloatArray(mesh.count) { n ->
+        if (mesh.isBorder(n % mesh.stride, n / mesh.stride)) 0f else {
+            val x = mesh.rest[n * 2]
+            val y = mesh.rest[n * 2 + 1]
+            min(min(x - mesh.area.left, mesh.area.right - x), min(y - mesh.area.top, mesh.area.bottom - y)).coerceAtLeast(0f)
+        }
+    }
 }

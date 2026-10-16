@@ -78,14 +78,41 @@ class WarpSession(
     var faceIndex by mutableIntStateOf(0)
     var faceGroup by mutableStateOf(FaceGroup.EYES)
     internal var faceValues: List<MutableMap<FaceSlider, Float>> = emptyList()
-    private val border by lazy { FaceAware.borderOf(mesh) }
+    private val edge by lazy { FaceAware.edgeOf(mesh) }
+
+    val hasFaceEdits: Boolean get() = faceValues.any { m -> m.values.any { it != 0f } }
+
+    /**
+     * Makes the face sliders' changes part of the mesh itself and sets them back to 0, moving the
+     * faces' feature points along, so brushes (and "Look again") work on what you see.
+     */
+    internal fun bakeFaces() {
+        if (!hasFaceEdits) return
+        // Feature points go through the same changes as the mesh (without fading at its edge)
+        val marks = faces.map { it.points() }
+        val flat = FloatArray(marks.sumOf { it.size } * 2)
+        var n = 0
+        for (list in marks) for (p in list) {
+            flat[n++] = p.x
+            flat[n++] = p.y
+        }
+        val noEdge = FloatArray(flat.size / 2) { Float.MAX_VALUE }
+        outputInto(mesh.pts)
+        faces.forEachIndexed { i, f -> faceValues.getOrNull(i)?.takeIf { m -> m.values.any { it != 0f } }?.let { FaceAware.apply(flat, noEdge, f, it) } }
+        mesh.refreshShift()
+        n = 0
+        faces = faces.mapIndexed { i, f ->
+            f.withPoints(marks[i].map { PointF(flat[n++], flat[n++]) })
+        }
+        faceValues = faces.map { HashMap() }
+    }
 
     /** Where the mesh points end up: Liquify's brushes, then the face sliders (a new array). */
     fun output(): FloatArray = FloatArray(mesh.pts.size).also { outputInto(it) }
 
     fun outputInto(out: FloatArray) {
-        mesh.pts.copyInto(out)
-        faces.forEachIndexed { i, f -> faceValues.getOrNull(i)?.takeIf { m -> m.values.any { it != 0f } }?.let { FaceAware.apply(out, border, f, it) } }
+        if (out !== mesh.pts) mesh.pts.copyInto(out)
+        faces.forEachIndexed { i, f -> faceValues.getOrNull(i)?.takeIf { m -> m.values.any { it != 0f } }?.let { FaceAware.apply(out, edge, f, it) } }
     }
 
     // Two arrays for what's on screen, used in turn (drawing copies the points it's given, so the
@@ -112,15 +139,19 @@ class WarpSession(
         val pinTo: List<PointF>,
         val faceValues: List<Map<FaceSlider, Float>>,
         val stiffness: Float,
+        val faces: List<FaceFeatures>,
+        val facesLooked: Boolean,
     )
 
     internal fun snap() = Snap(
         mesh.pts.copyOf(), ctrl.copyOf(), preset, bend, pinFrom.map { PointF(it.x, it.y) }, pinTo.map { PointF(it.x, it.y) },
-        faceValues.map { HashMap(it) }, stiffness,
+        faceValues.map { HashMap(it) }, stiffness, faces, facesLooked,
     )
 
     internal fun restore(s: Snap) {
-        // (Faces found after this step keep a slot each, at no change)
+        faces = s.faces
+        facesLooked = s.facesLooked
+        if (faceIndex >= faces.size) faceIndex = 0
         faceValues = faces.indices.map { HashMap(s.faceValues.getOrNull(it) ?: emptyMap()) }
         s.pts.copyInto(mesh.pts)
         mesh.refreshShift()
@@ -386,6 +417,12 @@ fun EditorViewModel.warpDown(x: Float, y: Float, reach: Float): Boolean {
         WarpKind.LIQUIFY -> {
             s.pushStep()
             s.changed = false
+            // Brushes work on what you see: the face sliders' changes become part of the mesh first
+            if (s.hasFaceEdits) {
+                s.bakeFaces()
+                s.changed = true
+                s.version++
+            }
             warpCursor = PointF(x, y)
             val t = liquifyTool
             if (t.continuous) {
@@ -595,7 +632,10 @@ fun EditorViewModel.saveLiquifyPrefs() {
 /** Looks for faces in the layer as it is now (on the device). */
 fun EditorViewModel.findFaces() {
     val s = warp?.takeIf { it.kind == WarpKind.LIQUIFY } ?: return
-    val pts = s.output().copyOf()
+    // Slider changes so far become part of the picture, so they aren't lost
+    s.pushStep()
+    s.bakeFaces()
+    val pts = s.output()
     runBusy("Looking for faces…") {
         val found = withContext(Dispatchers.Default) {
             // The picture as it looks now, at the size it's shown while warping
@@ -627,7 +667,6 @@ fun EditorViewModel.findFaces() {
             }
         }
         if (warp !== s) return@runBusy
-        s.pushStep()
         s.faces = found
         s.faceValues = found.map { HashMap() }
         s.faceIndex = 0

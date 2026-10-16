@@ -32,7 +32,7 @@ object Cutout {
     private const val SEGMENT_PX = 2048
 
     /** Detail is refined at most this big (memory: about 10 floats a pixel). */
-    private const val REFINE_PX = 1280
+    private const val REFINE_PX = 1600
 
     /**
      * Returns a 1-byte mask the size of [image] where the alpha is how much of each pixel is
@@ -53,7 +53,9 @@ object Cutout {
         val sw = small.width
         val sh = small.height
         if (small !== image) small.recycle()
-        val box = boundsOf(first, sw, sh, 0.5f) ?: throw CutoutException("Couldn't find a subject on this layer.")
+        // Everything the mask could keep (it keeps down to 0.2), so nothing faint is cut off straight
+        if (boundsOf(first, sw, sh, 0.5f) == null) throw CutoutException("Couldn't find a subject on this layer.")
+        val box = boundsOf(first, sw, sh, 0.2f) ?: throw CutoutException("Couldn't find a subject on this layer.")
         // In the picture's pixels, with room around it
         val fx = w / sw.toFloat()
         val fy = h / sh.toFloat()
@@ -73,7 +75,14 @@ object Cutout {
         // 2) A second look when the subject is clearly smaller than the picture
         val conf: FloatArray = if (max(region.width(), region.height()) < max(w, h) * 0.8f) {
             val cropSmall = scaleDown(crop, SEGMENT_PX)
-            val second = runCatching { segment(cropSmall) }.getOrNull()
+            val second = try {
+                segment(cropSmall).takeIf { c -> c.any { it > 0.5f } }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The first look is good enough
+                null
+            }
             val out = if (second != null) resample(second, cropSmall.width, cropSmall.height, rw, rh) else
                 resampleRegion(first, sw, sh, region, fx, fy, rw, rh)
             if (cropSmall !== crop) cropSmall.recycle()
@@ -304,5 +313,5 @@ object Cutout {
 suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { cont ->
     addOnSuccessListener { cont.resume(it) }
     addOnFailureListener { cont.resumeWithException(it) }
-    addOnCanceledListener { cont.resumeWithException(CutoutException("Background removal was cancelled.")) }
+    addOnCanceledListener { cont.resumeWithException(CutoutException("That was cancelled.")) }
 }
