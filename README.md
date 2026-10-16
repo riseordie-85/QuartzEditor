@@ -29,7 +29,9 @@ selection tools, the shapes, pen drawing/point editing).
   to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
   corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
   layers". **Select subject** / **Select background** (Properties, or ⋮ on the bar) find the subject on the
-  device. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
+  device: a first look at the whole picture, a second, closer look at the area around the subject, then
+  the edge is snapped to the picture's own edges (hair and fine outlines follow what's really there). Remove
+  background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
   Feather, Copy or Cut to a new layer, Delete selected pixels, Fill, Mask from selection, Crop to selection.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
 - **Crop** — drag the corners, edges or the box; pick a shape (Free, Original, 1:1, 4:3, 3:4, 16:9, 9:16).
@@ -51,6 +53,10 @@ selection tools, the shapes, pen drawing/point editing).
   - **Liquify** (Ctrl+Shift+X): Push, Bloat, Pucker, Twirl both ways, Smooth and Restore brushes, with size
     ([ and ]) and strength. Bloat, Pucker and Twirl keep working while you hold still. The picture's edges
     stay put, so an edge-to-edge photo never pulls in empty space.
+    **Face-aware**: "Find faces" looks for faces on the device (through Google Play services), then sliders
+    reshape each face: Eyes (size, height, width, tilt, distance), Nose (height, width), Mouth (smile,
+    upper and lower lip, width, height) and Face shape (forehead, chin height, jawline, face width). With
+    several faces, pick which one; the brushes and the sliders work together.
 - **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
 - **Paint bucket / Pattern fill** — tap to fill matching pixels with the foreground color, or with a
   pattern (tap the tool again, or hold it, to switch). Tolerance, "only touching pixels" and "look at all

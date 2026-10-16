@@ -2,7 +2,9 @@ package com.tim.quartzeditor.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -24,6 +26,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tim.quartzeditor.engine.FaceGroup
+import com.tim.quartzeditor.engine.FaceSlider
 import com.tim.quartzeditor.engine.LiquifyTool
 import com.tim.quartzeditor.engine.WarpKind
 import com.tim.quartzeditor.engine.WarpPreset
@@ -140,7 +144,54 @@ fun WarpOptions(vm: EditorViewModel) {
                 onDone = { vm.saveLiquifyPrefs() },
             )
             Text("[ and ] change the size on a keyboard.", color = Q.textDim, fontSize = 11.sp)
+            Spacer(Modifier.height(12.dp))
+            FaceControls(vm, w)
         }
     }
     Spacer(Modifier.height(10.dp))
+}
+
+/** Face-aware Liquify: find faces, then reshape the eyes, nose, mouth and face with sliders. */
+@Composable
+private fun FaceControls(vm: EditorViewModel, w: WarpSession) {
+    Title("Face-aware")
+    Spacer(Modifier.height(4.dp))
+    if (!w.facesLooked || w.faces.isEmpty()) {
+        Text(
+            if (w.facesLooked) "No faces found on this layer." else "Finds faces on your device (it may download once through Google Play services).",
+            color = Q.textDim, fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        SmallButton(if (w.facesLooked) "Look again" else "Find faces", primary = !w.facesLooked) { vm.findFaces() }
+        return
+    }
+    if (w.faces.size > 1) {
+        ChipRow(w.faces.indices.map { "Face ${it + 1}" }, w.faceIndex) { w.faceIndex = it; w.version++ }
+        Spacer(Modifier.height(6.dp))
+    }
+    ChipRow(FaceGroup.entries.map { it.label }, w.faceGroup.ordinal) { w.faceGroup = FaceGroup.entries[it] }
+    Spacer(Modifier.height(6.dp))
+    val values = w.faceValues.getOrNull(w.faceIndex) ?: return
+    // One undo step per slide
+    val started = remember { booleanArrayOf(false) }
+    FaceSlider.entries.filter { it.group == w.faceGroup }.forEach { f ->
+        val v = values[f] ?: 0f
+        PanelSlider(
+            f.label, v, -1f..1f, "${(v * 100).roundToInt()}",
+            onChange = { x ->
+                if (!started[0]) {
+                    started[0] = true
+                    vm.beginFaceSlide()
+                }
+                // A little catch at zero
+                vm.setFaceValue(f, if (kotlin.math.abs(x) < 0.03f) 0f else x)
+            },
+            onDone = { started[0] = false },
+        )
+    }
+    Spacer(Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SmallButton("Reset face") { vm.resetFace() }
+        SmallButton("Look again") { vm.findFaces() }
+    }
 }

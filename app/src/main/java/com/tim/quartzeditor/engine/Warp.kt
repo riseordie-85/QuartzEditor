@@ -445,8 +445,10 @@ object WarpMath {
     }
 
     /** Whether the warp moved things by less than a tenth of a pixel everywhere. */
-    fun nearlyUnchanged(mesh: WarpMesh): Boolean {
-        for (k in mesh.pts.indices) if (abs(mesh.pts[k] - mesh.rest[k]) > 0.1f) return false
+    fun nearlyUnchanged(mesh: WarpMesh): Boolean = nearlyUnchanged(mesh.pts, mesh.rest)
+
+    fun nearlyUnchanged(pts: FloatArray, rest: FloatArray): Boolean {
+        for (k in pts.indices) if (abs(pts[k] - rest[k]) > 0.1f) return false
         return true
     }
 }

@@ -62,4 +62,6 @@ dependencies {
 
     // Background removal (on-device, delivered through Google Play services)
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    // Face-aware Liquify (runs in Google Play services, like subject segmentation)
+    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
 }

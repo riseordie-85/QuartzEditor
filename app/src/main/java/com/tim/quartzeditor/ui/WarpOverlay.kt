@@ -90,6 +90,14 @@ internal fun DrawScope.drawWarpOverlay(vm: EditorViewModel, w: WarpSession, s: F
             }
         }
         WarpKind.LIQUIFY -> {
+            // The face being reshaped, when there are several
+            if (w.faces.size > 1) w.faces.getOrNull(w.faceIndex)?.let { f ->
+                val a = sc(f.box.left, f.box.top)
+                drawRect(
+                    Color.White.copy(alpha = 0.6f), a, androidx.compose.ui.geometry.Size(f.box.width() * s, f.box.height() * s),
+                    style = Stroke(line, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))),
+                )
+            }
             vm.warpCursor?.let { c ->
                 val o = sc(c.x, c.y)
                 val r = vm.liquifySize / 2f * s

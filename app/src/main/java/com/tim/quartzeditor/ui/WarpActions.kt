@@ -14,6 +14,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
+import com.tim.quartzeditor.engine.FaceAware
+import com.tim.quartzeditor.engine.FaceFeatures
+import com.tim.quartzeditor.engine.FaceGroup
+import com.tim.quartzeditor.engine.FaceSlider
 import com.tim.quartzeditor.engine.Layer
 import com.tim.quartzeditor.engine.LayerPreview
 import com.tim.quartzeditor.engine.LiquifyTool
@@ -65,6 +69,22 @@ class WarpSession(
     var pinSelected by mutableIntStateOf(-1)
     var stiffness by mutableFloatStateOf(1f)
 
+    // Face-aware Liquify: the faces found, the one being changed, and each face's slider values
+    var faces by mutableStateOf<List<FaceFeatures>>(emptyList())
+    var facesLooked by mutableStateOf(false)
+    var faceIndex by mutableIntStateOf(0)
+    var faceGroup by mutableStateOf(FaceGroup.EYES)
+    internal var faceValues: List<MutableMap<FaceSlider, Float>> = emptyList()
+    private val border by lazy { FaceAware.borderOf(mesh) }
+
+    /** Where the mesh points end up: Liquify's brushes, then the face sliders. */
+    fun output(): FloatArray {
+        if (faceValues.all { m -> m.values.all { it == 0f } }) return mesh.pts
+        val out = mesh.pts.copyOf()
+        faces.forEachIndexed { i, f -> faceValues.getOrNull(i)?.takeIf { m -> m.values.any { it != 0f } }?.let { FaceAware.apply(out, border, f, it) } }
+        return out
+    }
+
     /** Earlier states, for undo within the warp. */
     internal val steps = ArrayDeque<Snap>()
 
@@ -75,11 +95,17 @@ class WarpSession(
         val bend: Float,
         val pinFrom: List<PointF>,
         val pinTo: List<PointF>,
+        val faceValues: List<Map<FaceSlider, Float>>,
     )
 
-    internal fun snap() = Snap(mesh.pts.copyOf(), ctrl.copyOf(), preset, bend, pinFrom.map { PointF(it.x, it.y) }, pinTo.map { PointF(it.x, it.y) })
+    internal fun snap() = Snap(
+        mesh.pts.copyOf(), ctrl.copyOf(), preset, bend, pinFrom.map { PointF(it.x, it.y) }, pinTo.map { PointF(it.x, it.y) },
+        faceValues.map { HashMap(it) },
+    )
 
     internal fun restore(s: Snap) {
+        // (Faces found after this step keep a slot each, at no change)
+        faceValues = faces.indices.map { HashMap(s.faceValues.getOrNull(it) ?: emptyMap()) }
         s.pts.copyInto(mesh.pts)
         ctrl = s.ctrl.copyOf()
         preset = s.preset
@@ -208,7 +234,7 @@ fun EditorViewModel.beginWarp() {
 
 internal fun EditorViewModel.showWarp(s: WarpSession) {
     s.version++
-    preview = LayerPreview(s.layer.id, mesh = MeshPreview(s.proxy, s.mesh.cols, s.mesh.rows, s.mesh.pts.copyOf()))
+    preview = LayerPreview(s.layer.id, mesh = MeshPreview(s.proxy, s.mesh.cols, s.mesh.rows, s.output().copyOf()))
     doc?.invalidate()
 }
 
@@ -229,12 +255,12 @@ fun EditorViewModel.applyWarp(onDone: () -> Unit = {}) {
     if (busy != null) return
     liquifyJob?.cancel()
     warpCursor = null
-    if (WarpMath.nearlyUnchanged(s.mesh)) {
+    val pts = s.output().copyOf()
+    if (WarpMath.nearlyUnchanged(pts, s.mesh.rest)) {
         cancelWarp()
         onDone()
         return
     }
-    val pts = s.mesh.pts.copyOf()
     val cols = s.mesh.cols
     val rows = s.mesh.rows
     runBusy("${s.kind.label}…", onDone) {
@@ -277,9 +303,10 @@ fun EditorViewModel.warpUndo(): Boolean {
 /** Back to how the layer was (the warp stays open). */
 fun EditorViewModel.resetWarp() {
     val s = warp ?: return
-    if (WarpMath.nearlyUnchanged(s.mesh) && s.pinTo.isEmpty()) return
+    if (WarpMath.nearlyUnchanged(s.output(), s.mesh.rest) && s.pinTo.isEmpty()) return
     s.pushStep()
     s.mesh.rest.copyInto(s.mesh.pts)
+    s.faceValues = s.faces.map { HashMap() }
     s.ctrl = WarpMath.restControls(s.mesh.area)
     s.preset = WarpPreset.CUSTOM
     s.pinFrom.clear()
@@ -519,4 +546,79 @@ fun EditorViewModel.chooseLiquifyTool(t: LiquifyTool) {
 
 fun EditorViewModel.saveLiquifyPrefs() {
     prefs.edit().putFloat("liquifySize", liquifySize).putFloat("liquifyStrength", liquifyStrength).apply()
+}
+
+// ===================================================================== face-aware Liquify
+
+/** Looks for faces in the layer as it is now (on the device). */
+fun EditorViewModel.findFaces() {
+    val s = warp?.takeIf { it.kind == WarpKind.LIQUIFY } ?: return
+    val pts = s.output().copyOf()
+    runBusy("Looking for faces…") {
+        val found = withContext(Dispatchers.Default) {
+            // The picture as it looks now, at the size it's shown while warping
+            var l = Float.MAX_VALUE
+            var t = Float.MAX_VALUE
+            var r = -Float.MAX_VALUE
+            var b = -Float.MAX_VALUE
+            var k = 0
+            while (k < pts.size) {
+                l = min(l, pts[k]); r = max(r, pts[k])
+                t = min(t, pts[k + 1]); b = max(b, pts[k + 1])
+                k += 2
+            }
+            val scale = s.proxy.width / s.src.width().toFloat()
+            val w = ((r - l) * scale).roundToInt().coerceIn(1, 4096)
+            val h = ((b - t) * scale).roundToInt().coerceIn(1, 4096)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            Canvas(bmp).apply {
+                // Faces are easier to find on white than on see-through
+                drawColor(android.graphics.Color.WHITE)
+                scale(scale, scale)
+                translate(-l, -t)
+                WarpMath.draw(this, s.proxy, s.mesh.cols, s.mesh.rows, pts)
+            }
+            try {
+                FaceAware.find(bmp, 1f / scale, l, t)
+            } finally {
+                bmp.recycle()
+            }
+        }
+        if (warp !== s) return@runBusy
+        s.pushStep()
+        s.faces = found
+        s.faceValues = found.map { HashMap() }
+        s.faceIndex = 0
+        s.facesLooked = true
+        showWarp(s)
+        toast(
+            when (found.size) {
+                0 -> "No faces found"
+                1 -> "Found a face"
+                else -> "Found ${found.size} faces"
+            }
+        )
+    }
+}
+
+/** A face slider moving (−1..1) for the face being changed. Call [beginFaceSlide] when it starts. */
+fun EditorViewModel.setFaceValue(slider: FaceSlider, value: Float) {
+    val s = warp ?: return
+    val m = s.faceValues.getOrNull(s.faceIndex) ?: return
+    m[slider] = value
+    showWarp(s)
+}
+
+fun EditorViewModel.beginFaceSlide() {
+    warp?.pushStep()
+}
+
+/** Back to how the face being changed was before its sliders moved. */
+fun EditorViewModel.resetFace() {
+    val s = warp ?: return
+    val m = s.faceValues.getOrNull(s.faceIndex) ?: return
+    if (m.values.all { it == 0f }) return
+    s.pushStep()
+    m.clear()
+    showWarp(s)
 }
