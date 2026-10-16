@@ -65,27 +65,27 @@ fun GradientsPanel(vm: EditorViewModel) {
         color = Q.textDim, fontSize = 12.sp,
     )
     Spacer(Modifier.height(8.dp))
+    // The gradient being made or changed (null: none)
+    var editor by remember { mutableStateOf<Pair<GradientPreset, GradientPreset?>?>(null) }
+    val all = vm.allGradients
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), maxItemsInEachRow = 4) {
-        GradientPreset.ALL.forEachIndexed { i, p ->
-            val cols = p.resolve(vm.foreground, vm.background).map { Color(it) }
-            val sel = i == vm.gradientPreset
-            Box(
-                Modifier
-                    .size(width = 62.dp, height = 30.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .checker(8f)
-                    .background(Brush.horizontalGradient(if (cols.size >= 2) cols else listOf(Color.Black, Color.White)))
-                    .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
-                    .clickable {
-                        vm.gradientPreset = i
-                        vm.saveGradientPrefs()
-                        if (vm.tool != Tool.GRADIENT) vm.onToolButton(Tool.GRADIENT)
-                    }
-            )
+        all.forEachIndexed { i, p ->
+            GradientTile(vm, p, i == vm.gradientPreset, 62.dp, 30.dp, onPick = {
+                vm.gradientPreset = i
+                vm.saveGradientPrefs()
+                if (vm.tool != Tool.GRADIENT) vm.onToolButton(Tool.GRADIENT)
+            }, onEdit = { g -> editor = g to g })
         }
+        // A new one starts from the gradient picked now
+        NewGradientTile(62.dp, 30.dp) { editor = all.getOrElse(vm.gradientPreset) { GradientPreset.ALL[0] } to null }
     }
     Spacer(Modifier.height(4.dp))
-    Text(GradientPreset.ALL.getOrNull(vm.gradientPreset)?.name ?: "", color = Q.text, fontSize = 12.sp)
+    val current = all.getOrNull(vm.gradientPreset)
+    Text(
+        (current?.name ?: "") + if (current?.custom == true) " · hold it to edit or delete" else "",
+        color = Q.text, fontSize = 12.sp,
+    )
+    editor?.let { (start, editing) -> GradientEditorDialog(vm, start, editing, onDone = { editor = null }) }
     Spacer(Modifier.height(8.dp))
     GradientOptions(vm)
 }

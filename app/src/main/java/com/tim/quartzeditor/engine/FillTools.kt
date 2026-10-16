@@ -19,8 +19,17 @@ import kotlin.math.roundToInt
 
 enum class GradientType(val label: String) { LINEAR("Linear"), RADIAL("Radial"), REFLECTED("Reflected") }
 
-/** A ready-made gradient. [dynamic] ones use your foreground/background colors. */
-data class GradientPreset(val name: String, val colors: List<Int>, val dynamic: Dynamic = Dynamic.NONE) {
+/**
+ * A gradient to pick: ready-made ([dynamic] ones use your foreground/background colors), or one
+ * you made ([custom]), whose colors can sit anywhere along it ([positions] 0..1; null = evenly).
+ */
+data class GradientPreset(
+    val name: String,
+    val colors: List<Int>,
+    val dynamic: Dynamic = Dynamic.NONE,
+    val positions: List<Float>? = null,
+    val custom: Boolean = false,
+) {
     enum class Dynamic { NONE, FG_BG, FG_TRANSPARENT }
 
     fun resolve(fg: Int, bg: Int): List<Int> = when (dynamic) {
@@ -57,23 +66,35 @@ data class GradientSpec(
     val type: GradientType = GradientType.LINEAR,
     val opacity: Float = 1f,
     val reverse: Boolean = false,
+    /** Where each color sits, 0..1 (null: evenly spaced). */
+    val positions: List<Float>? = null,
 )
 
 object GradientPainter {
 
     fun shader(spec: GradientSpec, start: PointF, end: PointF, map: (Int) -> Int = { it }): Shader {
         var cols = spec.colors.map(map)
-        if (cols.size < 2) cols = listOf(cols.firstOrNull() ?: Color.BLACK, cols.firstOrNull() ?: Color.BLACK)
-        if (spec.reverse) cols = cols.reversed()
+        var pos = spec.positions?.takeIf { it.size == cols.size }
+        if (cols.size < 2) {
+            cols = listOf(cols.firstOrNull() ?: Color.BLACK, cols.firstOrNull() ?: Color.BLACK)
+            pos = null
+        }
+        if (spec.reverse) {
+            cols = cols.reversed()
+            pos = pos?.reversed()?.map { 1f - it }
+        }
+        // Android wants the positions in order
+        pos = pos?.let { p -> p.runningReduce { a, b -> max(a, b) }.map { it.coerceIn(0f, 1f) } }
         val arr = cols.toIntArray()
         val len = max(1f, hypot(end.x - start.x, end.y - start.y))
         return when (spec.type) {
-            GradientType.LINEAR -> LinearGradient(start.x, start.y, end.x, end.y, arr, null, Shader.TileMode.CLAMP)
-            GradientType.RADIAL -> RadialGradient(start.x, start.y, len, arr, null, Shader.TileMode.CLAMP)
+            GradientType.LINEAR -> LinearGradient(start.x, start.y, end.x, end.y, arr, pos?.toFloatArray(), Shader.TileMode.CLAMP)
+            GradientType.RADIAL -> RadialGradient(start.x, start.y, len, arr, pos?.toFloatArray(), Shader.TileMode.CLAMP)
             GradientType.REFLECTED -> {
                 // Same colors both ways from the start point
                 val mirrored = (cols.reversed() + cols.drop(1)).toIntArray()
-                LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, null, Shader.TileMode.CLAMP)
+                val mp = pos?.let { p -> (p.reversed().map { 0.5f - it / 2f } + p.drop(1).map { 0.5f + it / 2f }).toFloatArray() }
+                LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, mp, Shader.TileMode.CLAMP)
             }
         }
     }

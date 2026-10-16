@@ -166,6 +166,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal var liquifyJob: Job? = null
 
     var gradientPreset by mutableIntStateOf(prefs.getInt("gradPreset", 0))
+    /** Gradients you made (GradientEditor.kt); they come after the ready-made ones. */
+    var userGradients by mutableStateOf(loadUserGradients(prefs))
     var gradientType by mutableStateOf(com.tim.quartzeditor.engine.GradientType.entries.getOrElse(prefs.getInt("gradType", 0)) { com.tim.quartzeditor.engine.GradientType.LINEAR })
     var gradientReverse by mutableStateOf(prefs.getBoolean("gradReverse", false))
     var gradientOpacity by mutableFloatStateOf(prefs.getFloat("gradOpacity", 1f))

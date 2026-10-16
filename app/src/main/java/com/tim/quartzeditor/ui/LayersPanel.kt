@@ -330,6 +330,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     item("Put in a new folder") { vm.groupActive() }()
                     if (active != null && !active.isGroup) item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }()
                     if (active?.isVector == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
+                    if (canApplyStyle(active)) item("Apply layer style") { vm.applyLayerStyle(active!!.id) }()
                     item("Flatten image") { vm.flattenImage() }()
                     HorizontalDivider()
                     item("Place image as layer…") { onPlaceImage() }()
@@ -498,6 +499,7 @@ private fun LayerRow(
         item("Copy layer style", enabled = layer.hasContent) { vm.copyLayerStyle(layer.id) }()
         item(if (ids.size > 1) "Paste layer style (${ids.size} layers)" else "Paste layer style", enabled = vm.copiedStyle != null) { vm.pasteLayerStyle(ids) }()
         item("Save layer style as preset…", enabled = p.style.any) { onSavePreset() }()
+        item("Apply layer style", enabled = canApplyStyle(layer)) { vm.applyLayerStyle(layer.id) }()
         item("Clear layer style", enabled = p.style.any) { vm.applyStyleTo(ids, "Clear layer style", com.tim.quartzeditor.engine.LayerStyle()) }()
         HorizontalDivider()
         if (ids.size > 1) {

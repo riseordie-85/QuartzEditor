@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -194,20 +195,22 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
 private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
     val g = st.gradientFill
     fun LayerStyle.gf(change: GradientFx.() -> GradientFx): LayerStyle = copy(gradientFill = gradientFill.change().copy(on = true))
+    var editor by remember { mutableStateOf<Pair<GradientPreset, GradientPreset?>?>(null) }
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        GradientPreset.ALL.forEach { p ->
+        vm.allGradients.forEach { p ->
             val cols = p.resolve(vm.foreground, vm.background)
-            val sel = cols == g.colors
-            Box(
-                Modifier
-                    .size(width = 52.dp, height = 26.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .checker(8f)
-                    .background(androidx.compose.ui.graphics.Brush.horizontalGradient(cols.map { Color(it) }.let { if (it.size >= 2) it else listOf(Color.Black, Color.White) }))
-                    .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
-                    .clickable { vm.setStyle("Gradient fill") { it.gf { copy(colors = cols) } } }
-            )
+            val sel = cols == g.colors && (p.positions ?: emptyList<Float>()) == (g.positions ?: emptyList<Float>())
+            GradientTile(vm, p, sel, 52.dp, 26.dp, onPick = {
+                vm.setStyle("Gradient fill") { it.gf { copy(colors = cols, positions = p.positions) } }
+            }, onEdit = { e -> editor = e to e })
         }
+        // A new one starts from the layer's gradient fill
+        NewGradientTile(52.dp, 26.dp) { editor = GradientPreset("Gradient", g.colors, positions = g.positions) to null }
+    }
+    editor?.let { (start, editing) ->
+        GradientEditorDialog(vm, start, editing, onDone = { editor = null }, onSaved = { saved ->
+            vm.setStyle("Gradient fill") { it.gf { copy(colors = saved.colors, positions = saved.positions) } }
+        })
     }
     Spacer(Modifier.height(6.dp))
     ChipRow(GradientType.entries.map { it.label }, g.type.ordinal) { i -> vm.setStyle("Gradient fill type") { it.gf { copy(type = GradientType.entries[i]) } } }

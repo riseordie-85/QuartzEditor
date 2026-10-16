@@ -67,7 +67,10 @@ selection tools, the shapes, pen drawing/point editing).
   "Fill selection" / "Fill layer" fills with the pattern straight away (also in the Select ⋮ and
   Layers ⋮ menus). On a mask, light parts of the pattern show and dark parts hide.
 - **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
-  Linear / Radial / Reflected, reverse and opacity are in Properties.
+  Linear / Radial / Reflected, reverse and opacity are in Properties. **+** makes your own gradient
+  (starting from the one picked): tap the bar to add a color, drag the markers to move them, tap one to
+  change its color, location or opacity (see-through stops work), Reverse, Even spacing, a name. Hold one of
+  yours to edit or delete it. Your gradients are also in Layer Style → Gradient Fill (with its own **+**).
 - **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from
   where you start dragging to where you stop) on a new shape layer; tap the tool again for the next shape,
   or hold it for the list. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
@@ -146,7 +149,9 @@ over the picture (from the bottom of the Layers panel), so you can see the resul
   angle and altitude, highlight and shadow colors), Stroke (outside, inside, center), Drop Shadow, Inner
   Shadow, Outer Glow, Color Overlay.
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
-  fades only the layer's own pixels. Merge down, flatten and export bake them in.
+  fades only the layer's own pixels. Merge down, flatten and export bake them in. **Apply layer style**
+  (Layers ⋮, next to Rasterize layer, or hold the layer) bakes them into the layer's own pixels and clears
+  the style; shapes and text become pixel layers. Opacity, blend mode, mask and clipping stay as they are.
 - **Adjustments** — exposure, brightness, contrast, highlights, shadows, saturation, vibrance, warmth, tint,
   sharpness, vignette, grain. On a pixel layer: live preview, then Apply (closing the window cancels). On an
   adjustment layer they stay editable.

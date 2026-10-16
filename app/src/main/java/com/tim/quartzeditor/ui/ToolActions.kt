@@ -97,8 +97,8 @@ internal suspend fun EditorViewModel.paintTilesNow(
 // ===================================================================== fills and gradients
 
 fun EditorViewModel.gradientSpec(): GradientSpec {
-    val preset = GradientPreset.ALL.getOrElse(gradientPreset) { GradientPreset.ALL[0] }
-    return GradientSpec(preset.resolve(foreground, background), gradientType, gradientOpacity, gradientReverse)
+    val preset = allGradients.getOrElse(gradientPreset) { GradientPreset.ALL[0] }
+    return GradientSpec(preset.resolve(foreground, background), gradientType, gradientOpacity, gradientReverse, preset.positions)
 }
 
 fun EditorViewModel.saveGradientPrefs() {

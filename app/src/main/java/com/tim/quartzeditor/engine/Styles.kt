@@ -108,6 +108,8 @@ data class GradientFx(
     val scale: Float = 1f,
     val reverse: Boolean = false,
     val opacity: Float = 1f,
+    /** Where each color sits, 0..1 (null: evenly spaced). */
+    val positions: List<Float>? = null,
 )
 
 /**
@@ -190,7 +192,8 @@ data class LayerStyle(
         .put("gradientFill", JSONObject().put("on", gradientFill.on)
             .put("colors", org.json.JSONArray().also { a -> gradientFill.colors.forEach { a.put(it.toLong() and 0xFFFFFFFFL) } })
             .put("type", gradientFill.type.name).put("angle", gradientFill.angle.toDouble()).put("scale", gradientFill.scale.toDouble())
-            .put("reverse", gradientFill.reverse).put("opacity", gradientFill.opacity.toDouble()))
+            .put("reverse", gradientFill.reverse).put("opacity", gradientFill.opacity.toDouble())
+            .also { o -> gradientFill.positions?.let { ps -> o.put("positions", org.json.JSONArray().also { a -> ps.forEach { a.put(it.toDouble()) } }) } })
         .put("longShadow", JSONObject().put("on", longShadow.on).put("color", longShadow.color).put("opacity", longShadow.opacity.toDouble())
             .put("angle", longShadow.angle.toDouble()).put("length", longShadow.length.toDouble()).put("fade", longShadow.fade))
 
@@ -239,7 +242,8 @@ data class LayerStyle(
                     gf.optJSONArray("colors")?.let { a -> List(a.length()) { a.optLong(it).toInt() } }?.takeIf { it.size >= 2 } ?: dg.colors,
                     GradientType.entries.firstOrNull { it.name == gf.optString("type") } ?: GradientType.LINEAR,
                     gf.f("angle", dg.angle), gf.f("scale", dg.scale), gf.optBoolean("reverse"), gf.f("opacity", dg.opacity),
-                ),
+                    gf.optJSONArray("positions")?.let { a -> List(a.length()) { a.optDouble(it).toFloat() } },
+                ).let { g -> if (g.positions != null && g.positions.size != g.colors.size) g.copy(positions = null) else g },
                 longShadow = if (lsh == null) dl else LongShadowFx(
                     lsh.optBoolean("on"), lsh.optInt("color", dl.color), lsh.f("opacity", dl.opacity),
                     lsh.f("angle", dl.angle), lsh.f("length", dl.length), lsh.optBoolean("fade", true),
@@ -499,7 +503,7 @@ object Effects {
         val extent = (kotlin.math.abs(area.width() * ux) + kotlin.math.abs(area.height() * uy)) * g.scale.coerceIn(0.05f, 5f)
         val cx = area.centerX()
         val cy = area.centerY()
-        val spec = GradientSpec(g.colors, g.type, 1f, g.reverse)
+        val spec = GradientSpec(g.colors, g.type, 1f, g.reverse, g.positions)
         val (start, end) = when (g.type) {
             GradientType.LINEAR -> android.graphics.PointF(cx - ux * extent / 2f, cy - uy * extent / 2f) to android.graphics.PointF(cx + ux * extent / 2f, cy + uy * extent / 2f)
             else -> android.graphics.PointF(cx, cy) to android.graphics.PointF(cx + ux * extent / 2f, cy + uy * extent / 2f)
