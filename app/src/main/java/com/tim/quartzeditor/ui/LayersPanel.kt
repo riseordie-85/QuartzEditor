@@ -137,8 +137,13 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
 
         // Blend mode and opacity
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BlendMenu(active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f)) { b ->
-                active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b) } }
+            val folder = active?.isGroup == true
+            BlendMenu(
+                active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f),
+                passThrough = if (folder) active?.props?.passThrough == true else null,
+                onPassThrough = { active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(passThrough = true) } } },
+            ) { b ->
+                active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b, passThrough = false) } }
             }
             Spacer(Modifier.width(8.dp))
             PercentChip("Opacity", active?.props?.opacity ?: 1f,
@@ -491,7 +496,8 @@ private fun LayerRow(
             val notes = buildList {
                 if (layer.isShape) add("Shape")
                 if (clipBase != null) add("Clipped to ${clipBase.props.name}")
-                if (p.blend != Blend.NORMAL) add(p.blend.label)
+                if (p.blend != Blend.NORMAL && !(layer.isGroup && p.passThrough)) add(p.blend.label)
+                if (layer.isGroup && !p.passThrough && p.blend == Blend.NORMAL) add("Normal")
                 if (p.opacity < 0.995f) add("${(p.opacity * 100).roundToInt()}%")
                 if (p.style.any) add("fx")
                 if (p.locked) add("Locked")
@@ -663,8 +669,12 @@ private fun LockToggle(icon: ImageVector, label: String, on: Boolean, onClick: (
     }
 }
 
+/**
+ * [passThrough]: for a folder, whether it's Pass Through (offered first, as in Photoshop); null for
+ * other layers.
+ */
 @Composable
-private fun BlendMenu(current: Blend, modifier: Modifier, onPick: (Blend) -> Unit) {
+private fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean? = null, onPassThrough: () -> Unit = {}, onPick: (Blend) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         Row(
@@ -676,10 +686,21 @@ private fun BlendMenu(current: Blend, modifier: Modifier, onPick: (Blend) -> Uni
                 .clickable { open = true }
                 .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         ) {
-            Text(current.label, color = Q.text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (passThrough == true) "Pass Through" else current.label, color = Q.text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Icon(Icons.Filled.ArrowDropDown, contentDescription = "Blend mode", tint = Q.text)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (passThrough != null) {
+                DropdownMenuItem(
+                    text = { Text("Pass Through") },
+                    leadingIcon = { if (passThrough) Icon(Icons.Filled.Check, contentDescription = null) else Spacer(Modifier.size(24.dp)) },
+                    onClick = {
+                        open = false
+                        onPassThrough()
+                    },
+                )
+                HorizontalDivider()
+            }
             var lastGroup = 0
             Blend.entries.forEach { b ->
                 if (b.group != lastGroup) {
@@ -688,7 +709,7 @@ private fun BlendMenu(current: Blend, modifier: Modifier, onPick: (Blend) -> Uni
                 }
                 DropdownMenuItem(
                     text = { Text(b.label) },
-                    leadingIcon = { if (b == current) Icon(Icons.Filled.Check, contentDescription = null) else Spacer(Modifier.size(24.dp)) },
+                    leadingIcon = { if (b == current && passThrough != true) Icon(Icons.Filled.Check, contentDescription = null) else Spacer(Modifier.size(24.dp)) },
                     onClick = {
                         open = false
                         onPick(b)

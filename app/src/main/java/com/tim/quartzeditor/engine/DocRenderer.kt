@@ -195,7 +195,7 @@ object DocRenderer {
         val shown: List<Layer>
         val ctx: Ctx
         if (regroup) {
-            val (s, clips) = clipGroups(list)
+            val (s, clips) = passThrough(list, ctx0)
             shown = s
             ctx = ctx0.with(clips = clips, clipBase = null)
         } else {
@@ -209,6 +209,31 @@ object DocRenderer {
         }
         val v = ctx.view
         if (v != null && canvas.isHardwareAccelerated && ctx.viewW > 0 && ctx.viewH > 0) drawListGpu(canvas, shown, ctx, v) else drawListPicture(canvas, shown, ctx)
+    }
+
+    /**
+     * [clipGroups], with Pass Through folders opened up: their layers are drawn in among the layers
+     * around them, so their blend modes and adjustment layers reach the layers below the folder
+     * (like Photoshop). A folder with less than full opacity or a mask is still drawn as one picture.
+     */
+    private fun passThrough(list: List<Layer>, ctx: Ctx): Pair<List<Layer>, Map<Long, List<Layer>>> {
+        val (shown, clips) = clipGroups(list)
+        val doc = ctx.doc ?: return shown to clips
+        fun opens(l: Layer) = l.isGroup && l.props.passThrough && !l.maskActive &&
+            l.props.opacity * l.props.fill >= 0.999f && clips[l.id].isNullOrEmpty() && ctx.preview?.of(l.id) == null
+        if (shown.none { opens(it) }) return shown to clips
+        val out = ArrayList<Layer>(shown.size + 8)
+        val all = HashMap(clips)
+        for (l in shown) {
+            if (!opens(l)) {
+                out.add(l)
+                continue
+            }
+            val (inner, innerClips) = passThrough(doc.children(l.id), ctx)
+            out.addAll(inner)
+            all.putAll(innerClips)
+        }
+        return out to all
     }
 
     private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx) {
@@ -263,10 +288,11 @@ object DocRenderer {
                 if (alpha <= 0f) return
                 val dragX = ctx.preview?.of(l.id)?.dragX ?: 0f
                 val dragY = ctx.preview?.of(l.id)?.dragY ?: 0f
-                // A folder is drawn as one picture, then blended (its layers' blend modes stay inside it)
+                // A folder is drawn as one picture, then blended (its layers' blend modes stay inside it).
+                // Pass Through folders only get here with less than full opacity or a mask: blended Normally.
                 canvas.saveLayer(ctx.bounds, Paint().apply {
                     this.alpha = (alpha * 255).roundToInt()
-                    blendMode = p.blend.mode
+                    blendMode = if (p.passThrough) Blend.NORMAL.mode else p.blend.mode
                 })
                 canvas.save()
                 canvas.translate(dragX, dragY)

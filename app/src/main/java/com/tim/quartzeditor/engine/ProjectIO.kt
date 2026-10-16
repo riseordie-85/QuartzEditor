@@ -135,6 +135,7 @@ object ProjectIO {
                     .put("kind", l.kind.name)
                     .put("parent", p.parent)
                     .put("clip", p.clip)
+                    .put("passThrough", p.passThrough)
                     .put("collapsed", l.collapsed)
                     .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
                     .also { o -> p.shape?.let { o.put("shape", it.toJson()) } }
@@ -227,6 +228,7 @@ object ProjectIO {
                 shape = o.optJSONObject("shape")?.let { runCatching { ShapeSpec.fromJson(it) }.getOrNull() },
                 text = o.optJSONObject("text")?.let { runCatching { TextSpec.fromJson(it) }.getOrNull() },
                 clip = o.optBoolean("clip", false),
+                passThrough = o.optBoolean("passThrough", true),
             )
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null

@@ -143,6 +143,10 @@ Only **Color**, **Properties** and **Layers** live in the column.
     to go back to one.
   - **Folders**: the arrow folds/unfolds them. Drag a layer onto a folder's row (it lights up) to put it
     inside, or just under the folder's row; drag it below the folder's contents to take it out.
+    Folders are **Pass Through** by default (top of the blend list): Multiply, Overlay and adjustment
+    layers inside them reach the layers below the folder too. Pick any other blend mode to keep what's
+    inside to itself (the folder is drawn as one picture, then blended). A Pass Through folder with
+    less than 100% opacity or a mask is drawn as one picture (blended Normally).
   - **Clipping masks**: ⋮ → **Clip to layer below** (or Ctrl+Alt+G) shows a layer only where the layer
     under it has pixels: a texture or photo inside text, a color only on one object, an adjustment that
     only changes one layer. Clipped layers show an arrow; stack several on one base. The base's opacity

@@ -326,7 +326,7 @@ fun EditorViewModel.mergeFolder() {
         stackEdit("Merge folder") {
             val range = d.block(g)
             val p = g.props
-            val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = p.blend, parent = p.parent, clip = p.clip), merged)
+            val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = if (p.passThrough) com.tim.quartzeditor.engine.Blend.NORMAL else p.blend, parent = p.parent, clip = p.clip), merged)
             for (k in range.reversed()) d.layers.removeAt(k)
             d.layers.add(range.first, l)
             d.activeId = l.id

@@ -75,6 +75,12 @@ data class LayerProps(
      * pixel, shape or text layer in the same folder) has pixels.
      */
     val clip: Boolean = false,
+    /**
+     * Folders: Pass Through (the default, like Photoshop): the layers inside blend with everything
+     * below the folder, not just with each other. Off: the folder is drawn as one picture and then
+     * blended with [blend].
+     */
+    val passThrough: Boolean = true,
 )
 
 /**
