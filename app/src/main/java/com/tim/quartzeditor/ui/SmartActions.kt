@@ -56,6 +56,9 @@ class EditorTab(val doc: Doc, var history: History, val parent: EditorTab?, val 
     var committedVersion = 0
 
     val hasNewEdits: Boolean get() = parent != null && history.version != committedVersion
+
+    /** [history]'s version when the picture was last saved with this tab's edits in it. */
+    var savedVersion = -1
 }
 
 /** The picture itself (not a smart layer's contents in a tab). */
@@ -285,6 +288,9 @@ private suspend fun EditorViewModel.commitNow(t: EditorTab) {
 
 /** Whether any open tab has edits not yet in its smart layer. */
 internal val EditorViewModel.tabsHaveEdits: Boolean get() = tabs.any { it.hasNewEdits }
+
+/** Tabs with edits that aren't in the picture's last save either. */
+internal val EditorViewModel.tabsUnsaved: List<EditorTab> get() = tabs.filter { it.hasNewEdits && it.history.version != it.savedVersion }
 
 /**
  * A copy of the picture to save or export (made on the main thread; cheap), including what's being

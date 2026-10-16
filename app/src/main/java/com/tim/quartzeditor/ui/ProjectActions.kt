@@ -115,7 +115,7 @@ fun EditorViewModel.closeDocument() {
     if (doc == null) return
     if (pendingFirst { closeDocument() }) return
     // The picture is what's saved (with what's being edited in smart layers' tabs)
-    if ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsHaveEdits) saveToProjects(quiet = false)
+    if ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsUnsaved.isNotEmpty()) saveToProjects(quiet = false)
     tabs.firstOrNull()?.let { root ->
         if (doc !== root.doc) {
             doc = root.doc
@@ -157,7 +157,8 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
     // The picture itself is what's saved, with what's being edited in smart layers' tabs
     val d = rootDoc ?: return
     val h = tabs.firstOrNull()?.history ?: history
-    if (h.editsSinceSave == 0 && !tabsHaveEdits) return
+    val unsaved = tabsUnsaved.map { it to it.history.version }
+    if (h.editsSinceSave == 0 && unsaved.isEmpty()) return
     if (d.projectId == null) d.projectId = ProjectIO.newId()
     val sc = saveCopy() ?: return
     val copy = sc.doc
@@ -171,6 +172,7 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
                 withContext(Dispatchers.IO) { ProjectIO.saveToProjects(ctx, copy, color) }
             }
             h.markSaved(edits)
+            for ((t, v) in unsaved) t.savedVersion = v
             if (!quiet) toast("Saved to Projects")
             projectsVersion++
         } catch (e: Throwable) {

@@ -175,15 +175,18 @@ class ContentsSnap private constructor(
      * a layer that's still there unchanged shows it; null when none does.
      */
     fun shiftIn(now: Doc): Pair<Int, Int>? {
+        // The shift most unchanged layers agree on (one that was also moved by hand doesn't count)
+        val votes = HashMap<Pair<Int, Int>, Int>()
         for ((i, ls) in doc.layers.withIndex()) {
             val l = now.layer(ls.layer.id) ?: continue
             if (l !== ls.layer) continue
             val t = pixels[i].first
             if (t.isEmpty() || t.size != l.tiles.tiles.size) continue
             if (t.any { (k, b) -> l.tiles.tiles[k] !== b }) continue
-            return (ls.x - l.x) to (ls.y - l.y)
+            val s = (ls.x - l.x) to (ls.y - l.y)
+            votes[s] = (votes[s] ?: 0) + 1
         }
-        return null
+        return votes.maxByOrNull { it.value }?.key
     }
 
     companion object {
