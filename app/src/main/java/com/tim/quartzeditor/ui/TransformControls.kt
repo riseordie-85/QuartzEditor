@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import com.tim.quartzeditor.engine.TransformMode
 
 /** Floating bar over the picture while transforming: cancel, flips, turns, distort, apply. */
 @Composable
@@ -54,16 +55,20 @@ fun TransformBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         BarIcon(Icons.Outlined.Flip, "Flip vertically", rotate = 90f) { vm.updateTransform { it.flippedV() } }
         BarIcon(Icons.Outlined.Rotate90DegreesCcw, "Rotate 90° left") { vm.updateTransform { it.rotated(-90f) } }
         BarIcon(Icons.Outlined.Rotate90DegreesCw, "Rotate 90° right") { vm.updateTransform { it.rotated(90f) } }
-        Text(
-            "Distort",
-            color = Color.White,
-            fontSize = 13.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (st.distort) Q.accent else Q.field)
-                .clickable { vm.updateTransform { if (it.distort) it else it.toDistort() } }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-        )
+        // How the handles work (Free goes away once the corners have been placed freely)
+        TransformMode.entries.forEach { m ->
+            if (m == TransformMode.FREE && st.distort) return@forEach
+            Text(
+                m.label,
+                color = Color.White,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (st.mode == m) Q.accent else Q.field)
+                    .clickable { vm.updateTransform { it.withMode(m) } }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
         Spacer(Modifier.width(4.dp))
         Box(
             contentAlignment = Alignment.Center,
@@ -99,7 +104,14 @@ fun TransformProperties(vm: EditorViewModel) {
     Text("Transform", color = Q.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
     Spacer(Modifier.height(6.dp))
     if (st.distort) {
-        Text("Distort: drag each corner anywhere. Drag inside to move.", color = Q.textDim, fontSize = 12.sp)
+        Text(
+            when (st.mode) {
+                TransformMode.SKEW -> "Skew: drag a side's middle to slant it, or a corner along one side. Drag inside to move."
+                TransformMode.PERSPECTIVE -> "Perspective: drag a corner along a side; the other end of that side moves the opposite way. Drag inside to move."
+                else -> "Distort: drag each corner anywhere. Drag inside to move."
+            },
+            color = Q.textDim, fontSize = 12.sp,
+        )
     } else {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("W", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(20.dp))

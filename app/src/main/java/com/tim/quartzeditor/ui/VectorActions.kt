@@ -18,6 +18,7 @@ import com.tim.quartzeditor.engine.TextSpec
 import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.VectorArt
 import com.tim.quartzeditor.engine.translation
+import com.tim.quartzeditor.engine.toAffine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -280,6 +281,20 @@ internal fun EditorViewModel.nextShapeKind() {
 
 /** The shape being dragged out, from canvas point ([x0], [y0]) to ([x1], [y1]). */
 fun EditorViewModel.dragShape(x0: Float, y0: Float, x1: Float, y1: Float) {
+    if (shapeKind == ShapeKind.ARROW) {
+        // From the start of the drag to its end; "straight" snaps to 45° steps
+        var a = kotlin.math.atan2(y1 - y0, x1 - x0)
+        if (shapeSquare) a = (Math.round(a / (Math.PI / 4)) * (Math.PI / 4)).toFloat()
+        val len = kotlin.math.hypot(x1 - x0, y1 - y0)
+        val h = (len * 0.35f).coerceAtLeast(12f)
+        val m = android.graphics.Matrix().apply {
+            setTranslate(0f, -h / 2f)
+            postRotate(Math.toDegrees(a.toDouble()).toFloat())
+            postTranslate(x0, y0)
+        }
+        shapeDraft = shapeStyle.copy(kind = ShapeKind.ARROW, w = len, h = h, path = emptyList(), closed = true, matrix = m.toAffine())
+        return
+    }
     var w = x1 - x0
     var h = y1 - y0
     if (shapeSquare) {

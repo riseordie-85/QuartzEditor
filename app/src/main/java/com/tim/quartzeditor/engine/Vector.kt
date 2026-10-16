@@ -53,13 +53,25 @@ enum class ShapeKind(val label: String) {
     STAR("Star"),
     /** Drawn with the shape pen. */
     PATH("Custom"),
+    TRIANGLE("Triangle"),
+    POLYGON("Polygon"),
+    /** Drawn from where the drag starts to where it ends. */
+    ARROW("Arrow"),
     ;
 
     /** The next shape when the Shape tool is tapped again (custom shapes come from the pen). */
     val next: ShapeKind get() = when (this) {
         RECT -> ELLIPSE
-        ELLIPSE -> STAR
+        ELLIPSE -> TRIANGLE
+        TRIANGLE -> POLYGON
+        POLYGON -> STAR
+        STAR -> ARROW
         else -> RECT
+    }
+
+    companion object {
+        /** The shapes the Shape tool draws, in menu order. */
+        val TOOL_SHAPES = listOf(RECT, ELLIPSE, TRIANGLE, POLYGON, STAR, ARROW)
     }
 }
 
@@ -99,6 +111,13 @@ data class ShapeSpec(
     val points: Int = 5,
     /** How deep the star's valleys go: 0 = a plain polygon, 0.95 = very spiky. */
     val depth: Float = 0.5f,
+    /** Polygon sides. */
+    val sides: Int = 6,
+    /** Arrow head: length as a multiple of the arrow's height, and its width (1 = the full height). */
+    val headLength: Float = 1f,
+    val headWidth: Float = 1f,
+    /** Arrow shaft thickness (fraction of the height). */
+    val shaftWidth: Float = 0.38f,
     val path: List<PenPoint> = emptyList(),
     val closed: Boolean = true,
     /** Fill color, or null for no fill. */
@@ -119,6 +138,10 @@ data class ShapeSpec(
         .put("radius", radius.toDouble())
         .put("points", points)
         .put("depth", depth.toDouble())
+        .put("sides", sides)
+        .put("headLength", headLength.toDouble())
+        .put("headWidth", headWidth.toDouble())
+        .put("shaftWidth", shaftWidth.toDouble())
         .put("path", JSONArray().also { a ->
             path.forEach { p ->
                 a.put(JSONArray().put(p.x.toDouble()).put(p.y.toDouble()).put(p.hx.toDouble()).put(p.hy.toDouble()).put(p.ix.toDouble()).put(p.iy.toDouble()))
@@ -141,6 +164,10 @@ data class ShapeSpec(
                 radius = o.optDouble("radius", 0.0).toFloat(),
                 points = o.optInt("points", 5),
                 depth = o.optDouble("depth", 0.5).toFloat(),
+                sides = o.optInt("sides", 6),
+                headLength = o.optDouble("headLength", 1.0).toFloat(),
+                headWidth = o.optDouble("headWidth", 1.0).toFloat(),
+                shaftWidth = o.optDouble("shaftWidth", 0.38).toFloat(),
                 path = if (pts == null) emptyList() else List(pts.length()) { i ->
                     val p = pts.getJSONArray(i)
                     val hx = p.optDouble(2, 0.0).toFloat()
@@ -165,6 +192,35 @@ data class ShapeSpec(
             ShapeKind.ELLIPSE -> Path().apply { addOval(0f, 0f, s.w, s.h, Path.Direction.CW) }
             ShapeKind.STAR -> starPath(s.w, s.h, s.points, s.depth)
             ShapeKind.PATH -> penPath(s.path, s.closed)
+            ShapeKind.POLYGON -> starPath(s.w, s.h, s.sides, 0f)
+            ShapeKind.TRIANGLE -> Path().apply {
+                moveTo(s.w / 2f, 0f)
+                lineTo(s.w, s.h)
+                lineTo(0f, s.h)
+                close()
+            }
+            ShapeKind.ARROW -> arrowPath(s)
+        }
+
+        /** An arrow pointing right along the box: a shaft, then a triangular head. */
+        fun arrowPath(s: ShapeSpec): Path {
+            val w = s.w
+            val h = s.h
+            val cy = h / 2f
+            val hl = (s.headLength * h).coerceIn(0f, w * 0.95f)
+            val sw = (s.shaftWidth.coerceIn(0.02f, 1f) * h) / 2f
+            // The head is never narrower than the shaft (that would notch the outline)
+            val hw = max((s.headWidth.coerceIn(0.1f, 3f) * h) / 2f, sw)
+            return Path().apply {
+                moveTo(0f, cy - sw)
+                lineTo(w - hl, cy - sw)
+                lineTo(w - hl, cy - hw)
+                lineTo(w, cy)
+                lineTo(w - hl, cy + hw)
+                lineTo(w - hl, cy + sw)
+                lineTo(0f, cy + sw)
+                close()
+            }
         }
 
         fun starPath(w: Float, h: Float, points: Int, depth: Float): Path {
@@ -399,7 +455,7 @@ object VectorArt {
                 style = Paint.Style.STROKE
                 color = s.stroke!!
                 strokeWidth = if (align == StrokeAlign.CENTER) s.strokeWidth else s.strokeWidth * 2f
-                strokeJoin = if (s.kind == ShapeKind.RECT && s.radius <= 0f) Paint.Join.MITER else Paint.Join.ROUND
+                strokeJoin = if ((s.kind == ShapeKind.RECT && s.radius <= 0f) || s.kind == ShapeKind.ARROW) Paint.Join.MITER else Paint.Join.ROUND
                 strokeMiter = 10f
                 strokeCap = Paint.Cap.ROUND
             }
@@ -424,7 +480,8 @@ object VectorArt {
             shapeOutline(s).computeBounds(r, true)
             // Room for the outline: an outside outline is drawn twice as wide, and its square
             // (mitered) corners reach about 1.42× further than its width
-            val pad = (if (s.hasStroke) s.strokeWidth * 1.5f else 0f) + 2f
+            // An arrow's sharp tip (mitered, up to the miter limit of 4) reaches further still
+            val pad = (if (s.hasStroke) s.strokeWidth * (if (s.kind == ShapeKind.ARROW) 4f else 1.5f) else 0f) + 2f
             r.inset(-pad, -pad)
             return r
         }

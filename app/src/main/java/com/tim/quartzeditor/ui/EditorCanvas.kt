@@ -389,11 +389,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     when (val h = hit) {
                                         is TransformHit.Corner -> vm.updateTransform { cur ->
                                             val target = android.graphics.PointF(q0[h.i].x + ddx, q0[h.i].y + ddy)
-                                            if (cur.distort) cur.dragCorner(h.i, target) else tStart.copy(keepAspect = cur.keepAspect).dragCorner(h.i, target)
+                                            // Skew / perspective / distort work from where the gesture started (a move that
+                                            // would fold the box over leaves it where it last was)
+                                            if (tStart.distort) tStart.dragCornerBy(h.i, ddx, ddy) ?: cur else tStart.copy(keepAspect = cur.keepAspect).dragCorner(h.i, target)
                                         }
                                         is TransformHit.Edge -> vm.updateTransform { cur ->
-                                            if (cur.distort) {
-                                                cur.dragEdge(h.i, p, android.graphics.PointF(prevCx, prevCy))
+                                            if (tStart.distort) {
+                                                tStart.dragEdgeBy(h.i, ddx, ddy) ?: cur
                                             } else {
                                                 val a = q0[h.i]
                                                 val b = q0[(h.i + 1) % 4]

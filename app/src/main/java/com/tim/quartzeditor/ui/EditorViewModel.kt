@@ -247,6 +247,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Canvas area of what's being moved (its visible pixels), worked out when the move starts. */
     internal var moveContent: RectF? = null
 
+    /** Layers picked together (swipe right on a row); empty = just the active one. Includes the active layer. */
+    var multiSelected by mutableStateOf<Set<Long>>(emptySet())
+        internal set
+
+    /** Layer style presets: ready-made ones and yours. */
+    var stylePresets by mutableStateOf(loadStylePresets(prefs))
+        internal set
+
+    /** A layer style copied for pasting onto other layers. */
+    var copiedStyle by mutableStateOf<LayerStyle?>(null)
+        internal set
+
     /** Space held on a keyboard: one finger moves the view, whatever the tool. */
     var tempPan by mutableStateOf(false)
 
@@ -349,6 +361,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun setDocument(d: Doc, canvas: Int? = null) {
         propsBefore = null
+        multiSelected = emptySet()
         resetVectorState()
         transform = null
         samplePicture = null
@@ -879,6 +892,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private var moveLayer: Layer? = null
 
+    /** What's being moved: the top-level ones (a folder carries what's in it). */
+    private var moveRoots: List<Layer> = emptyList()
+
     fun beginMove(): Boolean {
         val d = doc ?: return false
         if (pendingFx != null) {
@@ -886,15 +902,19 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return false
         }
         val l = d.active ?: return false
-        if (l.props.locked) {
-            toast("\"${l.props.name}\" is locked")
+        // Several selected: they all move (minus any inside a selected folder, which go with it)
+        val chosen = selectedLayerIds().mapNotNull { d.layer(it) }.ifEmpty { listOf(l) }
+        val roots = chosen.filter { c -> chosen.none { g -> g !== c && g.isGroup && d.isInside(c, g) } }
+        roots.firstOrNull { it.props.locked }?.let {
+            toast("\"${it.props.name}\" is locked")
             return false
         }
         moveLayer = l
-        preview = LayerPreview(l.id)
+        moveRoots = roots
+        preview = movePreview(0f, 0f)
         // Where its pixels are (for snapping), worked out in the background
         moveContent = null
-        val parts = (if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)).filter { it.hasContent }.map { Triple(HashMap(it.tiles.tiles), it.x, it.y) }
+        val parts = roots.flatMap { r -> if (r.isGroup) d.layers.slice(d.block(r)) else listOf(r) }.filter { it.hasContent }.map { Triple(HashMap(it.tiles.tiles), it.x, it.y) }
         viewModelScope.launch {
             val r = withContext(Dispatchers.Default) {
                 var u: RectF? = null
@@ -905,24 +925,32 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 u
             }
-            if (moveLayer === l) moveContent = r
+            if (moveLayer === l && moveRoots === roots) moveContent = r
         }
         return true
     }
 
     /** Drag offset ([dx], [dy]) in canvas pixels; it snaps within [snapRadius] canvas pixels. */
     fun moveTo(dx: Float, dy: Float, snapRadius: Float = 0f) {
-        val l = moveLayer ?: return
+        if (moveLayer == null) return
         val (sx, sy) = snapDelta(moveContent, dx, dy, snapRadius)
-        preview = LayerPreview(l.id, dragX = sx, dragY = sy)
+        preview = movePreview(sx, sy)
         doc?.invalidate()
     }
 
+    /** Every layer being moved drawn shifted by ([dx], [dy]). */
+    private fun movePreview(dx: Float, dy: Float): LayerPreview {
+        val first = moveRoots.firstOrNull() ?: moveLayer!!
+        return LayerPreview(first.id, dragX = dx, dragY = dy, others = moveRoots.drop(1).associate { it.id to LayerPreview(it.id, dragX = dx, dragY = dy) })
+    }
+
     fun endMove() {
-        val l = moveLayer ?: return
+        if (moveLayer == null) return
         val d = doc ?: return
         val p = preview
+        val roots = moveRoots
         moveLayer = null
+        moveRoots = emptyList()
         preview = null
         clearSnapGuides()
         val dx = (p?.dragX ?: 0f).roundToInt()
@@ -933,7 +961,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         stackEdit("Move") {
             // A folder moves everything in it
-            val all = if (l.isGroup) d.layers.slice(d.block(l)) else listOf(l)
+            val all = roots.flatMap { r -> if (r.isGroup) d.layers.slice(d.block(r)) else listOf(r) }.distinct()
             for (x in all) {
                 val clipped = vectorClipped(x, x.x, x.y, d.width, d.height)
                 x.x += dx
@@ -947,6 +975,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelMove() {
         clearSnapGuides()
         moveLayer = null
+        moveRoots = emptyList()
         preview = null
         doc?.invalidate()
     }
@@ -1025,6 +1054,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun selectLayer(id: Long, mask: Boolean = false) {
         val d = doc ?: return
         if (id != d.activeId && pendingFirst { selectLayer(id, mask) }) return
+        // Picking one layer ends picking several (like Photoshop)
+        multiSelected = emptySet()
         d.activeId = id
         val l = d.layer(id)
         d.editMask = l?.hasMask == true && (mask || l.isAdjustment)
@@ -1071,6 +1102,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun groupActive() {
         val d = doc ?: return
         if (pendingFirst { groupActive() }) return
+        if (isMultiSelecting) {
+            groupPicked()
+            return
+        }
         val a = d.active ?: return
         stackEdit("Put in folder") {
             val g = Layer(d.newId(), LayerProps(d.uniqueName("Folder"), parent = a.props.parent), TileGrid(alphaOnly = false), kind = LayerKind.GROUP)
@@ -1112,6 +1147,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteLayer() {
         val d = doc ?: return
         if (pendingFirst { deleteLayer() }) return
+        if (isMultiSelecting) {
+            deletePicked()
+            return
+        }
         val l = d.active ?: return
         val range = d.block(l)
         if (d.layers.size - (range.last - range.first + 1) < 1) {
@@ -1239,6 +1278,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun mergeDown() {
         val d = doc ?: return
         if (pendingFirst { mergeDown() }) return
+        if (isMultiSelecting) {
+            mergePicked()
+            return
+        }
         val top = d.active ?: return
         if (top.isGroup) {
             mergeFolder()
@@ -1835,10 +1878,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ================================================================== transform
 
-    /** A transform in progress: the layer, the part being transformed, and a smaller copy to show. */
-    class TransformSession(
+    /** One layer being transformed: its pixels (and mask) as they were, and a smaller copy to show. */
+    class TransformPart(
         val layer: Layer,
-        /** The pixels (and mask) as they were when the transform started. */
         val tiles: Map<Long, Bitmap>,
         val mask: Map<Long, Bitmap>?,
         val sourceGrid: TileGrid,
@@ -1847,76 +1889,108 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val proxy: Bitmap,
         /** Proxy pixels per canvas pixel. */
         val proxyScale: Float,
-        state: TransformState,
     ) {
+        /** This layer's pixels (layer-local) → the canvas, for a transform [st] made in canvas pixels. */
+        fun matrixFor(st: TransformState): Matrix = Matrix().apply {
+            setTranslate(layer.x.toFloat(), layer.y.toFloat())
+            postConcat(st.matrix())
+        }
+    }
+
+    /**
+     * A transform in progress: one or more layers (several when they're multi-selected) moved by one
+     * box. [state] is in canvas pixels around all of them.
+     */
+    class TransformSession(val parts: List<TransformPart>, state: TransformState) {
         var state by mutableStateOf(state)
         val start: TransformState = state
+        val layer: Layer get() = parts.first().layer
     }
 
     var transform by mutableStateOf<TransformSession?>(null)
         private set
 
-    /** Starts transforming the selected layer (when the Transform tool is picked). */
+    /** Starts transforming the selected layer(s) (when the Transform tool is picked). */
     fun beginTransform() {
         val d = doc ?: return
         if (transform != null) return
-        val l = d.active ?: return
-        if (l.props.locked) {
-            toast("\"${l.props.name}\" is locked")
+        // Several picked: every one of them with pixels (a picked folder brings everything in it,
+        // as with moving); otherwise the active layer
+        val chosen = selectedLayerIds().mapNotNull { d.layer(it) }
+        val layers = if (chosen.size > 1) {
+            pickedRoots().flatMap { r -> if (r.isGroup) d.layers.slice(d.block(r)) else listOf(r) }.filter { it.hasContent }.distinct()
+        } else listOfNotNull(d.active)
+        if (layers.isEmpty()) return
+        layers.firstOrNull { it.props.locked }?.let {
+            toast("\"${it.props.name}\" is locked")
             return
         }
-        if (!l.hasContent) {
+        if (layers.size == 1 && !layers[0].hasContent) {
             toast("Transform works on a pixel, shape or text layer")
             return
         }
-        if (l.tiles.isEmpty) {
-            toast("This layer is empty")
+        val inputs = layers.filter { !it.tiles.isEmpty }.map { l ->
+            Triple(l, HashMap(l.tiles.tiles), if (l.maskActive) l.mask?.let { HashMap(it.tiles) } else null)
+        }
+        if (inputs.isEmpty()) {
+            toast(if (layers.size == 1) "This layer is empty" else "These layers are empty")
             return
         }
-        val tiles = HashMap(l.tiles.tiles)
-        val mask = if (l.maskActive) l.mask?.let { HashMap(it.tiles) } else null
-        val source = l.tiles
+        val sources = inputs.associate { it.first to it.first.tiles }
         runBusy("Preparing…") {
             val prepared = withContext(Dispatchers.Default) {
-                val bounds = Transformer.contentBounds(tiles) ?: return@withContext null
-                val ps = min(1f, PREVIEW_PX / max(bounds.width(), bounds.height()).toFloat())
-                val w = (bounds.width() * ps).roundToInt().coerceAtLeast(1)
-                val h = (bounds.height() * ps).roundToInt().coerceAtLeast(1)
-                val proxy = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val c = Canvas(proxy)
-                c.scale(ps, ps)
-                c.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
-                c.saveLayer(null, null)
-                val p = Paint().apply { isFilterBitmap = true }
-                TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.drawTo(c, 0f, 0f, p)
-                if (mask != null) {
-                    TileGrid(alphaOnly = true).also { it.tiles.putAll(mask) }.drawTo(c, 0f, 0f, Paint().apply {
-                        isFilterBitmap = true
-                        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
-                    })
+                inputs.mapNotNull { (l, tiles, mask) ->
+                    val bounds = Transformer.contentBounds(tiles) ?: return@mapNotNull null
+                    val ps = min(1f, PREVIEW_PX / max(bounds.width(), bounds.height()).toFloat())
+                    val w = (bounds.width() * ps).roundToInt().coerceAtLeast(1)
+                    val h = (bounds.height() * ps).roundToInt().coerceAtLeast(1)
+                    val proxy = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val c = Canvas(proxy)
+                    c.scale(ps, ps)
+                    c.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
+                    c.saveLayer(null, null)
+                    val p = Paint().apply { isFilterBitmap = true }
+                    TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.drawTo(c, 0f, 0f, p)
+                    if (mask != null) {
+                        TileGrid(alphaOnly = true).also { it.tiles.putAll(mask) }.drawTo(c, 0f, 0f, Paint().apply {
+                            isFilterBitmap = true
+                            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                        })
+                    }
+                    c.restore()
+                    TransformPart(l, tiles, l.mask?.let { HashMap(it.tiles) }, sources.getValue(l), bounds, proxy, ps)
                 }
-                c.restore()
-                Triple(bounds, proxy, ps)
             }
-            if (prepared == null) {
-                toast("This layer is empty")
+            if (prepared.isEmpty()) {
+                toast("Nothing to transform")
                 return@runBusy
             }
-            val (bounds, proxy, ps) = prepared
-            if (doc !== d || d.active !== l) return@runBusy
-            if (l.tiles !== source) return@runBusy
-            val session = TransformSession(l, tiles, l.mask?.let { HashMap(it.tiles) }, source, bounds, proxy, ps, TransformState.start(RectF(bounds), l.x, l.y))
+            if (doc !== d || prepared.any { it.layer.tiles !== it.sourceGrid }) return@runBusy
+            // One box around all of them, in canvas pixels
+            val box = RectF()
+            prepared.forEachIndexed { i, p ->
+                val r = RectF(p.content).apply { offset(p.layer.x.toFloat(), p.layer.y.toFloat()) }
+                if (i == 0) box.set(r) else box.union(r)
+            }
+            val session = TransformSession(prepared, TransformState.start(box, 0, 0))
             transform = session
             showTransform(session)
         }
     }
 
     private fun showTransform(t: TransformSession) {
-        val m = Matrix()
-        m.setScale(1f / t.proxyScale, 1f / t.proxyScale)
-        m.postTranslate(t.content.left.toFloat(), t.content.top.toFloat())
-        m.postConcat(t.state.matrix())
-        preview = LayerPreview(t.layer.id, transform = m, proxy = t.proxy)
+        fun previewOf(p: TransformPart): LayerPreview {
+            val m = Matrix()
+            m.setScale(1f / p.proxyScale, 1f / p.proxyScale)
+            m.postTranslate(p.content.left.toFloat(), p.content.top.toFloat())
+            m.postConcat(p.matrixFor(t.state))
+            return LayerPreview(p.layer.id, transform = m, proxy = p.proxy)
+        }
+        val first = previewOf(t.parts.first())
+        preview = if (t.parts.size == 1) first else LayerPreview(
+            first.layerId, transform = first.transform, proxy = first.proxy,
+            others = t.parts.drop(1).associate { it.layer.id to previewOf(it) },
+        )
         doc?.invalidate()
     }
 
@@ -1940,15 +2014,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         doc?.invalidate()
     }
 
-    /** Applies the transform at full size (pixels and mask), then runs [onDone]. */
+    /** Applies the transform at full size (pixels and masks of every layer in it), then runs [onDone]. */
     fun applyTransform(onDone: () -> Unit = {}) {
         val d = doc ?: return
         val t = transform ?: return
         if (busy != null) return
         // Text is redrawn in its own font: wait for it if it's still loading
-        val font = t.layer.props.text?.fontKey
-        if (!fontReady(font)) {
-            withFont(font) { applyTransform(onDone) }
+        val fonts = t.parts.mapNotNull { it.layer.props.text?.fontKey }.filter { !fontReady(it) }
+        if (fonts.isNotEmpty()) {
+            withFonts(fonts) { applyTransform(onDone) }
             return
         }
         var st = t.state
@@ -1958,37 +2032,42 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         st = st.pixelAligned()
-        val l = t.layer
         // Shapes and text stay sharp: their own geometry is transformed and redrawn
-        val vectorProps = if (l.isVector) VectorArt.transformed(l.props, st.matrix()) else null
+        val vectorProps = t.parts.associate { p -> p.layer to (if (p.layer.isVector) VectorArt.transformed(p.layer.props, p.matrixFor(st)) else null) }
+        val matrices = t.parts.associate { it.layer to it.matrixFor(st) }
         runBusy("Transforming…", onDone) {
-            val result = withContext(Dispatchers.Default) {
-                // Layer-local → canvas
-                val m = st.matrix()
+            val results = withContext(Dispatchers.Default) {
                 val limit = Transformer.limitFor(d.width, d.height)
-                val grid = if (vectorProps != null) {
-                    VectorArt.rasterize(vectorProps, VectorArt.clipFor(0, 0, d.width, d.height))
-                } else {
-                    val px = Transformer.render(t.tiles, false, t.content, m, limit)
-                    px?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
-                        ?: TileGrid(alphaOnly = false)
+                t.parts.map { p ->
+                    val m = matrices.getValue(p.layer)
+                    val vp = vectorProps[p.layer]
+                    val grid = if (vp != null) {
+                        VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, d.width, d.height))
+                    } else {
+                        Transformer.render(p.tiles, false, p.content, m, limit)
+                            ?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
+                            ?: TileGrid(alphaOnly = false)
+                    }
+                    val maskGrid = p.mask?.let { mk ->
+                        Transformer.render(mk, true, p.content, m, limit)
+                            ?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = true).also { bmp.recycle() } }
+                            ?: TileGrid(alphaOnly = true)
+                    }
+                    Triple(p, grid, maskGrid)
                 }
-                val maskGrid = t.mask?.let { mk ->
-                    val r = Transformer.render(mk, true, t.content, m, limit)
-                    r?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = true).also { bmp.recycle() } }
-                        ?: TileGrid(alphaOnly = true)
-                }
-                grid to maskGrid
             }
             transform = null
             preview = null
-            if (doc === d && l.tiles === t.sourceGrid) {
+            if (doc === d && t.parts.all { it.layer.tiles === it.sourceGrid }) {
                 stackEdit("Transform") {
-                    if (vectorProps != null) l.props = vectorProps
-                    l.tiles = result.first
-                    l.x = 0
-                    l.y = 0
-                    if (l.mask != null) l.mask = result.second
+                    for ((p, grid, maskGrid) in results) {
+                        val l = p.layer
+                        vectorProps[l]?.let { l.props = it }
+                        l.tiles = grid
+                        l.x = 0
+                        l.y = 0
+                        if (l.mask != null) l.mask = maskGrid
+                    }
                 }
             }
             tool = Tool.MOVE

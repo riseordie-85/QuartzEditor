@@ -35,12 +35,16 @@ import androidx.compose.ui.unit.sp
 import com.tim.quartzeditor.engine.BevelFx
 import com.tim.quartzeditor.engine.BevelStyle
 import com.tim.quartzeditor.engine.LayerStyle
+import com.tim.quartzeditor.engine.GradientFx
+import com.tim.quartzeditor.engine.GradientPreset
+import com.tim.quartzeditor.engine.GradientType
+import com.tim.quartzeditor.engine.LongShadowFx
 import com.tim.quartzeditor.engine.ShadowFx
 import com.tim.quartzeditor.engine.StrokePosition
 import kotlin.math.roundToInt
 
 private enum class StyleFx(val label: String) {
-    BEVEL("Bevel & Emboss"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
+    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
 }
 
 /** Layer Style: switch effects on and off and tune them. They never change the layer's pixels. */
@@ -52,10 +56,14 @@ fun StylePanel(vm: EditorViewModel) {
 
     Text("Effects on \"${l.props.name}\". They follow the layer and never change its pixels.", color = Q.textDim, fontSize = 12.sp)
     Spacer(Modifier.height(6.dp))
+    StylePresetsRow(vm)
+    Spacer(Modifier.height(6.dp))
 
     StyleFx.entries.forEach { kind ->
         val on = when (kind) {
             StyleFx.BEVEL -> st.bevel.on
+            StyleFx.GRADIENT -> st.gradientFill.on
+            StyleFx.LONG_SHADOW -> st.longShadow.on
             StyleFx.STROKE -> st.stroke.on
             StyleFx.DROP_SHADOW -> st.dropShadow.on
             StyleFx.INNER_SHADOW -> st.innerShadow.on
@@ -93,6 +101,16 @@ fun StylePanel(vm: EditorViewModel) {
                 Column(Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp)) {
                     when (kind) {
                         StyleFx.BEVEL -> BevelControls(vm, st)
+                        StyleFx.GRADIENT -> GradientFillControls(vm, st)
+                        StyleFx.LONG_SHADOW -> {
+                            val ls = st.longShadow
+                            fun LayerStyle.lsh(change: LongShadowFx.() -> LongShadowFx): LayerStyle = copy(longShadow = longShadow.change().copy(on = true))
+                            FxColor(vm, ls.color) { c -> vm.setStyle("Long shadow color") { it.lsh { copy(color = c) } } }
+                            FxSlider(vm, "Opacity", ls.opacity, 0f..1f, "${(ls.opacity * 100).roundToInt()}%") { v -> lsh { copy(opacity = v) } }
+                            FxSlider(vm, "Angle", ls.angle, -180f..180f, "${ls.angle.roundToInt()}°") { v -> lsh { copy(angle = v.roundToInt().toFloat()) } }
+                            FxSlider(vm, "Length", ls.length, 1f..2000f, "${ls.length.roundToInt()} px") { v -> lsh { copy(length = v.roundToInt().toFloat()) } }
+                            ToggleRow("Fade out", ls.fade) { f -> vm.setStyle("Long shadow fade") { it.lsh { copy(fade = f) } } }
+                        }
                         StyleFx.STROKE -> StrokeControls(vm, st)
                         StyleFx.DROP_SHADOW -> ShadowControls(vm, st.dropShadow, inner = false)
                         StyleFx.INNER_SHADOW -> ShadowControls(vm, st.innerShadow, inner = true)
@@ -120,6 +138,8 @@ fun StylePanel(vm: EditorViewModel) {
 
 private fun LayerStyle.toggle(kind: StyleFx, on: Boolean): LayerStyle = when (kind) {
     StyleFx.BEVEL -> copy(bevel = bevel.copy(on = on))
+    StyleFx.GRADIENT -> copy(gradientFill = gradientFill.copy(on = on))
+    StyleFx.LONG_SHADOW -> copy(longShadow = longShadow.copy(on = on))
     StyleFx.STROKE -> copy(stroke = stroke.copy(on = on))
     StyleFx.DROP_SHADOW -> copy(dropShadow = dropShadow.copy(on = on))
     StyleFx.INNER_SHADOW -> copy(innerShadow = innerShadow.copy(on = on))
@@ -167,6 +187,35 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
     Text("Shadow", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
     FxColor(vm, b.shadow) { c -> vm.setStyle("Bevel shadow") { it.bv { copy(shadow = c) } } }
     FxSlider(vm, "Opacity", b.shadowOpacity, 0f..1f, "${(b.shadowOpacity * 100).roundToInt()}%") { v -> bv { copy(shadowOpacity = v) } }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
+    val g = st.gradientFill
+    fun LayerStyle.gf(change: GradientFx.() -> GradientFx): LayerStyle = copy(gradientFill = gradientFill.change().copy(on = true))
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        GradientPreset.ALL.forEach { p ->
+            val cols = p.resolve(vm.foreground, vm.background)
+            val sel = cols == g.colors
+            Box(
+                Modifier
+                    .size(width = 52.dp, height = 26.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .checker(8f)
+                    .background(androidx.compose.ui.graphics.Brush.horizontalGradient(cols.map { Color(it) }.let { if (it.size >= 2) it else listOf(Color.Black, Color.White) }))
+                    .border(if (sel) 2.dp else 1.dp, if (sel) Q.accent else Color.White.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                    .clickable { vm.setStyle("Gradient fill") { it.gf { copy(colors = cols) } } }
+            )
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    ChipRow(GradientType.entries.map { it.label }, g.type.ordinal) { i -> vm.setStyle("Gradient fill type") { it.gf { copy(type = GradientType.entries[i]) } } }
+    Spacer(Modifier.height(4.dp))
+    FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> gf { copy(opacity = v) } }
+    FxSlider(vm, "Angle", g.angle, -180f..180f, "${g.angle.roundToInt()}°") { v -> gf { copy(angle = v.roundToInt().toFloat()) } }
+    FxSlider(vm, "Scale", g.scale, 0.1f..2f, "${(g.scale * 100).roundToInt()}%") { v -> gf { copy(scale = v) } }
+    ToggleRow("Reverse", g.reverse) { r -> vm.setStyle("Gradient fill reverse") { it.gf { copy(reverse = r) } } }
 }
 
 @Composable

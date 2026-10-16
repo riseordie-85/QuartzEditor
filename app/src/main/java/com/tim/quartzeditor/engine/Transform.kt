@@ -22,6 +22,13 @@ import kotlin.math.sin
  *
  * Negative scales are flips.
  */
+/** How the transform box's handles behave. Everything but Free places the corners freely. */
+enum class TransformMode(val label: String) {
+    FREE("Free"), SKEW("Skew"), PERSPECTIVE("Perspective"), DISTORT("Distort");
+
+    val usesCorners: Boolean get() = this != FREE
+}
+
 data class TransformState(
     val src: RectF,
     val cx: Float,
@@ -32,7 +39,9 @@ data class TransformState(
     val angle: Float = 0f,
     val quad: List<PointF>? = null,
     val keepAspect: Boolean = true,
+    val mode: TransformMode = TransformMode.FREE,
 ) {
+    /** The corners are placed freely (skew, perspective or distort). */
     val distort: Boolean get() = quad != null
 
     private val rad: Double get() = Math.toRadians(angle.toDouble())
@@ -110,7 +119,71 @@ data class TransformState(
     }
 
     /** Turns on distort: the corners become free. */
-    fun toDistort(): TransformState = if (quad != null) this else copy(quad = corners())
+    fun toDistort(): TransformState = withMode(TransformMode.DISTORT)
+
+    /** Switches how the handles work. Once the corners are free, going back to Free keeps the shape (as Distort). */
+    fun withMode(m: TransformMode): TransformState = when {
+        m == TransformMode.FREE -> if (quad == null) copy(mode = m) else this
+        else -> copy(quad = quad ?: corners(), mode = m)
+    }
+
+    /**
+     * A corner dragged by ([dx], [dy]) from where it was in this (starting) state, the way the mode
+     * says: Skew slides it along one of its sides; Perspective moves the other end of that side the
+     * opposite way, so the side stays centered; Distort moves it freely. Null when that would fold
+     * the box over (the caller keeps what it has).
+     */
+    fun dragCornerBy(i: Int, dx: Float, dy: Float): TransformState? {
+        val q = quad ?: return null
+        if (mode == TransformMode.DISTORT || mode == TransformMode.FREE) {
+            val moved = q.mapIndexed { j, c -> if (j == i) PointF(c.x + dx, c.y + dy) else c }
+            return if (isConvex(moved)) copy(quad = moved) else null
+        }
+        // The two sides meeting at this corner: towards the next corner, and towards the previous one
+        val next = (i + 1) % 4
+        val prev = (i + 3) % 4
+        fun unit(a: PointF, b: PointF): PointF {
+            val l = hypot(b.x - a.x, b.y - a.y).coerceAtLeast(0.001f)
+            return PointF((b.x - a.x) / l, (b.y - a.y) / l)
+        }
+        val un = unit(q[i], q[next])
+        val up = unit(q[i], q[prev])
+        val tn = dx * un.x + dy * un.y
+        val tp = dx * up.x + dy * up.y
+        // Whichever side the finger moves along more
+        val (partner, u, t) = if (abs(tn) >= abs(tp)) Triple(next, un, tn) else Triple(prev, up, tp)
+        val moved = q.mapIndexed { j, c ->
+            when {
+                j == i -> PointF(c.x + u.x * t, c.y + u.y * t)
+                mode == TransformMode.PERSPECTIVE && j == partner -> PointF(c.x - u.x * t, c.y - u.y * t)
+                else -> c
+            }
+        }
+        return if (isConvex(moved)) copy(quad = moved) else null
+    }
+
+    /**
+     * The middle of edge [i] dragged by ([dx], [dy]) from this (starting) state. Skew and Perspective
+     * slide the edge along itself (slanting the box); Distort moves it freely. Null when that would
+     * fold the box over.
+     */
+    fun dragEdgeBy(i: Int, dx: Float, dy: Float): TransformState? {
+        val q = quad ?: return null
+        val a = i
+        val b = (i + 1) % 4
+        var mx = dx
+        var my = dy
+        if (mode == TransformMode.SKEW || mode == TransformMode.PERSPECTIVE) {
+            val l = hypot(q[b].x - q[a].x, q[b].y - q[a].y).coerceAtLeast(0.001f)
+            val ux = (q[b].x - q[a].x) / l
+            val uy = (q[b].y - q[a].y) / l
+            val t = dx * ux + dy * uy
+            mx = ux * t
+            my = uy * t
+        }
+        val moved = q.mapIndexed { j, c -> if (j == a || j == b) PointF(c.x + mx, c.y + my) else c }
+        return if (isConvex(moved)) copy(quad = moved) else null
+    }
 
     /**
      * Drags corner [i] to canvas point [p]. Normally scales from the opposite corner (keeping the

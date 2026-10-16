@@ -237,6 +237,32 @@ class Doc(width: Int, height: Int, name: String) {
         if (above.props.parent == l.props.parent && above.props.clip) l.props = l.props.copy(clip = true)
     }
 
+    /**
+     * Puts the list back in folder order after layers changed folders: each folder's contents
+     * directly below it, keeping everyone's order otherwise.
+     */
+    fun normalizeTree() {
+        val kids = HashMap<Long, MutableList<Layer>>()
+        for (x in layers.asReversed()) kids.getOrPut(x.props.parent) { mutableListOf() }.add(x)
+        val order = ArrayList<Layer>(layers.size)
+        val seen = HashSet<Long>()
+        fun emit(parent: Long) {
+            for (x in (kids[parent] ?: return).asReversed()) {
+                if (!seen.add(x.id)) continue
+                if (x.isGroup) emit(x.id)
+                order.add(x)
+            }
+        }
+        emit(0L)
+        // Anything whose folder is gone goes to the top level
+        for (x in layers) if (x.id !in seen) {
+            x.props = x.props.copy(parent = 0L)
+            order.add(x)
+        }
+        layers.clear()
+        layers.addAll(order)
+    }
+
     // ------------------------------------------------------------ folders
     //
     // Layers stay in one bottom-first list. A folder's contents sit directly below it in that list

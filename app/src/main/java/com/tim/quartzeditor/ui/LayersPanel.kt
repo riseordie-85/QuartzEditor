@@ -7,6 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.SideEffect
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -107,6 +110,21 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         ) {
             Spacer(Modifier.width(34.dp))
             Text("Layers", color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            // Several picked: how many, and a tap to go back to one
+            val n = vm.selectedLayerIds().size
+            if (n > 1) {
+                Text(
+                    "$n picked  ✕",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Q.accent)
+                        .clickable { vm.clearMultiSelect() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
             Icon(
                 if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                 contentDescription = if (open) "Fold Layers" else "Open Layers",
@@ -151,6 +169,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         val rowPx = with(density) { rowH.toPx() }
         var dragId by remember { mutableStateOf<Long?>(null) }
         var dragOffset by remember { mutableFloatStateOf(0f) }
+        // The folder a drop would go into (kept here so the drag's callbacks see the latest)
+        val dropFolderRef = remember { mutableStateOf<Long?>(null) }
+        var presetFor by remember { mutableStateOf<Layer?>(null) }
         // Rows top first; folders that are folded hide what's in them
         val shown = ArrayList<Layer>()
         fun addRows(parent: Long) {
@@ -161,7 +182,23 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         }
         addRows(0L)
         val dragFrom = shown.indexOfFirst { it.id == dragId }
-        val dragTo = if (dragFrom >= 0) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else -1
+        // Hovering over the middle of a folder's row: dropping puts the layer into that folder
+        val intoFolder: Long? = if (dragFrom < 0) null else {
+            val pos = dragFrom + dragOffset / rowPx
+            val r = pos.roundToInt().coerceIn(0, shown.lastIndex)
+            val target = shown[r]
+            val dragged = shown[dragFrom]
+            if (r != dragFrom && kotlin.math.abs(pos - r) < 0.3f && target.isGroup && !d.isInside(target, dragged)) target.id else null
+        }
+        val dragTo = if (dragFrom >= 0 && intoFolder == null) (dragFrom + (dragOffset / rowPx).roundToInt()).coerceIn(0, shown.lastIndex) else dragFrom
+        val picked = vm.selectedLayerIds().toSet()
+        SideEffect { dropFolderRef.value = intoFolder }
+        presetFor?.let { l ->
+            SavePresetDialog(onDismiss = { presetFor = null }) { name ->
+                presetFor = null
+                vm.saveStylePreset(name, l.props.style)
+            }
+        }
 
         // Up to four rows while Color or Properties is open; it gives up rows before the buttons
         val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 4)
@@ -186,6 +223,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     layer = l,
                     selected = l.id == d.activeId,
                     maskSelected = l.id == d.activeId && d.editMask,
+                    picked = picked.size > 1 && l.id in picked,
+                    dropTarget = l.id == intoFolder,
+                    onSavePreset = { presetFor = l },
                     height = rowH,
                     modifier = Modifier
                         .zIndex(if (isDragged) 1f else 0f)
@@ -202,7 +242,11 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                                 val id = dragId
                                 val doc = vm.doc
                                 val dragged = id?.let { doc?.layer(it) }
-                                if (doc != null && dragged != null && steps != 0) {
+                                val folder = dropFolderRef.value
+                                dropFolderRef.value = null
+                                if (doc != null && dragged != null && folder != null) {
+                                    vm.moveIntoFolder(dragged.id, folder)
+                                } else if (doc != null && dragged != null && steps != 0) {
                                     // Rows as they are now (this lambda may be older than the panel)
                                     val rows = ArrayList<Layer>()
                                     fun add(parent: Long) {
@@ -326,8 +370,16 @@ private fun LayerRow(
     modifier: Modifier,
     onRename: () -> Unit,
     handle: Modifier,
+    /** Picked along with others (several layers picked). */
+    picked: Boolean = false,
+    /** A layer being dragged would go into this folder. */
+    dropTarget: Boolean = false,
+    onSavePreset: () -> Unit = {},
 ) {
     val p = layer.props
+    var menu by remember { mutableStateOf(false) }
+    val swipe = with(LocalDensity.current) { 48.dp.toPx() }
+    Box {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -335,9 +387,29 @@ private fun LayerRow(
             .height(height)
             .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) Q.rowSelected else Q.row)
-            .combinedClickable(onClick = { vm.selectLayer(layer.id, mask = false) }, onLongClick = onRename),
+            .background(if (selected || picked) Q.rowSelected else Q.row)
+            .then(if (dropTarget) Modifier.border(2.dp, Q.accent, RoundedCornerShape(10.dp)) else Modifier)
+            // Swipe right: add to (or take out of) the picked layers
+            .pointerInput(layer.id) {
+                var total = 0f
+                var done = false
+                detectHorizontalDragGestures(
+                    onDragStart = { total = 0f; done = false },
+                    onHorizontalDrag = { change, amount ->
+                        total += amount
+                        if (!done && total > swipe) {
+                            done = true
+                            change.consume()
+                            vm.toggleMultiSelect(layer.id)
+                        }
+                    },
+                )
+            }
+            .combinedClickable(onClick = { vm.selectLayer(layer.id, mask = false) }, onLongClick = { menu = true }),
     ) {
+        if (picked) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = "Picked", tint = Q.accent, modifier = Modifier.padding(start = 4.dp).size(16.dp))
+        }
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -410,6 +482,37 @@ private fun LayerRow(
         Box(contentAlignment = Alignment.Center, modifier = handle.size(44.dp)) {
             Icon(Icons.Outlined.DragHandle, contentDescription = "Drag to reorder", tint = Q.text)
         }
+    }
+    // Long press: this layer's quick actions
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        fun item(label: String, enabled: Boolean = true, action: () -> Unit) = @Composable {
+            DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
+                menu = false
+                action()
+            })
+        }
+        val ids = if (vm.isMultiSelecting && layer.id in vm.selectedLayerIds()) vm.selectedLayerIds() else listOf(layer.id)
+        item("Rename…") { onRename() }()
+        HorizontalDivider()
+        item("Copy layer style", enabled = layer.hasContent) { vm.copyLayerStyle(layer.id) }()
+        item(if (ids.size > 1) "Paste layer style (${ids.size} layers)" else "Paste layer style", enabled = vm.copiedStyle != null) { vm.pasteLayerStyle(ids) }()
+        item("Save layer style as preset…", enabled = p.style.any) { onSavePreset() }()
+        item("Clear layer style", enabled = p.style.any) { vm.applyStyleTo(ids, "Clear layer style", com.tim.quartzeditor.engine.LayerStyle()) }()
+        HorizontalDivider()
+        if (ids.size > 1) {
+            item("Merge ${ids.size} layers") { vm.mergeDown() }()
+        } else {
+            item(if (layer.isGroup) "Merge folder" else "Merge down") {
+                vm.onLayer(layer.id) { mergeDown() }
+            }()
+        }
+        item("Duplicate") {
+            vm.onLayer(layer.id) { duplicateLayer() }
+        }()
+        if (!layer.isGroup) item(if (p.clip) "Release clipping mask" else "Clip to layer below") {
+            vm.onLayer(layer.id) { toggleClip() }
+        }()
+    }
     }
 }
 

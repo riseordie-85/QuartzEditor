@@ -44,6 +44,9 @@ import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.Polyline
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.ChangeHistory
+import androidx.compose.material.icons.outlined.Hexagon
+import androidx.compose.material.icons.outlined.East
 import androidx.compose.material.icons.outlined.Rectangle
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Title
@@ -302,7 +305,7 @@ private fun ToolButton(
 /** One of the tools a toolbar button holds. */
 private class ToolOption(val icon: ImageVector, val label: String, val current: Boolean, val onPick: () -> Unit)
 
-private val SHAPE_CHOICES = listOf(com.tim.quartzeditor.engine.ShapeKind.RECT, com.tim.quartzeditor.engine.ShapeKind.ELLIPSE, com.tim.quartzeditor.engine.ShapeKind.STAR)
+private val SHAPE_CHOICES = com.tim.quartzeditor.engine.ShapeKind.TOOL_SHAPES
 
 private fun selectIcon(s: SelectShape): ImageVector = when (s) {
     SelectShape.RECT -> QIcons.SelectRect
@@ -315,6 +318,9 @@ private fun selectIcon(s: SelectShape): ImageVector = when (s) {
 private fun shapeIcon(k: com.tim.quartzeditor.engine.ShapeKind): ImageVector = when (k) {
     com.tim.quartzeditor.engine.ShapeKind.ELLIPSE -> Icons.Outlined.Circle
     com.tim.quartzeditor.engine.ShapeKind.STAR -> Icons.Outlined.StarOutline
+    com.tim.quartzeditor.engine.ShapeKind.TRIANGLE -> Icons.Outlined.ChangeHistory
+    com.tim.quartzeditor.engine.ShapeKind.POLYGON -> Icons.Outlined.Hexagon
+    com.tim.quartzeditor.engine.ShapeKind.ARROW -> Icons.Outlined.East
     else -> Icons.Outlined.Rectangle
 }
 
@@ -389,7 +395,20 @@ fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, descript
 private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit) {
     val density = LocalDensity.current
     val swipePx = with(density) { 22.dp.toPx() }
-    val tap by rememberUpdatedState(onColorTap)
+    @Suppress("UNUSED_VARIABLE") val tap by rememberUpdatedState(onColorTap)
+    // Tapping a swatch opens a color picker beside the toolbar
+    var picking by remember { mutableStateOf<ColorSlot?>(null) }
+    val gap = with(density) { (size + 24.dp).roundToPx() }
+    picking?.let { slot ->
+        ColorPickDialog(
+            vm,
+            initial = if (slot == ColorSlot.FOREGROUND) vm.foreground else vm.background,
+            title = if (slot == ColorSlot.FOREGROUND) "Foreground" else "Background",
+            onLive = { vm.setColor(slot, it) },
+            onDone = { picking = null },
+            popupOffset = androidx.compose.ui.unit.IntOffset(gap, 0),
+        )
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -412,7 +431,7 @@ private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit)
                     if (!swapped) {
                         val half = this.size.height / 2f
                         vm.colorSlot = if (down.position.y < half) ColorSlot.FOREGROUND else ColorSlot.BACKGROUND
-                        tap()
+                        picking = vm.colorSlot
                     }
                 }
             },

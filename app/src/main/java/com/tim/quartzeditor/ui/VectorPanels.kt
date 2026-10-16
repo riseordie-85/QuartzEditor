@@ -3,6 +3,8 @@ package com.tim.quartzeditor.ui
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -89,7 +91,7 @@ import androidx.compose.ui.text.font.Typeface as ComposeTypeface
 
 // ===================================================================== shapes
 
-private val SHAPE_CHOICES = listOf(ShapeKind.RECT, ShapeKind.ELLIPSE, ShapeKind.STAR)
+private val SHAPE_CHOICES = ShapeKind.TOOL_SHAPES
 
 /**
  * Shape settings. With a shape layer selected they change that layer (and become the settings for
@@ -155,7 +157,14 @@ fun ShapeOptions(vm: EditorViewModel) {
         }
         Spacer(Modifier.height(4.dp))
         if (layer == null) {
-            ToggleRow(if (spec.kind == ShapeKind.ELLIPSE) "Perfect circle" else "Same width and height", vm.shapeSquare) {
+            ToggleRow(
+                when (spec.kind) {
+                    ShapeKind.ELLIPSE -> "Perfect circle"
+                    ShapeKind.ARROW -> "Straight angles (45° steps)"
+                    else -> "Same width and height"
+                },
+                vm.shapeSquare,
+            ) {
                 vm.shapeSquare = it
                 vm.saveVectorPrefs()
             }
@@ -167,6 +176,18 @@ fun ShapeOptions(vm: EditorViewModel) {
             val max = if (layer != null) (minOf(spec.w, spec.h) / 2f).coerceAtLeast(1f) else 300f
             PanelSlider("Corner radius", spec.radius.coerceIn(0f, max), 0f..max, "${spec.radius.coerceAtMost(max).roundToInt()} px",
                 onChange = { v -> set("Corner radius", live = true) { it.copy(radius = v) } }, onDone = { done("Corner radius") })
+        }
+        ShapeKind.POLYGON -> {
+            PanelSlider("Sides", spec.sides.toFloat(), 3f..24f, "${spec.sides}",
+                onChange = { v -> set("Polygon sides", live = true) { it.copy(sides = v.roundToInt()) } }, onDone = { done("Polygon sides") })
+        }
+        ShapeKind.ARROW -> {
+            PanelSlider("Head length", spec.headLength, 0.2f..3f, "${(spec.headLength * 100).roundToInt()}%",
+                onChange = { v -> set("Arrow head", live = true) { it.copy(headLength = v) } }, onDone = { done("Arrow head") })
+            PanelSlider("Head width", spec.headWidth, 0.3f..2f, "${(spec.headWidth * 100).roundToInt()}%",
+                onChange = { v -> set("Arrow head", live = true) { it.copy(headWidth = v) } }, onDone = { done("Arrow head") })
+            PanelSlider("Shaft", spec.shaftWidth, 0.05f..1f, "${(spec.shaftWidth * 100).roundToInt()}%",
+                onChange = { v -> set("Arrow shaft", live = true) { it.copy(shaftWidth = v) } }, onDone = { done("Arrow shaft") })
         }
         ShapeKind.STAR -> {
             PanelSlider("Points", spec.points.toFloat(), 3f..24f, "${spec.points}",
@@ -521,7 +542,15 @@ fun RasterizeDialog(vm: EditorViewModel) {
  * [onLive] gets every change; [onDone] runs once when it closes.
  */
 @Composable
-fun ColorPickDialog(vm: EditorViewModel, initial: Int, title: String, onLive: (Int) -> Unit, onDone: () -> Unit) {
+fun ColorPickDialog(
+    vm: EditorViewModel,
+    initial: Int,
+    title: String,
+    onLive: (Int) -> Unit,
+    onDone: () -> Unit,
+    /** Shown as a pop-up beside its anchor (shifted by this) instead of a window in the middle. */
+    popupOffset: androidx.compose.ui.unit.IntOffset? = null,
+) {
     var color by remember { mutableStateOf(initial or 0xFF000000.toInt()) }
     var hue by remember { mutableFloatStateOf(hsv(initial)[0]) }
     fun pick(c: Int, keepHue: Boolean = false) {
@@ -541,12 +570,15 @@ fun ColorPickDialog(vm: EditorViewModel, initial: Int, title: String, onLive: (I
         onDone()
     }
     DisposableEffect(Unit) { onDispose { finish() } }
-    Dialog(onDismissRequest = { finish() }) {
+    val content: @Composable () -> Unit = {
         Column(
             Modifier
                 .widthIn(max = 360.dp)
+                .border(1.dp, Q.divider, RoundedCornerShape(22.dp))
                 .clip(RoundedCornerShape(22.dp))
                 .background(Q.panel)
+                // On a short screen it scrolls rather than running off the edge
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -580,6 +612,32 @@ fun ColorPickDialog(vm: EditorViewModel, initial: Int, title: String, onLive: (I
                 SmallButton("Done", primary = true) { finish() }
             }
         }
+    }
+    if (popupOffset != null) {
+        androidx.compose.ui.window.Popup(
+            popupPositionProvider = remember(popupOffset) { BesideAnchor(popupOffset) },
+            onDismissRequest = { finish() },
+            properties = androidx.compose.ui.window.PopupProperties(focusable = true, dismissOnClickOutside = true),
+        ) { content() }
+    } else {
+        Dialog(onDismissRequest = { finish() }) { content() }
+    }
+}
+
+/**
+ * Places a pop-up beside its anchor (shifted by [offset] from the anchor's bottom-left), its bottom
+ * level with the anchor's, but always fully on screen.
+ */
+private class BesideAnchor(private val offset: androidx.compose.ui.unit.IntOffset) : androidx.compose.ui.window.PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: androidx.compose.ui.unit.IntRect,
+        windowSize: androidx.compose.ui.unit.IntSize,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        popupContentSize: androidx.compose.ui.unit.IntSize,
+    ): androidx.compose.ui.unit.IntOffset {
+        val x = (anchorBounds.left + offset.x).coerceAtMost(windowSize.width - popupContentSize.width).coerceAtLeast(0)
+        val y = (anchorBounds.bottom + offset.y - popupContentSize.height).coerceAtMost(windowSize.height - popupContentSize.height).coerceAtLeast(0)
+        return androidx.compose.ui.unit.IntOffset(x, y)
     }
 }
 

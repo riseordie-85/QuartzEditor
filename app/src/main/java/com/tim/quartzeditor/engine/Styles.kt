@@ -23,6 +23,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 // ===================================================================== settings
 
@@ -94,6 +95,38 @@ data class BevelFx(
     val shadowOpacity: Float = 0.75f,
 )
 
+/**
+ * Gradient Fill (Photoshop's Gradient Overlay): the layer's pixels colored with a gradient across
+ * them. [angle] which way it runs (degrees, 90 = bottom to top), [scale] how much of the layer it
+ * spans (1 = all of it).
+ */
+data class GradientFx(
+    val on: Boolean = false,
+    val colors: List<Int> = listOf(Color.BLACK, Color.WHITE),
+    val type: GradientType = GradientType.LINEAR,
+    val angle: Float = 90f,
+    val scale: Float = 1f,
+    val reverse: Boolean = false,
+    val opacity: Float = 1f,
+)
+
+/**
+ * Long Shadow: the layer's shape dragged out in one direction (flat design style). [angle] is
+ * where the light comes from (like Drop Shadow), [length] in canvas pixels; [fade] fades it out
+ * towards its far end.
+ */
+data class LongShadowFx(
+    val on: Boolean = false,
+    val color: Int = Color.BLACK,
+    val opacity: Float = 0.35f,
+    val angle: Float = 135f,
+    val length: Float = 200f,
+    val fade: Boolean = true,
+) {
+    val ux: Float get() = -cos(angle * PI / 180.0).toFloat()
+    val uy: Float get() = sin(angle * PI / 180.0).toFloat()
+}
+
 /** A layer's effects. They don't change its pixels and can be changed or switched off any time. */
 data class LayerStyle(
     val stroke: StrokeFx = StrokeFx(),
@@ -102,14 +135,23 @@ data class LayerStyle(
     val outerGlow: GlowFx = GlowFx(),
     val colorOverlay: OverlayFx = OverlayFx(),
     val bevel: BevelFx = BevelFx(),
+    val gradientFill: GradientFx = GradientFx(),
+    val longShadow: LongShadowFx = LongShadowFx(),
 ) {
-    val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on
+    val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on || gradientFill.on || longShadow.on
 
-    /** Effects that need to be prepared as images (everything but the color overlay). */
-    val needsBuild: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || bevel.on
+    /**
+     * Effects that need to be prepared in the background (everything but the color overlay; the
+     * gradient fill needs to know where the layer's pixels are).
+     */
+    val needsBuild: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || bevel.on || gradientFill.on || longShadow.on
 
-    /** How far the effects reach past the pixels (canvas px). */
+    /** How far the effects reach past the pixels (canvas px), in every direction (see [effectRegion] for the exact area). */
     val reach: Float
+        get() = max(reachAround, if (longShadow.on) longShadow.length + 2f else 0f)
+
+    /** How far the effects other than the long shadow reach, all the way round. */
+    private val reachAround: Float
         get() = max(
             max(if (stroke.on && stroke.position != StrokePosition.INSIDE) stroke.size else 0f, if (outerGlow.on) outerGlow.size * 2f else 0f),
             max(
@@ -117,6 +159,23 @@ data class LayerStyle(
                 if (bevel.on) (if (bevel.style.outside) bevel.size * 1.6f else bevel.size * 0.8f) + bevel.soften * 2f else 0f,
             ),
         )
+
+    /**
+     * The canvas area the effects of pixels within [content] can reach: [reach] all round, except
+     * the long shadow, which only goes one way.
+     */
+    fun effectRegion(content: Rect): Rect {
+        val pad = ceil(reachAround + 4f).toInt()
+        val r = Rect(content.left - pad, content.top - pad, content.right + pad, content.bottom + pad)
+        if (longShadow.on) {
+            val ls = longShadow
+            val ex = ceil(ls.length * kotlin.math.abs(ls.ux) + 2f).toInt()
+            val ey = ceil(ls.length * kotlin.math.abs(ls.uy) + 2f).toInt()
+            if (ls.ux > 0f) r.right = max(r.right, content.right + ex) else r.left = min(r.left, content.left - ex)
+            if (ls.uy > 0f) r.bottom = max(r.bottom, content.bottom + ey) else r.top = min(r.top, content.top - ey)
+        }
+        return r
+    }
 
     fun toJson(): JSONObject = JSONObject()
         .put("stroke", JSONObject().put("on", stroke.on).put("size", stroke.size.toDouble()).put("position", stroke.position.name).put("color", stroke.color).put("opacity", stroke.opacity.toDouble()))
@@ -128,6 +187,12 @@ data class LayerStyle(
             .put("size", bevel.size.toDouble()).put("soften", bevel.soften.toDouble()).put("angle", bevel.angle.toDouble()).put("altitude", bevel.altitude.toDouble())
             .put("highlight", bevel.highlight).put("highlightOpacity", bevel.highlightOpacity.toDouble())
             .put("shadow", bevel.shadow).put("shadowOpacity", bevel.shadowOpacity.toDouble()))
+        .put("gradientFill", JSONObject().put("on", gradientFill.on)
+            .put("colors", org.json.JSONArray().also { a -> gradientFill.colors.forEach { a.put(it.toLong() and 0xFFFFFFFFL) } })
+            .put("type", gradientFill.type.name).put("angle", gradientFill.angle.toDouble()).put("scale", gradientFill.scale.toDouble())
+            .put("reverse", gradientFill.reverse).put("opacity", gradientFill.opacity.toDouble()))
+        .put("longShadow", JSONObject().put("on", longShadow.on).put("color", longShadow.color).put("opacity", longShadow.opacity.toDouble())
+            .put("angle", longShadow.angle.toDouble()).put("length", longShadow.length.toDouble()).put("fade", longShadow.fade))
 
     companion object {
         private fun shadowJson(s: ShadowFx) = JSONObject().put("on", s.on).put("color", s.color).put("opacity", s.opacity.toDouble())
@@ -147,6 +212,10 @@ data class LayerStyle(
             val ov = o.optJSONObject("colorOverlay")
             val bv = o.optJSONObject("bevel")
             val db = d.bevel
+            val gf = o.optJSONObject("gradientFill")
+            val dg = d.gradientFill
+            val lsh = o.optJSONObject("longShadow")
+            val dl = d.longShadow
             return LayerStyle(
                 stroke = if (st == null) d.stroke else StrokeFx(
                     st.optBoolean("on"), st.f("size", d.stroke.size),
@@ -164,6 +233,16 @@ data class LayerStyle(
                     bv.f("angle", db.angle), bv.f("altitude", db.altitude),
                     bv.optInt("highlight", db.highlight), bv.f("highlightOpacity", db.highlightOpacity),
                     bv.optInt("shadow", db.shadow), bv.f("shadowOpacity", db.shadowOpacity),
+                ),
+                gradientFill = if (gf == null) dg else GradientFx(
+                    gf.optBoolean("on"),
+                    gf.optJSONArray("colors")?.let { a -> List(a.length()) { a.optLong(it).toInt() } }?.takeIf { it.size >= 2 } ?: dg.colors,
+                    GradientType.entries.firstOrNull { it.name == gf.optString("type") } ?: GradientType.LINEAR,
+                    gf.f("angle", dg.angle), gf.f("scale", dg.scale), gf.optBoolean("reverse"), gf.f("opacity", dg.opacity),
+                ),
+                longShadow = if (lsh == null) dl else LongShadowFx(
+                    lsh.optBoolean("on"), lsh.optInt("color", dl.color), lsh.f("opacity", dl.opacity),
+                    lsh.f("angle", dl.angle), lsh.f("length", dl.length), lsh.optBoolean("fade", true),
                 ),
             )
         }
@@ -190,6 +269,9 @@ class BuiltEffects(
     /** Bevel & Emboss: where it's lit, and where it's shaded. */
     val bevelLight: Bitmap? = null,
     val bevelShade: Bitmap? = null,
+    val longShadow: Bitmap? = null,
+    /** Where the layer's visible pixels are (layer-local), for the gradient fill. */
+    val content: RectF? = null,
 )
 
 object Effects {
@@ -197,7 +279,8 @@ object Effects {
     /** What the effects of [layer] depend on; when it changes they have to be rebuilt. */
     fun keyOf(layer: Layer): Any = listOf(
         System.identityHashCode(layer.tiles), System.identityHashCode(layer.mask), layer.pixelVersion,
-        layer.props.style.copy(colorOverlay = OverlayFx()), layer.props.maskDisabled,
+        // The overlays are drawn as they are (only whether the gradient is on needs a build)
+        layer.props.style.copy(colorOverlay = OverlayFx(), gradientFill = GradientFx(on = layer.props.style.gradientFill.on)), layer.props.maskDisabled,
     )
 
     /**
@@ -208,9 +291,15 @@ object Effects {
         if (!style.needsBuild || tiles.isEmpty()) return null
         val grid = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }
         val content = grid.tileBounds() ?: return null
-        val pad = ceil(style.reach + 4f).toInt()
-        val region = Rect(content.left - pad, content.top - pad, content.right + pad, content.bottom + pad)
-        val s = min(1f, maxSide.toFloat() / max(region.width(), region.height()))
+        val exact = if (style.gradientFill.on) Transformer.contentBounds(tiles)?.let { RectF(it) } else null
+        // Only the gradient fill: it just needs to know where the pixels are
+        if (!(style.stroke.on || style.dropShadow.on || style.innerShadow.on || style.outerGlow.on || style.bevel.on || style.longShadow.on)) {
+            return BuiltEffects(key, tilesId, RectF(content), 1f, null, null, null, null, content = exact ?: RectF(content))
+        }
+        val region = style.effectRegion(content)
+        var s = min(1f, maxSide.toFloat() / max(region.width(), region.height()))
+        // The long shadow keeps three images of this size alive at once: keep each under ~24 million pixels
+        if (style.longShadow.on) s = min(s, sqrt(24_000_000.0 / (region.width().toDouble() * region.height())).toFloat())
         val w = (region.width() * s).roundToInt().coerceAtLeast(1)
         val h = (region.height() * s).roundToInt().coerceAtLeast(1)
 
@@ -300,7 +389,11 @@ object Effects {
         var inner: Bitmap? = null
         var bevelLight: Bitmap? = null
         var bevelShade: Bitmap? = null
+        var long: Bitmap? = null
         try {
+            if (style.longShadow.on && style.longShadow.length > 0f) {
+                long = longShadow(shape, style.longShadow, s, w, h, region, exact ?: Transformer.contentBounds(tiles)?.let { RectF(it) })
+            }
             if (style.dropShadow.on) {
                 drop = blurred(shape, style.dropShadow.dx, style.dropShadow.dy, style.dropShadow.size / 2f)
             }
@@ -356,7 +449,65 @@ object Effects {
             shape.recycle()
             inverse?.recycle()
         }
-        return BuiltEffects(key, tilesId, RectF(region), s, drop, glow, stroke, inner, bevelLight, bevelShade)
+        return BuiltEffects(key, tilesId, RectF(region), s, drop, glow, stroke, inner, bevelLight, bevelShade, long, exact ?: RectF(content))
+    }
+
+    /**
+     * Long Shadow: the [shape] (white, effect scale [s], covering [region]) stamped again and again
+     * along the shadow's direction, doubling how far it reaches each pass.
+     */
+    private fun longShadow(shape: Bitmap, ls: LongShadowFx, s: Float, w: Int, h: Int, region: Rect, content: RectF?): Bitmap {
+        val total = ls.length * s
+        var cur = shape.copy(Bitmap.Config.ARGB_8888, true)
+        var done = 0f
+        val p = Paint().apply { isFilterBitmap = true }
+        while (done < total - 0.01f) {
+            val step = min(total - done, max(1f, done))
+            val next = cur.copy(Bitmap.Config.ARGB_8888, true)
+            Canvas(next).drawBitmap(cur, ls.ux * step, ls.uy * step, p)
+            cur.recycle()
+            cur = next
+            done += step
+        }
+        if (ls.fade) {
+            // Strong at the shape, gone at the far end
+            val c = content ?: RectF(region)
+            val cx = (c.centerX() - region.left) * s
+            val cy = (c.centerY() - region.top) * s
+            val half = (kotlin.math.abs(c.width() * ls.ux) + kotlin.math.abs(c.height() * ls.uy)) / 2f * s
+            val g = android.graphics.LinearGradient(
+                cx, cy, cx + ls.ux * (half + total), cy + ls.uy * (half + total),
+                intArrayOf(Color.WHITE, Color.WHITE, Color.TRANSPARENT), floatArrayOf(0f, (half / (half + total)).coerceIn(0f, 1f), 1f),
+                Shader.TileMode.CLAMP,
+            )
+            Canvas(cur).drawPaint(Paint().apply {
+                shader = g
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+            })
+        }
+        return toAlpha(cur)
+    }
+
+    /**
+     * Paints the gradient fill over what's in the current layer of [canvas] (call inside a
+     * saveLayer holding the layer's pixels). [area] is where the layer's pixels are (canvas pixels).
+     */
+    fun drawGradientFill(canvas: Canvas, g: GradientFx, area: RectF) {
+        val a = Math.toRadians(g.angle.toDouble())
+        val ux = cos(a).toFloat()
+        val uy = -sin(a).toFloat()
+        val extent = (kotlin.math.abs(area.width() * ux) + kotlin.math.abs(area.height() * uy)) * g.scale.coerceIn(0.05f, 5f)
+        val cx = area.centerX()
+        val cy = area.centerY()
+        val spec = GradientSpec(g.colors, g.type, 1f, g.reverse)
+        val (start, end) = when (g.type) {
+            GradientType.LINEAR -> android.graphics.PointF(cx - ux * extent / 2f, cy - uy * extent / 2f) to android.graphics.PointF(cx + ux * extent / 2f, cy + uy * extent / 2f)
+            else -> android.graphics.PointF(cx, cy) to android.graphics.PointF(cx + ux * extent / 2f, cy + uy * extent / 2f)
+        }
+        canvas.drawPaint(Paint().apply {
+            shader = GradientPainter.shader(spec, start, end)
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        })
     }
 
     /**

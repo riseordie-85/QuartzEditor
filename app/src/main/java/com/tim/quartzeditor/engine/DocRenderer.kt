@@ -34,7 +34,12 @@ class LayerPreview(
     val gradient: GradientDrag? = null,
     /** Adjustments being tried only change what's selected. */
     val selection: Selection? = null,
+    /** Other layers drawn differently at the same time (moving or transforming several layers). */
+    val others: Map<Long, LayerPreview> = emptyMap(),
 ) {
+    /** How layer [id] is drawn for the moment, if it's one of these. */
+    fun of(id: Long): LayerPreview? = if (id == layerId) this else others[id]
+
     private val shader by lazy { ColorShader() }
 
     /** A separate one for the blur preview: as a render effect, its picture comes from the effect. */
@@ -209,7 +214,7 @@ object DocRenderer {
             canvas.saveLayer(ctx.bounds, Paint().apply { blendMode = l.props.blend.mode })
             drawNode(canvas, l, ctx.with(clips = emptyMap(), clipBase = null), blendNormal = true, fullOpacity = false)
             canvas.saveLayer(ctx.bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
-            val bp = ctx.preview?.takeIf { it.layerId == base.id }
+            val bp = ctx.preview?.of(base.id)
             drawContent(
                 canvas, ctx.docW, ctx.docH, base, ctx.bounds, ctx.tilePaint, ctx.stroke?.takeIf { it.layer === base }, bp, ctx.smooth,
                 base.x + (bp?.dragX ?: 0f), base.y + (bp?.dragY ?: 0f),
@@ -244,15 +249,15 @@ object DocRenderer {
         when (l.kind) {
             LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
-                ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.takeIf { it.layerId == l.id }, ctx.smooth, ctx.effects,
+                ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.of(l.id), ctx.smooth, ctx.effects,
                 blendNormal = blendNormal, fullOpacity = fullOpacity,
             )
             LayerKind.GROUP -> {
                 val p = l.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
                 val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
                 if (alpha <= 0f) return
-                val dragX = ctx.preview?.takeIf { it.layerId == l.id }?.dragX ?: 0f
-                val dragY = ctx.preview?.takeIf { it.layerId == l.id }?.dragY ?: 0f
+                val dragX = ctx.preview?.of(l.id)?.dragX ?: 0f
+                val dragY = ctx.preview?.of(l.id)?.dragY ?: 0f
                 // A folder is drawn as one picture, then blended (its layers' blend modes stay inside it)
                 canvas.saveLayer(ctx.bounds, Paint().apply {
                     this.alpha = (alpha * 255).roundToInt()
@@ -285,7 +290,7 @@ object DocRenderer {
             maskStroke.applyToMask(canvas, 0f, 0f, RectF(ctx.bounds).apply { offset(-dx, -dy) }, smooth = ctx.smooth)
             canvas.restore()
         }
-        ctx.preview?.takeIf { it.layerId == l.id }?.gradient?.takeIf { it.toMask }?.let { g ->
+        ctx.preview?.of(l.id)?.gradient?.takeIf { it.toMask }?.let { g ->
             val area = RectF(0f, 0f, ctx.docW, ctx.docH).apply { intersect(ctx.bounds) }
             GradientPainter.paintMask(canvas, area, g.spec, g.start, g.end, g.selection, 0f, 0f)
         }
@@ -354,8 +359,8 @@ object DocRenderer {
             val nr = next.beginRecording(w, h)
             nr.drawRenderNode(below)
             val op = (l.props.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-            val mx = l.x + (ctx.preview?.takeIf { it.layerId == l.id }?.dragX ?: 0f)
-            val my = l.y + (ctx.preview?.takeIf { it.layerId == l.id }?.dragY ?: 0f)
+            val mx = l.x + (ctx.preview?.of(l.id)?.dragX ?: 0f)
+            val my = l.y + (ctx.preview?.of(l.id)?.dragY ?: 0f)
             fun adjustedWithMask() {
                 nr.drawRenderNode(adjusted)
                 nr.save()
@@ -487,7 +492,7 @@ object DocRenderer {
         val dx = layer.x + (preview?.dragX ?: 0f)
         val dy = layer.y + (preview?.dragY ?: 0f)
 
-        if (built == null && overlay == null) {
+        if (built == null && overlay == null && !(style.gradientFill.on && !transforming)) {
             // No effects: the layer's opacity and fill simply multiply
             val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
             if (alpha <= 0f) return
@@ -513,6 +518,7 @@ object DocRenderer {
             blendMode = p.blend.mode
         })
         if (built != null) {
+            if (style.longShadow.on) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity)
             if (style.dropShadow.on) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity)
             if (style.outerGlow.on) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity)
         }
@@ -521,6 +527,17 @@ object DocRenderer {
             canvas.saveLayer(bounds, Paint().apply { alpha = (p.fill.coerceIn(0f, 1f) * 255).roundToInt() })
             drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
             canvas.restore()
+        }
+        val gradient = style.gradientFill.takeIf { it.on && !transforming && it.opacity > 0f }
+        if (gradient != null) {
+            // The layer's shape, filled with the gradient across where its pixels are
+            val area = (built?.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }
+            if (area != null) {
+                canvas.saveLayer(bounds, Paint().apply { alpha = (gradient.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+                drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+                Effects.drawGradientFill(canvas, gradient, area)
+                canvas.restore()
+            }
         }
         if (overlay != null && overlay.opacity > 0f) {
             // The layer's shape, colored (at full strength, whatever the fill)

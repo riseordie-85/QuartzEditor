@@ -36,14 +36,17 @@ selection tools, the shapes, pen drawing/point editing).
   Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
 - **Transform** — a box around the selected layer: drag inside to move, corners to scale (proportions
   locked unless you unlink them), edges to stretch, outside the box or the top handle to rotate (snaps to
-  straight angles). The bar on the picture has flip, rotate 90°, **Distort** and Apply.
+  straight angles). The bar on the picture has flip, rotate 90°, **Skew** (slide a side or corner along
+  itself), **Perspective** (drag a corner; the other end of that side moves the opposite way), **Distort**
+  (corners anywhere) and Apply. With several layers picked, they transform together.
 - **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
 - **Paint bucket** — tap to fill matching pixels with the foreground color. Tolerance, "only touching
   pixels" and "look at all layers" are in Properties.
 - **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
   Linear / Radial / Reflected, reverse and opacity are in Properties.
-- **Shape** — drag to draw a Rectangle, Ellipse or Star on a new shape layer; tap the tool again for the
-  next shape. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
+- **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from
+  where you start dragging to where you stop) on a new shape layer; tap the tool again for the next shape,
+  or hold it for the list. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
   the star's points and depth (no depth makes a polygon), and "same width and height". New shapes always
   start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
   layer selected, Properties changes that shape.
@@ -60,8 +63,8 @@ selection tools, the shapes, pen drawing/point editing).
 - **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
 - The toolbar's buttons shrink to fit the screen's height (it only scrolls on very short screens).
-- **Colors** — foreground (top) and background. Tap one to edit it in the Color panel; swipe up or down on
-  them to swap.
+- **Colors** — foreground (top) and background. Tap one for a color picker beside the toolbar; swipe up or
+  down on them to swap.
 
 ### On the picture
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
@@ -88,9 +91,14 @@ Only **Color**, **Properties** and **Layers** live in the column.
   - Blend modes (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
   - Lock transparent pixels and lock the whole layer.
-  - Each layer: show/hide, thumbnail, mask thumbnail, name (long-press to rename), drag handle to reorder.
-  - **Folders**: the arrow folds/unfolds them. Drag a layer just under a folder's row to put it inside;
-    drag it below the folder's contents to take it out.
+  - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder. **Long-press** a layer
+    for Rename, Copy / Paste layer style, Save layer style as preset, Clear style, Merge down, Duplicate and
+    Clip to layer below.
+  - **Pick several layers**: swipe right on a row (again to take it out). Move, Transform, Delete, put in a
+    folder (Ctrl+G), merge (Ctrl+E) and pasting styles work on all of them. Tap any layer (or "n picked ✕")
+    to go back to one.
+  - **Folders**: the arrow folds/unfolds them. Drag a layer onto a folder's row (it lights up) to put it
+    inside, or just under the folder's row; drag it below the folder's contents to take it out.
   - **Clipping masks**: ⋮ → **Clip to layer below** (or Ctrl+Alt+G) shows a layer only where the layer
     under it has pixels: a texture or photo inside text, a color only on one object, an adjustment that
     only changes one layer. Clipped layers show an arrow; stack several on one base. The base's opacity
@@ -108,7 +116,9 @@ Only **Color**, **Properties** and **Layers** live in the column.
 ### Floating windows
 **Layer Style**, **Adjustments**, **Levels**, **Curves**, **Gaussian Blur** and **Filters** open in a window
 over the picture (from the bottom of the Layers panel), so you can see the result while you change them.
-- **Layer Style** — Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
+- **Layer Style** — **Presets** at the top (ready-made ones like Soft shadow, Sticker, Neon, Gold, Chrome,
+  and your own: "+ Save" saves the current style; hold one of yours to delete it). Gradient Fill (any
+  gradient, linear/radial/reflected, angle, scale, reverse), Long Shadow (angle, length, fade), Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
   angle and altitude, highlight and shadow colors), Stroke (outside, inside, center), Drop Shadow, Inner
   Shadow, Outer Glow, Color Overlay.
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
