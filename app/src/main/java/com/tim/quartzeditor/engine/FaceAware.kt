@@ -137,15 +137,23 @@ object FaceAware {
         // 200 px faces); landmarks alone if that doesn't work
         val out = ArrayList<FaceFeatures>()
         for (f in faces.sortedByDescending { it.boundingBox.width() * it.boundingBox.height() }) {
-            val again = cropAround(image, f.boundingBox)?.let { (crop, cx, cy) ->
+            val again = try {
+                cropAround(image, f.boundingBox)?.let { (crop, cx, cy) ->
                 val side = max(f.boundingBox.width(), f.boundingBox.height()).coerceAtLeast(1)
-                val up = (320f / side).coerceIn(1f, 2000f / max(crop.width, crop.height))
+                val maxUp = 2000f / max(crop.width, crop.height)
+                val up = if (maxUp <= 1f) 1f else (320f / side).coerceIn(1f, maxUp)
                 val big = if (up > 1.01f) Bitmap.createScaledBitmap(crop, (crop.width * up).toInt().coerceAtLeast(1), (crop.height * up).toInt().coerceAtLeast(1), true) else crop
                 val real = big.width / crop.width.toFloat()
                 findOne(big, k / real, offX + cx * k, offY + cy * k).also {
                     if (big !== crop) big.recycle()
                     if (crop !== image) crop.recycle()
                 }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Landmarks alone, then
+                null
             }
             (again ?: runCatching { features(f, k, offX, offY) }.getOrNull())?.let { out.add(it) }
         }

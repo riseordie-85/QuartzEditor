@@ -418,7 +418,12 @@ fun EditorViewModel.warpDown(x: Float, y: Float, reach: Float): Boolean {
             s.pushStep()
             s.changed = false
             // Brushes work on what you see: the face sliders' changes become part of the mesh first
-            if (s.hasFaceEdits) {
+            val r = liquifyRadius(s)
+            val nearFace = s.faces.any { f ->
+                val m = r + 0.3f * max(f.faceW, f.faceH)
+                x > f.box.left - m && x < f.box.right + m && y > f.box.top - m && y < f.box.bottom + m
+            }
+            if (s.hasFaceEdits && nearFace) {
                 s.bakeFaces()
                 s.changed = true
                 s.version++
