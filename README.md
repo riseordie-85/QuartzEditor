@@ -39,6 +39,18 @@ selection tools, the shapes, pen drawing/point editing).
   straight angles). The bar on the picture has flip, rotate 90°, **Skew** (slide a side or corner along
   itself), **Perspective** (drag a corner; the other end of that side moves the opposite way), **Distort**
   (corners anywhere) and Apply. With several layers picked, they transform together.
+- **Warp / Puppet Warp / Liquify** — hold the Transform button to pick one (it works on the selected pixel
+  layer; shapes and text ask to be rasterized). The bar on top has Cancel, Undo (steps back one change; so do
+  Ctrl+Z and a two-finger tap), Reset and Apply. All three are shown on a smaller copy while you work and
+  applied at full size (the mask bends too) as one undo step.
+  - **Warp:** a 4×4 grid of curve points. Drag a point, or anywhere on the picture to bend it right there.
+    Ready-made shapes (Arc, Bulge, Flag, Wave, Squeeze, Inflate) with a Bend slider; dragging after one
+    carries on from it.
+  - **Puppet Warp:** tap to add pins, drag a pin to bend the picture around the others (as rigidly as it
+    can). Tap a pin to pick it; the bin deletes it. Stiffness sets how far each pin's pull reaches.
+  - **Liquify** (Ctrl+Shift+X): Push, Bloat, Pucker, Twirl both ways, Smooth and Restore brushes, with size
+    ([ and ]) and strength. Bloat, Pucker and Twirl keep working while you hold still. The picture's edges
+    stay put, so an edge-to-edge photo never pulls in empty space.
 - **Eyedropper** — touch and drag; lifting picks the color into the swatch you're editing.
 - **Paint bucket / Pattern fill** — tap to fill matching pixels with the foreground color, or with a
   pattern (tap the tool again, or hold it, to switch). Tolerance, "only touching pixels" and "look at all
@@ -158,12 +170,12 @@ in between. With a selection, the mask button makes a mask that shows only what'
 ## Keyboard shortcuts
 With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd):
 - Tools: **V** move, **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
-  (Shift+M switches), **L** lasso/polygonal (Shift+L), **W** magic wand, **C** crop, **Ctrl+T** transform,
+  (Shift+M switches), **L** lasso/polygonal (Shift+L), **W** magic wand, **C** crop, **Ctrl+T** transform, **Ctrl+Shift+X** liquify,
   **I** eyedropper, **G** gradient/bucket (Shift+G), **U** shape (Shift+U next shape), **P** pen, **A** edit
   points, **T** text, **B** brush, **E** eraser.
 - Brush: **[ ]** size, **Shift+[ ]** softer/harder, **1…0** opacity 10…100% (with Move: the layer's opacity).
 - Colors: **X** swap, **D** black and white.
-- Undo **Ctrl+Z**, redo **Ctrl+Shift+Z** or **Ctrl+Y**.
+- Undo **Ctrl+Z**, redo **Ctrl+Shift+Z** or **Ctrl+Y**. **Enter** applies and **Esc** cancels a transform, warp or crop.
 - Selections: **Ctrl+A** all, **Ctrl+D** deselect, **Ctrl+Shift+I** invert, **Delete** delete selected
   pixels (no selection: delete the layer), **Alt+Delete** fill foreground, **Ctrl+Delete** fill background.
 - Layers: **Ctrl+J** duplicate (copy the selection to a new layer; **Ctrl+Shift+J** cut it),

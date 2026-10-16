@@ -15,6 +15,9 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/** A picture stretched over a grid of [cols]×[rows] cells whose points are [pts] (canvas pixels). */
+class MeshPreview(val proxy: Bitmap, val cols: Int, val rows: Int, val pts: FloatArray)
+
 /**
  * A layer drawn differently for a moment: an adjustment/filter preview, or a layer being dragged.
  */
@@ -36,6 +39,8 @@ class LayerPreview(
     val selection: Selection? = null,
     /** Other layers drawn differently at the same time (moving or transforming several layers). */
     val others: Map<Long, LayerPreview> = emptyMap(),
+    /** Being warped (Warp, Puppet Warp, Liquify): [proxy] (with its mask applied) stretched over these points. */
+    val mesh: MeshPreview? = null,
 ) {
     /** How layer [id] is drawn for the moment, if it's one of these. */
     fun of(id: Long): LayerPreview? = if (id == layerId) this else others[id]
@@ -485,7 +490,7 @@ object DocRenderer {
         fullOpacity: Boolean = false,
     ) {
         val p = layer.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
-        val transforming = preview?.transform != null
+        val transforming = preview?.transform != null || preview?.mesh != null
         val style = p.style
         val built = if (style.needsBuild && !transforming) effects?.invoke(layer) else null
         val overlay = style.colorOverlay.takeIf { it.on && !transforming }
@@ -579,6 +584,14 @@ object DocRenderer {
         dy: Float,
     ) {
         val local = RectF(bounds).apply { offset(-dx, -dy) }
+        preview?.mesh?.let { m ->
+            // Being warped: the proxy already has the mask applied (points are canvas pixels)
+            canvas.save()
+            canvas.translate(dx - layer.x, dy - layer.y)
+            WarpMath.draw(canvas, m.proxy, m.cols, m.rows, m.pts)
+            canvas.restore()
+            return
+        }
         val t = preview?.transform
         if (t != null && preview.proxy != null) {
             // Being transformed: the proxy already has the mask applied

@@ -40,6 +40,9 @@ import androidx.compose.material.icons.outlined.Transform
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Texture
+import androidx.compose.material.icons.outlined.GridOn
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.Polyline
@@ -144,7 +147,15 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                 options = SelectShape.entries.map { s -> ToolOption(selectIcon(s), s.label, t == Tool.SELECT && vm.selectShape == s) { vm.chooseSelectShape(s) } },
             ) { vm.onToolButton(Tool.SELECT) }
             ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
-            ToolButton(QIcons.Transform, "Transform (scale, rotate, flip, distort)", t == Tool.TRANSFORM, buttonSize) { vm.onToolButton(Tool.TRANSFORM) }
+            ToolButton(
+                if (t == Tool.WARP) warpIcon(vm.warpKind) else QIcons.Transform,
+                if (t == Tool.WARP) "${vm.warpKind.label} (hold for Transform and the others)" else "Transform (hold for Warp, Puppet Warp, Liquify)",
+                t == Tool.TRANSFORM || t == Tool.WARP, buttonSize,
+                options = listOf(ToolOption(QIcons.Transform, "Transform", t == Tool.TRANSFORM) { vm.onToolButton(Tool.TRANSFORM) }) +
+                    com.tim.quartzeditor.engine.WarpKind.entries.map { k ->
+                        ToolOption(warpIcon(k), k.label, t == Tool.WARP && vm.warpKind == k) { vm.chooseWarp(k) }
+                    },
+            ) { if (t == Tool.WARP) vm.beginWarp() else vm.onToolButton(Tool.TRANSFORM) }
             ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
             ToolButton(
                 if (vm.bucketPattern) Icons.Outlined.Texture else Icons.Outlined.FormatColorFill,
@@ -176,6 +187,12 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
 }
 
 private val MIN_TOOL_BUTTON = 30.dp
+
+internal fun warpIcon(k: com.tim.quartzeditor.engine.WarpKind) = when (k) {
+    com.tim.quartzeditor.engine.WarpKind.WARP -> Icons.Outlined.GridOn
+    com.tim.quartzeditor.engine.WarpKind.PUPPET -> Icons.Outlined.PushPin
+    com.tim.quartzeditor.engine.WarpKind.LIQUIFY -> Icons.Outlined.WaterDrop
+}
 
 /** Brush tips and the three sliders, for whichever of brush or eraser is in use. */
 @Composable

@@ -181,6 +181,7 @@ fun Workspace(vm: EditorViewModel) {
                 TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 SelectBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 

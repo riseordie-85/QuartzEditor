@@ -31,6 +31,12 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         KeyEvent.KEYCODE_LEFT_BRACKET, KeyEvent.KEYCODE_RIGHT_BRACKET -> {
             if (cmd) return false
             val bigger = e.keyCode == KeyEvent.KEYCODE_RIGHT_BRACKET
+            if (tool == Tool.WARP && warpKind == com.tim.quartzeditor.engine.WarpKind.LIQUIFY) {
+                liquifySize = (liquifySize * if (bigger) 1.15f else 1f / 1.15f).coerceIn(8f, 2000f)
+                saveLiquifyPrefs()
+                toast("Liquify size ${liquifySize.roundToInt()} px")
+                return true
+            }
             val forTool = if (tool == Tool.ERASER) Tool.ERASER else Tool.BRUSH
             if (shift) {
                 // Shift+[ softer, Shift+] harder (Photoshop's hardness, the other way round)
@@ -68,6 +74,8 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             KeyEvent.KEYCODE_Z -> if (shift) redo() else undo()
             KeyEvent.KEYCODE_Y -> redo()
             KeyEvent.KEYCODE_T -> onToolButton(Tool.TRANSFORM)
+            // Ctrl+Shift+X: Liquify (like Photoshop)
+            KeyEvent.KEYCODE_X -> if (shift) chooseWarp(com.tim.quartzeditor.engine.WarpKind.LIQUIFY) else return false
             KeyEvent.KEYCODE_D -> deselect()
             KeyEvent.KEYCODE_A -> selectAll()
             KeyEvent.KEYCODE_I -> if (shift) invertSelection() else return false
@@ -127,6 +135,7 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         }
         KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> when {
             transform != null -> applyTransform()
+            warp != null -> applyWarp()
             cropBox != null -> applyCrop()
             penPoints.size >= 2 -> finishPen(closed = penPoints.size >= 3)
             pendingFx != null -> applyFx { popup = null }
@@ -135,6 +144,7 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         KeyEvent.KEYCODE_ESCAPE -> when {
             textEdit != null -> cancelText()
             transform != null -> cancelTransform()
+            warp != null -> cancelWarp()
             cropBox != null -> cancelCrop()
             penPoints.isNotEmpty() -> cancelPen()
             polygonPoints.isNotEmpty() -> cancelPolygon()

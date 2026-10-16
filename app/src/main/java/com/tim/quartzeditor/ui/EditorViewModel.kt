@@ -60,7 +60,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, SHAPE, PEN, TEXT, BRUSH, ERASER }
+enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, SHAPE, PEN, TEXT, BRUSH, ERASER, WARP }
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
@@ -149,6 +149,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var patternScale by mutableFloatStateOf(prefs.getFloat("patternScale", 1f))
     /** Your own patterns (the ready-made ones are always there). */
     var userPatterns by mutableStateOf(com.tim.quartzeditor.engine.Patterns.mine(app))
+
+    // ------------------------------------------------------------ phase 5: Warp, Puppet Warp, Liquify (WarpActions.kt)
+
+    /** Which of them the Warp tool does. */
+    var warpKind by mutableStateOf(com.tim.quartzeditor.engine.WarpKind.entries.getOrElse(prefs.getInt("warpKind", 0)) { com.tim.quartzeditor.engine.WarpKind.WARP })
+    /** The layer being warped, while it is. */
+    var warp by mutableStateOf<WarpSession?>(null)
+        internal set
+    var liquifyTool by mutableStateOf(com.tim.quartzeditor.engine.LiquifyTool.entries.getOrElse(prefs.getInt("liquifyTool", 0)) { com.tim.quartzeditor.engine.LiquifyTool.PUSH })
+    /** Liquify brush size (canvas pixels across) and strength 0..1. */
+    var liquifySize by mutableFloatStateOf(prefs.getFloat("liquifySize", 200f))
+    var liquifyStrength by mutableFloatStateOf(prefs.getFloat("liquifyStrength", 0.5f))
+    /** Liquify brush outline while a finger is down (canvas pixels). */
+    var warpCursor by mutableStateOf<android.graphics.PointF?>(null)
+    internal var liquifyJob: Job? = null
 
     var gradientPreset by mutableIntStateOf(prefs.getInt("gradPreset", 0))
     var gradientType by mutableStateOf(com.tim.quartzeditor.engine.GradientType.entries.getOrElse(prefs.getInt("gradType", 0)) { com.tim.quartzeditor.engine.GradientType.LINEAR })
@@ -372,6 +387,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         multiSelected = emptySet()
         resetVectorState()
         transform = null
+        liquifyJob?.cancel()
+        warp = null
+        warpCursor = null
         samplePicture = null
         samplePictureVersion = -1
         cropBox = null
@@ -658,6 +676,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Tapping a tool's button. Tapping the move button again switches to panning; brushes show their picker. */
     fun onToolButton(t: Tool) {
         if (t == Tool.TRANSFORM && transform != null) return
+        if (t == Tool.WARP && warp != null) return
         if (t == Tool.CROP && cropBox != null) return
         if (t == Tool.SELECT && tool == Tool.SELECT) {
             // Tapping Select again: next shape
@@ -702,6 +721,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 brushPickerFor = null
                 if (t == Tool.BRUSH || t == Tool.ERASER) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
+                if (t == Tool.WARP) beginWarp()
                 if (t == Tool.CROP) beginCrop()
             }
         }
@@ -840,6 +860,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun strokeBlockReason(): String? = when {
         pendingFx != null -> "Apply or cancel the adjustment first"
         transform != null -> "Apply or cancel the transform first"
+        warp != null -> "Apply or cancel the ${warp?.kind?.label?.lowercase() ?: "warp"} first"
         cropBox != null -> "Apply or cancel the crop first"
         else -> paintBlocker(doc?.active)
     }
@@ -1782,6 +1803,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             applyTransform(onDone = then)
             return true
         }
+        if (warp != null) {
+            applyWarp(onDone = then)
+            return true
+        }
         return false
     }
 
@@ -1796,6 +1821,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (transform != null) {
             cancelTransform()
+            return
+        }
+        if (warp != null) {
+            // Steps back within the warp; with nothing left to undo it's cancelled
+            if (!warpUndo()) cancelWarp()
             return
         }
         if (cropBox != null) {
@@ -2189,7 +2219,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.BUCKET, Tool.GRADIENT, Tool.SHAPE, Tool.PEN, Tool.TEXT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
+        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.WARP, Tool.BUCKET, Tool.GRADIENT, Tool.SHAPE, Tool.PEN, Tool.TEXT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
 
         /** Effect images on screen are at most this big (blur hides the difference). */
         const val SCREEN_FX_PX = 4400

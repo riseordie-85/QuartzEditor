@@ -176,6 +176,7 @@ fun ToolOptions(vm: EditorViewModel) {
             Text(if (vm.bucketPattern) "Tap the picture to fill that area with the pattern." else "Tap the picture to fill with the foreground color.", color = Q.textDim, fontSize = 12.sp)
             Spacer(Modifier.height(10.dp))
         }
+        Tool.WARP -> WarpOptions(vm)
         Tool.GRADIENT -> {
             Title("Gradient")
             GradientsPanel(vm)

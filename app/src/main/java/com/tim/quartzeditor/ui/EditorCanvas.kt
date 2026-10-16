@@ -58,7 +58,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -169,6 +169,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 else -> TransformHit.Rotate
                             }
                             mode = GestureMode.TRANSFORM
+                        }
+                        // Warp, Puppet Warp, Liquify: a handle, pin or brush under the finger
+                        var warpMoved = false
+                        if (tool == Tool.WARP && vm.warp != null && vm.warpDown(startCx, startCy, 26.dp.toPx() / vm.scale)) {
+                            mode = GestureMode.WARP
                         }
                         var prevCx = startCx
                         var prevCy = startCy
@@ -296,6 +301,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.penEditCancel()
                                         mode = GestureMode.NAV
                                     }
+                                    GestureMode.WARP -> {
+                                        vm.warpCancelGesture()
+                                        mode = GestureMode.NAV
+                                    }
                                     else -> mode = GestureMode.NAV
                                 }
                             }
@@ -344,7 +353,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     moved = true
                                     mode = when (tool) {
                                         Tool.MOVE -> if (vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
-                                        Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM, Tool.BUCKET, Tool.CROP -> GestureMode.PAN
+                                        Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM, Tool.BUCKET, Tool.CROP, Tool.WARP -> GestureMode.PAN
                                         // Polygonal lasso and magic wand work by taps: a drag moves the view
                                         Tool.SELECT -> if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.POLYGON || vm.selectShape == com.tim.quartzeditor.engine.SelectShape.WAND) GestureMode.PAN else GestureMode.SELECTING
                                         Tool.GRADIENT -> if (vm.beginGradient(startCx, startCy)) GestureMode.GRADIENT else GestureMode.DONE
@@ -470,6 +479,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.penEditDrag(penHit, cx, cy, startCx, startCy, 10.dp.toPx() / vm.scale)
                                     }
                                 }
+                                GestureMode.WARP -> if (main != null) {
+                                    if (!warpMoved && (main.position - start).getDistance() > slop) warpMoved = true
+                                    if (warpMoved) {
+                                        // Every in-between point, so Liquify strokes stay smooth
+                                        for (h in main.historical) {
+                                            val (hx, hy) = vm.screenToCanvas(h.position.x, h.position.y)
+                                            vm.warpMove(hx, hy)
+                                        }
+                                        val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        vm.warpMove(cx, cy)
+                                    }
+                                }
                                 GestureMode.BLOCKED, GestureMode.DONE -> Unit
                             }
                             ev.changes.forEach { it.consume() }
@@ -492,6 +513,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 when (tool) {
                                     Tool.MOVE -> if (vm.isOnCanvas(start.x, start.y)) vm.selectLayerAt(startCx, startCy)
                                     Tool.TRANSFORM -> if (vm.transform == null) vm.beginTransform()
+                                    Tool.WARP -> if (vm.warp == null) vm.beginWarp() else vm.warpTap(startCx, startCy, 26.dp.toPx() / vm.scale)
                                     Tool.BUCKET -> if (vm.isOnCanvas(start.x, start.y)) vm.bucketFill(startCx, startCy)
                                     Tool.SELECT -> when (vm.selectShape) {
                                         com.tim.quartzeditor.engine.SelectShape.POLYGON -> vm.polygonTap(startCx, startCy, 24.dp.toPx() / vm.scale)
@@ -519,6 +541,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 vm.selectDraft = null
                             }
                             GestureMode.GRADIENT -> vm.endGradient()
+                            GestureMode.WARP -> vm.warpUp(warpMoved)
                             GestureMode.SHAPING -> vm.finishShape()
                             GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale) }
                             GestureMode.PEN_EDIT -> {
@@ -630,6 +653,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     drawRect(Color.White, Offset(p.x - hs, p.y - hs), androidx.compose.ui.geometry.Size(2 * hs, 2 * hs))
                 }
             }
+
+            // Warp grid, puppet pins, Liquify brush
+            vm.warp?.let { w -> drawWarpOverlay(vm, w, s, ox, oy) }
 
             // Snap lines
             if (vm.snapGuidesX.isNotEmpty() || vm.snapGuidesY.isNotEmpty()) {
