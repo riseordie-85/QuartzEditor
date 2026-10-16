@@ -17,9 +17,17 @@ import kotlinx.coroutines.withContext
 // Pattern fills: the paint bucket can fill with a pattern, a selection (or the whole layer) can be
 // filled with one, and you can make your own from a selection or from your photos.
 
-/** The pattern picture to fill with now (ready-made ones in the current colors), or null if it's gone. */
-internal fun EditorViewModel.currentPattern(): Bitmap? =
-    Patterns.bitmap(ctx, patternKey, foreground or 0xFF000000.toInt(), background or 0xFF000000.toInt())
+/**
+ * Gets the pattern picture to fill with (ready-made ones in the current colors); null if it's gone.
+ * Call the result off the main thread: your own patterns may have to be read from storage.
+ */
+internal fun EditorViewModel.patternLoader(): () -> Bitmap? {
+    val key = patternKey
+    val a = foreground or 0xFF000000.toInt()
+    val b = background or 0xFF000000.toInt()
+    val c = ctx
+    return { Patterns.bitmap(c, key, a, b) }
+}
 
 fun EditorViewModel.setBucketPattern(on: Boolean) {
     bucketPattern = on
@@ -51,10 +59,7 @@ fun EditorViewModel.fillWithPattern() {
     if (pendingFirst { fillWithPattern() }) return
     val l = d.active ?: return
     if (blockPaint(l) { fillWithPattern() }) return
-    val pattern = currentPattern() ?: run {
-        toast("That pattern is gone. Pick another")
-        return
-    }
+    val load = patternLoader()
     val toMask = d.paintsMask(l)
     val area = android.graphics.RectF(0f, 0f, d.width.toFloat(), d.height.toFloat())
     val sel = d.selection
@@ -64,9 +69,15 @@ fun EditorViewModel.fillWithPattern() {
     val ox = l.x.toFloat()
     val oy = l.y.toFloat()
     val keep: (Canvas) -> Unit = { c -> sel?.keepInside(c, ox, oy) }
-    paintTiles(l, toMask, area, "Pattern fill", skipMissing = lock) { c, local ->
-        if (toMask) PatternPainter.paintMask(c, local, pattern, scale, ox, oy, keep)
-        else PatternPainter.paintPixels(c, local, pattern, scale, ox, oy, lock, keep)
+    runBusy("Pattern fill…") {
+        val pattern = withContext(Dispatchers.IO) { load() } ?: run {
+            toast("That pattern is gone. Pick another")
+            return@runBusy
+        }
+        paintTilesNow(d, l, toMask, area, "Pattern fill", skipMissing = lock, onlyKeys = null) { c, local ->
+            if (toMask) PatternPainter.paintMask(c, local, pattern, scale, ox, oy, keep)
+            else PatternPainter.paintPixels(c, local, pattern, scale, ox, oy, lock, keep)
+        }
     }
 }
 
@@ -84,10 +95,13 @@ fun EditorViewModel.definePattern() {
         return
     }
     val copy = d.shallowCopy()
-    val name = "Pattern ${userPatterns.size + 1}"
+    val taken = userPatterns.map { it.name }.toSet()
+    val name = generateSequence(1) { it + 1 }.map { "Pattern $it" }.first { it !in taken }
     runBusy("Making pattern…") {
         val key = withContext(Dispatchers.Default) {
-            val full = DocRenderer.flatten(copy, effects = { effectsLookup(it) })
+            // With layer styles, as you see it
+            val fx = DocRenderer.buildAllEffects(copy, EditorViewModel.FULL_FX_PX)
+            val full = DocRenderer.flatten(copy, effects = { fx[it.id] })
             val cut = Bitmap.createBitmap(full, area.left, area.top, area.width(), area.height()).copy(Bitmap.Config.ARGB_8888, true)
             full.recycle()
             if (sel != null) {

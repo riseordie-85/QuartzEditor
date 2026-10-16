@@ -70,7 +70,9 @@ object Patterns {
             if (!f.exists()) return null
             BitmapFactory.decodeFile(f.path)?.copy(Bitmap.Config.ARGB_8888, false)
         } ?: return null
-        // Keep the cache small (bitmaps still in use by a fill are fine: nothing is recycled)
+        // Keep the cache small: ready-made ones in other colors go first (nothing is recycled, so a
+        // fill still using one is fine)
+        if (cache.size > 24) cache.keys.filter { it.startsWith("b:") }.forEach { cache.remove(it) }
         if (cache.size > 24) cache.clear()
         cache[ck] = bmp
         return bmp
@@ -176,7 +178,7 @@ object Patterns {
                     for (x in -4..68) {
                         val xx = x / 64f * f
                         val yy = y0 + sin(xx / f * 2 * PI).toFloat() * f * 0.1f
-                        if (x == 0) path.moveTo(xx, yy) else path.lineTo(xx, yy)
+                        if (x == -4) path.moveTo(xx, yy) else path.lineTo(xx, yy)
                     }
                     c.drawPath(path, p)
                 }
@@ -268,7 +270,7 @@ object PatternPainter {
         canvas.drawRect(area, Patterns.paint(pattern, scale, -offX, -offY))
         keep(canvas)
         canvas.restore()
-        // 2) add the hidden amount: darker = more hidden
+        // 2) add the hidden amount: (1 − lightness) × how solid the pattern is
         canvas.saveLayer(area, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD) })
         canvas.drawRect(area, Patterns.paint(pattern, scale, -offX, -offY).apply {
             colorFilter = ColorMatrixColorFilter(
@@ -277,11 +279,12 @@ object PatternPainter {
                         0f, 0f, 0f, 0f, 0f,
                         0f, 0f, 0f, 0f, 0f,
                         0f, 0f, 0f, 0f, 0f,
-                        -0.299f, -0.587f, -0.114f, 1f, 0f,
+                        -0.299f, -0.587f, -0.114f, 0f, 255f,
                     )
                 )
             )
         })
+        canvas.drawRect(area, Patterns.paint(pattern, scale, -offX, -offY).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
         keep(canvas)
         canvas.restore()
     }

@@ -206,10 +206,7 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
     val ly = l.y
     val w = d.width
     val h = d.height
-    val pattern = if (bucketPattern) currentPattern() ?: run {
-        toast("Pick a pattern first")
-        return
-    } else null
+    val loadPattern = if (bucketPattern) patternLoader() else null
     val scale = patternScale
     runBusy("Filling…") {
         val coverage = withContext(Dispatchers.Default) {
@@ -231,7 +228,11 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
             TileGrid.fromBitmap(bmp, -lx, -ly, alphaOnly = true).also { bmp.recycle() }
         }
         if (doc !== d || coverage.isEmpty) return@runBusy
-        if (pattern != null) {
+        if (loadPattern != null) {
+            val pattern = withContext(Dispatchers.IO) { loadPattern() } ?: run {
+                toast("That pattern is gone. Pick another")
+                return@runBusy
+            }
             // Pattern fill: the pattern, kept to the bucket's area (coverage is in the layer's coordinates)
             val keepPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
             val keep: (Canvas) -> Unit = { c ->
