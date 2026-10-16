@@ -148,7 +148,9 @@ fun EditorViewModel.duplicateLayer() {
         }.map { (src, id) ->
             val parent = ids[src.props.parent] ?: src.props.parent
             val name = if (src === l) "${src.props.name} copy" else src.props.name
-            Layer(id, src.props.copy(name = name, locked = false, parent = parent), src.tiles.copy(), src.x, src.y, src.mask?.copy(), src.kind)
+            // A smart layer's copy gets contents of its own (editing one doesn't change the other)
+            val smart = src.props.smart?.let { sp -> com.tim.quartzeditor.engine.SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf()) }
+            Layer(id, src.props.copy(name = name, locked = false, parent = parent, smart = smart), src.tiles.copy(), src.x, src.y, src.mask?.copy(), src.kind)
         }
         d.layers.addAll(range.last + 1, copies)
         d.activeId = ids.getValue(l.id)
@@ -278,8 +280,8 @@ fun EditorViewModel.mergeDown() {
             TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = false).also { bmp.recycle() }
         }
         stackEdit("Merge down") {
-            val props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle(), shape = null, text = null)
-            if (below.isVector) {
+            val props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle(), shape = null, text = null, smart = null)
+            if (below.needsRaster) {
                 // Merging into a shape or text layer leaves pixels
                 d.layers[d.indexOf(below.id)] = Layer(below.id, props, merged, 0, 0, null, LayerKind.PIXELS)
             } else {
@@ -421,7 +423,7 @@ internal fun EditorViewModel.editableActive(): Layer? {
 fun EditorViewModel.clearLayer() {
     if (pendingFirst { clearLayer() }) return
     val l = editableActive() ?: return
-    if (l.isVector && !(doc?.editMask == true && l.mask != null)) {
+    if (l.needsRaster && !(doc?.editMask == true && l.mask != null)) {
         askRasterize(l) { clearLayer() }
         return
     }

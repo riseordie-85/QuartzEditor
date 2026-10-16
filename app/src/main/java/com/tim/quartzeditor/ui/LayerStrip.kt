@@ -68,14 +68,23 @@ fun LayerStrip(vm: EditorViewModel, onExpand: () -> Unit, onPlaceImage: () -> Un
     }
     addRows(0L)
     if (shown.isEmpty()) return
-    val at = shown.indexOfFirst { it.id == d.activeId }.coerceAtLeast(0)
+    // The active layer, or the folded folder it's in
+    var at = shown.indexOfFirst { it.id == d.activeId }
+    if (at < 0) {
+        var p = d.active?.props?.parent ?: 0L
+        while (at < 0 && p != 0L) {
+            at = shown.indexOfFirst { it.id == p }
+            p = d.layer(p)?.props?.parent ?: 0L
+        }
+    }
+    at = at.coerceAtLeast(0)
     val current by rememberUpdatedState(at)
     val list by rememberUpdatedState(shown)
     val density = LocalDensity.current
     val step = with(density) { 30.dp.toPx() }
     fun pick(i: Int) {
         val l = list.getOrNull(i) ?: return
-        if (l.id != d.activeId) vm.selectLayer(l.id)
+        if (l.id != vm.doc?.activeId) vm.selectLayer(l.id)
     }
 
     Column(modifier.width(64.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {

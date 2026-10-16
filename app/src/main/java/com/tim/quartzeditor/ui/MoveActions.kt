@@ -80,17 +80,22 @@ fun EditorViewModel.endMove() {
         d.invalidate()
         return
     }
+    val smartRedo = ArrayList<com.tim.quartzeditor.engine.Layer>()
     stackEdit("Move") {
         // A folder moves everything in it
         val all = roots.flatMap { r -> if (r.isGroup) d.layers.slice(d.block(r)) else listOf(r) }.distinct()
         for (x in all) {
             val clipped = vectorClipped(x, x.x, x.y, d.width, d.height)
+            if (smartClipped(x, x.x, x.y, d)) smartRedo.add(x)
             x.x += dx
             x.y += dy
             // A shape that reached far past the canvas has the rest drawn now
             if (clipped) redrawVectorNow(x)
+            if (smartClipped(x, x.x, x.y, d)) smartRedo.add(x)
         }
     }
+    // A smart layer that reached far past the canvas is drawn again from its contents
+    for (x in smartRedo.distinct()) redrawSmartSoon(d, x)
 }
 
 fun EditorViewModel.cancelMove() {

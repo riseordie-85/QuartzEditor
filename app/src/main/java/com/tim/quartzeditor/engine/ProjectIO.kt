@@ -96,6 +96,24 @@ object ProjectIO {
     fun write(doc: Doc, out: OutputStream, canvasColor: Int) {
         val zip = ZipOutputStream(out)
         zip.setLevel(Deflater.BEST_SPEED)
+        val buf = ByteBuffer.allocate(TileGrid.SIZE * TileGrid.SIZE * 4)
+        writeDoc(zip, doc, "", canvasColor, buf)
+
+        val fx = DocRenderer.buildAllEffects(doc, 512)
+        val thumb = DocRenderer.thumbnail(doc, 512, background = Color.WHITE, effects = { fx[it.id] })
+        zip.putNextEntry(ZipEntry("thumb.jpg"))
+        thumb.compress(Bitmap.CompressFormat.JPEG, 85, zip)
+        zip.closeEntry()
+        thumb.recycle()
+        zip.finish()
+        zip.flush()
+    }
+
+    /**
+     * One document's settings and pixels, every entry named starting with [prefix]. A smart
+     * layer's contents are a document of their own, written under "S<layer id>/" inside it.
+     */
+    private fun writeDoc(zip: ZipOutputStream, doc: Doc, prefix: String, canvasColor: Int, buf: ByteBuffer) {
         val layers = JSONArray()
         for (l in doc.layers) {
             val p = l.props
@@ -121,6 +139,7 @@ object ProjectIO {
                     .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
                     .also { o -> p.shape?.let { o.put("shape", it.toJson()) } }
                     .also { o -> p.text?.let { o.put("text", it.toJson()) } }
+                    .also { o -> p.smart?.let { o.put("smart", it.toJson()) } }
             )
         }
         // Settings first, then the pixels
@@ -134,24 +153,15 @@ object ProjectIO {
             .put("activeId", doc.activeId)
             .put("canvasColor", canvasColor)
             .put("layers", layers)
-        zip.putNextEntry(ZipEntry("doc.json"))
+        zip.putNextEntry(ZipEntry("${prefix}doc.json"))
         zip.write(json.toString(1).toByteArray())
         zip.closeEntry()
 
-        val buf = ByteBuffer.allocate(TileGrid.SIZE * TileGrid.SIZE * 4)
         for (l in doc.layers) {
-            for ((k, b) in l.tiles.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "L${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf)
-            l.mask?.let { m -> for ((k, b) in m.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "M${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf) }
+            for ((k, b) in l.tiles.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}L${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf)
+            l.mask?.let { m -> for ((k, b) in m.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}M${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf) }
         }
-
-        val fx = DocRenderer.buildAllEffects(doc, 512)
-        val thumb = DocRenderer.thumbnail(doc, 512, background = Color.WHITE, effects = { fx[it.id] })
-        zip.putNextEntry(ZipEntry("thumb.jpg"))
-        thumb.compress(Bitmap.CompressFormat.JPEG, 85, zip)
-        zip.closeEntry()
-        thumb.recycle()
-        zip.finish()
-        zip.flush()
+        for (l in doc.layers) l.props.smart?.let { writeDoc(zip, it.contents, "${prefix}S${l.id}/", canvasColor, buf) }
     }
 
     private fun putTile(zip: ZipOutputStream, name: String, b: Bitmap, buf: ByteBuffer) {
@@ -166,15 +176,16 @@ object ProjectIO {
     fun read(input: InputStream): Pair<Doc, Int> {
         // Tiles become bitmaps as they're read, so their pixels don't all sit in the Java heap at once
         val tiles = HashMap<String, Bitmap>()
-        var json: JSONObject? = null
+        // Each document's settings, by the folder it's in ("" for the picture itself, "S5/" for a smart layer's contents)
+        val jsons = HashMap<String, JSONObject>()
         val buf = ByteArray(TileGrid.SIZE * TileGrid.SIZE * 4)
         ZipInputStream(input).use { zip ->
             while (true) {
                 val e = zip.nextEntry ?: break
                 when {
-                    e.name == "doc.json" -> json = JSONObject(zip.readBytes().decodeToString())
-                    e.name.startsWith("L") || e.name.startsWith("M") -> {
-                        val alpha = e.name.startsWith("M")
+                    e.name.endsWith("doc.json") -> jsons[e.name.removeSuffix("doc.json")] = JSONObject(zip.readBytes().decodeToString())
+                    e.name.substringBeforeLast('/', "").substringAfterLast('/').let { it.startsWith("L") || it.startsWith("M") } -> {
+                        val alpha = e.name.substringBeforeLast('/').substringAfterLast('/').startsWith("M")
                         val t = TileGrid.newTile(alpha)
                         val n = readFully(zip, buf, t.byteCount)
                         if (n == t.byteCount) {
@@ -185,9 +196,15 @@ object ProjectIO {
                 }
             }
         }
-        val j = json ?: throw IllegalArgumentException("This isn't a Quartz Editor project.")
+        val j = jsons[""] ?: throw IllegalArgumentException("This isn't a Quartz Editor project.")
         if (j.optInt("format") > FORMAT) throw IllegalArgumentException("This project was made by a newer Quartz Editor.")
         if (j.optInt("tileSize", TileGrid.SIZE) != TileGrid.SIZE) throw IllegalArgumentException("Unsupported project layout.")
+        return buildDoc(jsons, tiles, "") to j.optInt("canvasColor", DEFAULT_CANVAS_COLOR)
+    }
+
+    /** The document whose entries start with [prefix] (with any smart layers' contents inside it). */
+    private fun buildDoc(jsons: Map<String, JSONObject>, tiles: Map<String, Bitmap>, prefix: String): Doc {
+        val j = jsons.getValue(prefix)
         val doc = Doc(j.getInt("width"), j.getInt("height"), j.optString("name", "Untitled"))
         val arr = j.getJSONArray("layers")
         var maxId = 0L
@@ -195,7 +212,7 @@ object ProjectIO {
             val o = arr.getJSONObject(i)
             val id = o.getLong("id")
             maxId = maxOf(maxId, id)
-            val props = LayerProps(
+            var props = LayerProps(
                 name = o.optString("name", "Layer"),
                 visible = o.optBoolean("visible", true),
                 opacity = o.optDouble("opacity", 1.0).toFloat(),
@@ -214,21 +231,28 @@ object ProjectIO {
             val grid = TileGrid(alphaOnly = false)
             val mask = if (o.optBoolean("hasMask")) TileGrid(alphaOnly = true) else null
             for ((name, t) in tiles) {
-                val isLayer = name.startsWith("L$id/")
-                val isMask = name.startsWith("M$id/")
+                val isLayer = name.startsWith("${prefix}L$id/")
+                val isMask = name.startsWith("${prefix}M$id/")
                 if (!isLayer && !isMask) continue
-                val coords = name.substringAfter('/').split('_')
+                val coords = name.substringAfterLast('/').split('_')
                 val k = TileGrid.key(coords[0].toInt(), coords[1].toInt())
                 if (isLayer) grid.tiles[k] = t else mask?.tiles?.set(k, t)
             }
             var kind = LayerKind.entries.firstOrNull { it.name == o.optString("kind") } ?: LayerKind.PIXELS
             // A shape or text layer whose description is missing still has its pixels
             if ((kind == LayerKind.SHAPE && props.shape == null) || (kind == LayerKind.TEXT && props.text == null)) kind = LayerKind.PIXELS
+            // A smart layer's contents, read like a picture of its own
+            if (kind == LayerKind.SMART) {
+                val sp = "${prefix}S$id/"
+                val quad = o.optJSONObject("smart")?.optJSONArray("quad")?.let { a -> FloatArray(8) { a.optDouble(it).toFloat() } }
+                if (quad != null && jsons.containsKey(sp)) props = props.copy(smart = SmartSpec(buildDoc(jsons, tiles, sp), quad))
+                else kind = LayerKind.PIXELS
+            }
             doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask, kind).also { it.collapsed = o.optBoolean("collapsed") })
         }
         doc.reserveIds(maxId)
         doc.activeId = j.optLong("activeId", doc.layers.lastOrNull()?.id ?: -1L)
-        return doc to j.optInt("canvasColor", DEFAULT_CANVAS_COLOR)
+        return doc
     }
 
     /** Reads up to [count] bytes of the current zip entry into [buf]; returns how many it got. */

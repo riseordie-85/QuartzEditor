@@ -59,6 +59,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -191,6 +194,9 @@ fun Workspace(vm: EditorViewModel) {
                 PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 
+                // Tabs, while a smart layer's contents are open
+                TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).widthIn(max = 420.dp))
+
                 // Panels folded away: the layers as a small stack at the edge
                 if (!panelsOpen) {
                     LayerStrip(
@@ -215,8 +221,20 @@ fun Workspace(vm: EditorViewModel) {
                 Spacer(Modifier.width(12.dp))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
-                if (vm.popup != null) FloatingPanel(vm, Modifier.width(310.dp).fillMaxHeight())
-                else PanelColumn(vm, requestPlace, Modifier.width(310.dp).fillMaxHeight())
+                Box(Modifier.width(310.dp).fillMaxHeight()) {
+                    // The panels stay underneath (hidden), so they're as you left them when the window closes
+                    PanelColumn(vm, requestPlace, Modifier.fillMaxSize().alpha(if (vm.popup != null) 0f else 1f))
+                    if (vm.popup != null) {
+                        FloatingPanel(
+                            vm,
+                            Modifier
+                                .fillMaxSize()
+                                .background(Q.workspace)
+                                // Taps on the window never reach the hidden panels
+                                .pointerInput(Unit) { detectTapGestures { } },
+                        )
+                    }
+                }
             }
         }
 

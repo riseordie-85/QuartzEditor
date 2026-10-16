@@ -252,7 +252,7 @@ object DocRenderer {
      */
     private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean) {
         when (l.kind) {
-            LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT -> drawLayer(
+            LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT, LayerKind.SMART -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
                 ctx.stroke?.takeIf { it.layer === l }, ctx.preview?.of(l.id), ctx.smooth, ctx.effects,
                 blendNormal = blendNormal, fullOpacity = fullOpacity,

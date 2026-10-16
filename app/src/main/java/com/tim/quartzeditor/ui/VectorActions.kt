@@ -36,7 +36,7 @@ import kotlin.math.min
 internal const val NEEDS_RASTER = "\u0000rasterize"
 
 /** "Rasterize this layer?" Answering yes rasterizes it and runs [then]. */
-class RasterAsk(val layerId: Long, val name: String, val isText: Boolean, val then: (() -> Unit)?)
+class RasterAsk(val layerId: Long, val name: String, val isText: Boolean, val then: (() -> Unit)?, val isSmart: Boolean = false)
 
 /** Text being typed: the layer, and the document as it was before (for Cancel and undo). */
 class TextEditSession(val layerId: Long, val before: DocSnap, val isNew: Boolean)
@@ -83,7 +83,7 @@ internal fun EditorViewModel.blockPaint(l: Layer?, retry: (() -> Unit)? = null):
 }
 
 internal fun EditorViewModel.askRasterize(l: Layer, then: (() -> Unit)?) {
-    rasterAsk = RasterAsk(l.id, l.props.name, l.isText, then)
+    rasterAsk = RasterAsk(l.id, l.props.name, l.isText, then, l.isSmart)
 }
 
 fun EditorViewModel.answerRasterize(yes: Boolean) {
@@ -96,15 +96,15 @@ fun EditorViewModel.answerRasterize(yes: Boolean) {
 fun EditorViewModel.rasterizeLayer(id: Long, then: (() -> Unit)? = null) {
     val d = doc ?: return
     if (pendingFirst { rasterizeLayer(id, then) }) return
-    val l = d.layer(id)?.takeIf { it.isVector } ?: return
+    val l = d.layer(id)?.takeIf { it.needsRaster } ?: return
     if (l.props.locked) {
         toast("\"${l.props.name}\" is locked")
         return
     }
-    stackEdit(if (l.isText) "Rasterize text" else "Rasterize shape") {
+    stackEdit(if (l.isText) "Rasterize text" else if (l.isSmart) "Rasterize smart layer" else "Rasterize shape") {
         // A new grid (same tile bitmaps; painting copies a tile before changing it)
         val grid = TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }
-        val px = Layer(l.id, l.props.copy(shape = null, text = null), grid, l.x, l.y, l.mask, LayerKind.PIXELS)
+        val px = Layer(l.id, l.props.copy(shape = null, text = null, smart = null), grid, l.x, l.y, l.mask, LayerKind.PIXELS)
         px.thumb = l.thumb
         px.maskThumb = l.maskThumb
         d.layers[d.indexOf(l.id)] = px

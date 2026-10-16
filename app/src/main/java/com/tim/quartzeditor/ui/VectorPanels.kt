@@ -522,14 +522,14 @@ fun TextBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
 @Composable
 fun RasterizeDialog(vm: EditorViewModel) {
     val a = vm.rasterAsk ?: return
-    val what = if (a.isText) "text" else "shape"
+    val what = if (a.isText) "text" else if (a.isSmart) "smart" else "shape"
     AlertDialog(
         onDismissRequest = { vm.answerRasterize(false) },
         title = { Text("Rasterize \"${a.name}\"?") },
         text = {
             Text(
                 "Painting, filling, filters and adjustments change pixels, so this $what layer has to become a " +
-                    "pixel layer first. It will look the same, but you won't be able to change its ${if (a.isText) "words, font or size" else "shape, fill or outline"} anymore."
+                    "pixel layer first. It will look the same, but you won't be able to change its ${if (a.isText) "words, font or size" else if (a.isSmart) "contents, or scale it up again without losing quality," else "shape, fill or outline"} anymore."
             )
         },
         confirmButton = { TextButton(onClick = { vm.answerRasterize(true) }) { Text("Rasterize") } },

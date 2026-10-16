@@ -94,6 +94,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var history by mutableStateOf(newHistory())
         internal set
 
+    /** Open tabs: the picture itself first, then smart layers' contents being edited (SmartActions.kt). */
+    var tabs by mutableStateOf<List<EditorTab>>(emptyList())
+        internal set
+    var tabIndex by mutableIntStateOf(0)
+        internal set
+
     // ------------------------------------------------------------ tools and colors
 
     var tool by mutableStateOf(Tool.BRUSH)
@@ -388,11 +394,45 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         fxThumb = null
         doc = d
         history = newHistory()
+        // The picture itself is the first tab; smart layers' contents open as more tabs
+        tabs = listOf(EditorTab(d, history, null, -1L))
+        tabIndex = 0
         fitted = false
         canvas?.let { changeCanvasColor(it) }
         if (viewW > 0f) fit()
         refreshThumbs(d, force = true)
         preloadFonts(d)
+    }
+
+    /** Shows another open document (a tab) with its own undo, leaving nothing half done behind. */
+    internal fun switchDocument(d: Doc, h: History) {
+        propsBefore = null
+        multiSelected = emptySet()
+        resetVectorState()
+        transform = null
+        liquifyJob?.cancel()
+        warp = null
+        warpCursor = null
+        samplePicture = null
+        samplePictureVersion = -1
+        cropBox = null
+        polygonPoints.clear()
+        selectDraft = null
+        // Effect images and thumbnails are kept by layer id, and ids repeat between documents
+        effectsCache.clear()
+        failedEffects.clear()
+        moveLayer = null
+        stroke = null
+        preview = null
+        pendingFx = null
+        fxThumb = null
+        popup = null
+        doc = d
+        history = h
+        fitted = true
+        refreshThumbs(d, force = true)
+        preloadFonts(d)
+        d.invalidate()
     }
 
     internal val saveLock = Mutex()
@@ -604,7 +644,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openPopup(k: PopupKind) {
         val a = doc?.active
-        if (k.isFx && a != null && a.isVector) {
+        if (k.isFx && a != null && a.needsRaster) {
             askRasterize(a) { openPopup(k) }
             return
         }
@@ -727,12 +767,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             undoPenPoint()
             return
         }
+        closeTabsChangedBy(history.peekUndo())
         history.undo(d)?.let { toast("Undo: $it") }
     }
 
     fun redo() {
         val d = doc ?: return
         if (stroke != null || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
+        closeTabsChangedBy(history.peekRedo())
         history.redo(d)?.let { toast("Redo: $it") }
     }
 

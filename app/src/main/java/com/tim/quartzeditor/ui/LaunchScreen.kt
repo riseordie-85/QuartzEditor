@@ -416,7 +416,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
                             // Your own sizes can be removed
                             trailingIcon = if (own) ({
                                 Icon(
-                                    Icons.Outlined.Close, contentDescription = "Remove ${p.label}", tint = Q.launchDim,
+                                    Icons.Outlined.Close, contentDescription = "Remove ${p.label}", tint = Color.Gray,
                                     modifier = Modifier.clip(CircleShape).clickable {
                                         mine = mine - p
                                         saveSizePresets(vm.prefs, mine)

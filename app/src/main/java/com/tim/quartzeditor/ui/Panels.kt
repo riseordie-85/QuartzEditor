@@ -235,7 +235,7 @@ fun PanelSlider(
                         PanelField(
                             NUMBER.find(display)?.value ?: "",
                             onCommit = { t ->
-                                t.replace(',', '.').trim().toFloatOrNull()?.let(typed)?.let { v ->
+                                t.replace(',', '.').trim().toFloatOrNull()?.takeIf { it.isFinite() }?.let(typed)?.takeIf { it.isFinite() }?.let { v ->
                                     onChange(v.coerceIn(range.start, range.endInclusive))
                                     onDone()
                                 }
@@ -264,6 +264,8 @@ private fun typedMapping(value: Float, range: ClosedFloatingPointRange<Float>, d
     if (display.contains('%') && range.endInclusive <= 5f) {
         return if (kotlin.math.abs(n / 100f - value) <= 0.006f) ({ t -> t / 100f }) else null
     }
+    // At 0 any scale matches: only trust it for sliders whose numbers are big (pixels, degrees…)
+    if (kotlin.math.abs(value) < 1e-6f && range.endInclusive <= 5f) return null
     return if (kotlin.math.abs(n - value) <= kotlin.math.max(0.51f, kotlin.math.abs(value) * 0.01f)) ({ t -> t }) else null
 }
 

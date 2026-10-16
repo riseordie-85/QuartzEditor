@@ -112,10 +112,22 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
 
 /** Saves (when there's anything worth saving) and closes the document. */
 fun EditorViewModel.closeDocument() {
-    val d = doc ?: return
+    if (doc == null) return
     if (pendingFirst { closeDocument() }) return
+    // Smart layers' tabs: their edits go into the picture, and the picture's own tab is what's saved
+    commitAllTabsNow()
+    tabs.firstOrNull()?.let { root ->
+        if (doc !== root.doc) {
+            doc = root.doc
+            history = root.history
+        }
+    }
+    val d = doc ?: return
     val save = history.editsSinceSave > 0
     if (save) saveToProjects(quiet = false)
+    tabs = emptyList()
+    tabIndex = 0
+    com.tim.quartzeditor.engine.SmartArt.release()
     doc = null
     stroke = null
     preview = null
@@ -135,17 +147,23 @@ fun EditorViewModel.discardDocument() {
     preview = null
     fxThumb = null
     history = newHistory()
+    tabs = emptyList()
+    tabIndex = 0
+    com.tim.quartzeditor.engine.SmartArt.release()
     d.invalidate()
 }
 
 /** Saves to the app's projects in the background (also called when the app is put away). */
 fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
-    val d = doc ?: return
-    if (history.editsSinceSave == 0) return
+    if (doc == null) return
+    // Edits in smart layers' tabs go into the picture first; the picture itself is what's saved
+    commitAllTabsNow()
+    val d = rootDoc ?: return
+    val h = tabs.firstOrNull()?.history ?: history
+    if (h.editsSinceSave == 0) return
     if (d.projectId == null) d.projectId = ProjectIO.newId()
     val copy = d.shallowCopy()
     val color = canvasColor
-    val h = history
     val edits = h.editsSinceSave
     viewModelScope.launch {
         try {
@@ -167,8 +185,10 @@ fun EditorViewModel.deleteProject(id: String) {
 
 /** Writes the project to a file the user chose. */
 fun EditorViewModel.saveProjectFile(uri: Uri) {
-    val d = doc ?: return
+    if (doc == null) return
     if (pendingFirst { saveProjectFile(uri) }) return
+    commitAllTabsNow()
+    val d = rootDoc ?: return
     val copy = d.shallowCopy()
     val color = canvasColor
     runBusy("Saving…") {
@@ -182,8 +202,11 @@ fun EditorViewModel.saveProjectFile(uri: Uri) {
 
 /** Flattens and saves a picture to Pictures/Quartz Editor. Calls [onSaved] with its address. */
 fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
-    val d = doc ?: return
+    if (doc == null) return
     if (pendingFirst { export(format, onSaved) }) return
+    // The whole picture (with what's being edited in smart layers' tabs)
+    commitAllTabsNow()
+    val d = rootDoc ?: return
     val copy = d.shallowCopy()
     runBusy("Exporting…") {
         val uri = withContext(Dispatchers.Default) {
@@ -203,10 +226,10 @@ fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
 
 /** Renames the open image (used for its project, project file and exports). */
 fun EditorViewModel.renameDocument(name: String) {
-    val d = doc ?: return
+    val d = rootDoc ?: return
     val n = name.trim().take(80)
     if (n.isEmpty() || n == d.name) return
     val old = d.name
     d.name = n
-    history.record(com.tim.quartzeditor.engine.RenameChange(old, n))
+    (tabs.firstOrNull()?.history ?: history).record(com.tim.quartzeditor.engine.RenameChange(old, n))
 }

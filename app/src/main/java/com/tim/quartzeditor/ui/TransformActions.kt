@@ -17,6 +17,8 @@ import com.tim.quartzeditor.engine.LayerProps
 import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.TransformState
 import com.tim.quartzeditor.engine.Transformer
+import com.tim.quartzeditor.engine.SmartArt
+import com.tim.quartzeditor.engine.SmartSpec
 import com.tim.quartzeditor.engine.VectorArt
 import com.tim.quartzeditor.ui.EditorViewModel.Companion.PREVIEW_PX
 import kotlin.math.max
@@ -180,6 +182,10 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
     st = st.pixelAligned()
     // Shapes and text stay sharp: their own geometry is transformed and redrawn
     val vectorProps = t.parts.associate { p -> p.layer to (if (p.layer.isVector) VectorArt.transformed(p.layer.props, p.matrixFor(st)) else null) }
+    // Smart layers are drawn again from their full-size contents, at the new placement (no quality lost)
+    val smartProps = t.parts.associate { p ->
+        p.layer to p.layer.props.smart?.let { sp -> p.layer.props.copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, p.matrixFor(st)))) }
+    }
     val matrices = t.parts.associate { it.layer to it.matrixFor(st) }
     runBusy("Transforming…", onDone) {
         val results = withContext(Dispatchers.Default) {
@@ -187,8 +193,11 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
             t.parts.map { p ->
                 val m = matrices.getValue(p.layer)
                 val vp = vectorProps[p.layer]
+                val sp = smartProps[p.layer]?.smart
                 val grid = if (vp != null) {
                     VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, d.width, d.height))
+                } else if (sp != null) {
+                    SmartArt.rasterize(sp, limit)
                 } else {
                     Transformer.render(p.tiles, false, p.content, m, limit)
                         ?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
@@ -209,6 +218,7 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
                 for ((p, grid, maskGrid) in results) {
                     val l = p.layer
                     vectorProps[l]?.let { l.props = it }
+                    smartProps[l]?.let { l.props = it }
                     l.tiles = grid
                     l.x = 0
                     l.y = 0
@@ -271,6 +281,10 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
                 build(m)
                 val area = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }.tileBounds()
                 val vp = if (l.isVector) VectorArt.transformed(oldProps.getValue(l), m) else null
+                // A smart layer's placement turns with it (its pixels turn exactly, below)
+                oldProps.getValue(l).smart?.let { sp ->
+                    synchronized(newProps) { newProps[l] = oldProps.getValue(l).copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, m))) }
+                }
                 val grid = if (vp != null) {
                     synchronized(newProps) { newProps[l] = vp }
                     VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, newW, newH))

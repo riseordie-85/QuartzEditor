@@ -62,7 +62,7 @@ fun EditorViewModel.applyMask() {
     val d = doc ?: return
     val l = editableActive() ?: return
     val m = l.mask ?: return
-    if (l.isVector) {
+    if (l.needsRaster) {
         askRasterize(l) { applyMask() }
         return
     }
@@ -132,29 +132,3 @@ fun EditorViewModel.removeBackground() {
     }
 }
 
-/** Adds a photo as a new layer, centered and fitted inside the canvas. */
-fun EditorViewModel.placeImage(uri: Uri) {
-    val d = doc ?: return
-    if (pendingFirst { placeImage(uri) }) return
-    runBusy("Placing…") {
-        val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
-        var bmp = withContext(Dispatchers.IO) { Media.decodeUpright(ctx, uri, Doc.MAX_SIDE) }
-        val s = min(1f, min(d.width.toFloat() / bmp.width, d.height.toFloat() / bmp.height))
-        if (s < 1f) {
-            val scaled = Bitmap.createScaledBitmap(bmp, max(1, (bmp.width * s).roundToInt()), max(1, (bmp.height * s).roundToInt()), true)
-            bmp.recycle()
-            bmp = scaled
-        }
-        val left = (d.width - bmp.width) / 2
-        val top = (d.height - bmp.height) / 2
-        val grid = withContext(Dispatchers.Default) { TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false) }
-        stackEdit("Place image") {
-            val (at, parent) = insertPoint(d)
-            val l = Layer(d.newId(), LayerProps(name, parent = parent), grid, left, top)
-            d.layers.add(at, l)
-            d.joinClipGroup(l)
-            d.activeId = l.id
-            d.editMask = false
-        }
-    }
-}

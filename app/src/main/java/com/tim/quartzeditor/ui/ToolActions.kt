@@ -386,7 +386,7 @@ fun EditorViewModel.selectionToLayer(cut: Boolean) {
         toast("Pick a pixel layer")
         return
     }
-    if (cut && l.isVector) {
+    if (cut && l.needsRaster) {
         askRasterize(l) { selectionToLayer(cut) }
         return
     }

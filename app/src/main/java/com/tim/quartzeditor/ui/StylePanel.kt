@@ -258,6 +258,7 @@ private fun PatternOverlayControls(vm: EditorViewModel, st: LayerStyle) {
         // Ready-made patterns take your colors as they are now
         val a = vm.foreground or 0xFF000000.toInt()
         val b = vm.background or 0xFF000000.toInt()
+        vm.warmPattern(key, a, b)
         vm.setStyle("Pattern overlay") { it.po { copy(key = key, colorA = a, colorB = b) } }
     }
     if (po.key.startsWith("b:")) {

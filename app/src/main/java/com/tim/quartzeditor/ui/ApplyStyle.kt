@@ -64,9 +64,9 @@ fun EditorViewModel.applyLayerStyle(id: Long) {
         }
         if (doc !== d || l.tiles !== source) return@runBusy
         stackEdit("Apply layer style") {
-            val props = l.props.copy(style = LayerStyle(), fill = 1f, shape = null, text = null, maskDisabled = if (applyMask) false else l.props.maskDisabled)
+            val props = l.props.copy(style = LayerStyle(), fill = 1f, shape = null, text = null, smart = null, maskDisabled = if (applyMask) false else l.props.maskDisabled)
             val mask = if (applyMask) null else l.mask
-            if (l.isVector) {
+            if (l.needsRaster) {
                 val px = Layer(l.id, props, grid, l.x, l.y, mask, LayerKind.PIXELS)
                 if (mask != null) px.maskThumb = l.maskThumb
                 // Newer than anything cached for the old shape or text layer

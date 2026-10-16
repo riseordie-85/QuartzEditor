@@ -14,7 +14,7 @@ internal fun EditorViewModel.paintBlocker(layer: Layer?): String? = when {
     !layer.props.visible -> "\"${layer.props.name}\" is hidden"
     (doc?.editMask == true || layer.isGroup || layer.isAdjustment) && layer.mask != null && layer.props.maskDisabled -> "The mask is turned off. Turn it on to paint it"
     // Shape and text layers keep their shape or words: painting their pixels needs rasterizing
-    layer.isVector && !(doc?.editMask == true && layer.mask != null) -> NEEDS_RASTER
+    layer.needsRaster && !(doc?.editMask == true && layer.mask != null) -> NEEDS_RASTER
     else -> null
 }
 

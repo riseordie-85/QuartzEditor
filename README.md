@@ -28,7 +28,8 @@ selection tools, the shapes, pen drawing/point editing).
 - **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand. Drag
   to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
   corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
-  layers". **Select subject** / **Select background** (Properties, or ⋮ on the bar) find the subject on the
+  layers". **Select subject** / **Select background** / **Invert** (Properties, ⋮ on the bar, or hold
+  the Select tool) find the subject on the
   device: a first look at the whole picture, a second, closer look at the area around the subject, then
   the edge is snapped to the picture's own edges (hair and fine outlines follow what's really there). Remove
   background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
@@ -101,8 +102,24 @@ selection tools, the shapes, pen drawing/point editing).
   grid — moving layers and Transform boxes, shape corners and pen points snap to its lines while it's shown.
 - **Long press beside the picture** to change the workspace color. Menu → "Checkerboard for see-through"
   switches the transparency checkerboard off (see-through areas show white).
-- Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Export image,
-  Save project file, Place image as layer and Flatten.
+- Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Rename image, Export
+  image (with a file name), Save project file, Place image as layer, Flatten and **Settings**.
+- **Sliders** have their number in a box beside them: tap it and type an exact value (90°, 50%, 12 px).
+- **Panels hidden** (the arrow at the bottom right, or Tab): the layers show as a small stack at the right
+  edge, like Photoshop on phones. Swipe up or down on it to go through the layers, tap one peeking out to
+  pick it, hold the middle one to hide or show it; ⌃ opens the full panel, + adds a layer, the picture,
+  or a folder.
+
+### Smart layers
+- **Placing an image** (Menu → Place image, or + on the layer stack) makes a smart layer at the image's full
+  size and starts **Transform** on it: size and place it, then Apply. Scaling it down and back up later
+  loses nothing, because it's always drawn again from the full-size picture inside.
+- Any layers can become one: hold a layer (or pick several) → **Convert to smart layer**.
+- **Double-tap** a smart layer (or hold → Edit contents) to edit what's inside in a **tab** of its own at
+  the top; it has its own layers and undo. Tap the picture's tab to go back: the smart layer updates (one
+  undo step there). ✕ on a tab closes it the same way. Smart layers inside smart layers open more tabs.
+- Transform, rotate/flip image, masks, clipping and layer styles work on smart layers as they are; painting,
+  filters, adjustments and warps ask to **rasterize** them first.
 
 ### Panels
 Only **Color**, **Properties** and **Layers** live in the column.
@@ -119,10 +136,10 @@ Only **Color**, **Properties** and **Layers** live in the column.
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
   - Lock transparent pixels and lock the whole layer.
   - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder. **Long-press** a layer
-    for Rename, Copy / Paste layer style, Save layer style as preset, Clear style, Merge down, Duplicate and
-    Clip to layer below.
+    for Rename, Copy / Paste layer style, Save layer style as preset, Apply / Clear style, Merge down,
+    Duplicate, Clip to layer below, Convert to smart layer, Edit contents (smart layers) and Rasterize.
   - **Pick several layers**: swipe right on a row (again to take it out). Move, Transform, Delete, put in a
-    folder (Ctrl+G), merge (Ctrl+E) and pasting styles work on all of them. Tap any layer (or "n picked ✕")
+    folder (Ctrl+G, or the folder button), merge (Ctrl+E) and pasting styles work on all of them. Tap any layer (or "n picked ✕")
     to go back to one.
   - **Folders**: the arrow folds/unfolds them. Drag a layer onto a folder's row (it lights up) to put it
     inside, or just under the folder's row; drag it below the folder's contents to take it out.
@@ -142,11 +159,13 @@ Only **Color**, **Properties** and **Layers** live in the column.
 
 ### Floating windows
 **Layer Style**, **Adjustments**, **Levels**, **Curves**, **Gaussian Blur** and **Filters** open in a window
-over the picture (from the bottom of the Layers panel), so you can see the result while you change them.
+(from the bottom of the Layers panel). With the panels docked on a tablet, the window takes the panels'
+place, so the picture keeps its room; closing it brings the panels back as you left them.
 - **Layer Style** — **Presets** at the top (ready-made ones like Soft shadow, Sticker, Neon, Gold, Chrome,
   and your own: "+ Save" saves the current style; hold one of yours to delete it). Gradient Fill (any
   gradient, linear/radial/reflected, angle, scale, reverse), Long Shadow (angle, length, fade), Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
-  angle and altitude, highlight and shadow colors), Stroke (outside, inside, center), Drop Shadow, Inner
+  angle and altitude, gloss contour, highlight and shadow colors), Pattern Overlay (any pattern, size,
+  opacity; it moves with the layer), Stroke (outside, inside, center; a color or a gradient), Drop Shadow, Inner
   Shadow, Outer Glow, Color Overlay.
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
   fades only the layer's own pixels. Merge down, flatten and export bake them in. **Apply layer style**
@@ -171,7 +190,7 @@ in between. With a selection, the mask button makes a mask that shows only what'
 
 ### Saving
 - Your work is saved to **Projects** automatically when you go Home or switch apps, with every layer,
-  mask and setting.
+  mask and setting (smart layers keep their full-size contents inside the project).
 - **Export image** saves a flattened PNG, JPG or WebP to `Pictures/Quartz Editor` (shows up in Quartz
   Gallery), optionally sharing it.
 - **Close without saving** (menu) throws away changes since the last save.
@@ -227,3 +246,10 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 - The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
   over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
   `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`.
+
+## Settings
+Menu → Settings (or the gear on the home screen).
+- **Appearance**: theme (Dark, Midnight, Medium gray, Light), accent color, and how solid the toolbar,
+  panels and windows are (lower lets the picture show through).
+- **Your library**: your patterns (hold to delete, + to add), gradients (hold to edit or delete, + for a
+  new one), layer style presets (delete) and imported fonts (delete, import).

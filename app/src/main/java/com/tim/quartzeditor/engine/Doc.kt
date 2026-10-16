@@ -41,7 +41,7 @@ enum class Blend(val label: String, val mode: BlendMode, val group: Int) {
  * Pixels, a folder of layers, an adjustment that changes everything below it, or a shape or text
  * layer (which keeps its shape or words, and draws its pixels from them).
  */
-enum class LayerKind { PIXELS, GROUP, ADJUSTMENT, SHAPE, TEXT }
+enum class LayerKind { PIXELS, GROUP, ADJUSTMENT, SHAPE, TEXT, SMART }
 
 /** Everything about a layer that isn't pixels. Immutable, so undo can keep old copies. */
 data class LayerProps(
@@ -68,6 +68,8 @@ data class LayerProps(
     val shape: ShapeSpec? = null,
     /** Text layers: the text and how it looks. */
     val text: TextSpec? = null,
+    /** Smart layers: the picture inside and where it's placed. */
+    val smart: SmartSpec? = null,
     /**
      * Clipping mask: only shows where the layer below it (its base, the nearest unclipped
      * pixel, shape or text layer in the same folder) has pixels.
@@ -98,8 +100,12 @@ class Layer(
     val isText: Boolean get() = kind == LayerKind.TEXT
     /** Shape or text: its pixels are drawn from what it is, and painting needs rasterizing first. */
     val isVector: Boolean get() = kind == LayerKind.SHAPE || kind == LayerKind.TEXT
-    /** Has pixels of its own to draw (pixel, shape and text layers). */
-    val hasContent: Boolean get() = kind == LayerKind.PIXELS || isVector
+    /** A picture of its own, placed (see [SmartSpec]); its pixels are drawn from it. */
+    val isSmart: Boolean get() = kind == LayerKind.SMART
+    /** Shape, text and smart layers: changing their pixels directly means rasterizing them first. */
+    val needsRaster: Boolean get() = isVector || isSmart
+    /** Has pixels of its own to draw (pixel, shape, text and smart layers). */
+    val hasContent: Boolean get() = kind == LayerKind.PIXELS || isVector || kind == LayerKind.SMART
 
     /** Folder folded shut in the Layers panel (not part of undo). */
     var collapsed by mutableStateOf(false)
@@ -325,7 +331,9 @@ class Doc(width: Int, height: Int, name: String) {
         for (l in layers) {
             val t = TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }
             val m = l.mask?.let { src -> TileGrid(alphaOnly = true).also { it.tiles.putAll(src.tiles) } }
-            d.layers.add(Layer(l.id, l.props, t, l.x, l.y, m, l.kind))
+            // A smart layer's contents are copied the same way (they may be edited meanwhile)
+            val props = l.props.smart?.let { sp -> l.props.copy(smart = SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf())) } ?: l.props
+            d.layers.add(Layer(l.id, props, t, l.x, l.y, m, l.kind))
         }
         d.activeId = activeId
         d.selection = selection

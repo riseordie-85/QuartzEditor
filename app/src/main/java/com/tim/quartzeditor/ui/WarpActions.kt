@@ -212,7 +212,7 @@ fun EditorViewModel.beginWarp() {
             toast("\"${l.props.name}\" is hidden")
             return
         }
-        l.isVector -> {
+        l.needsRaster -> {
             askRasterize(l) { beginWarp() }
             return
         }

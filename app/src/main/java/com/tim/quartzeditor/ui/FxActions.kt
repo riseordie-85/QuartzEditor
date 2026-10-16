@@ -42,7 +42,7 @@ fun EditorViewModel.updateFx(fx: FxParams) {
         toast("\"${l.props.name}\" is locked")
         return
     }
-    if (l.isVector) {
+    if (l.needsRaster) {
         askRasterize(l) { updateFx(fx) }
         return
     }

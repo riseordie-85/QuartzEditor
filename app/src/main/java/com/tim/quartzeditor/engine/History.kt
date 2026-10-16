@@ -77,6 +77,10 @@ class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
     val undoLabel: String? get() = undoStack.lastOrNull()?.label
     val redoLabel: String? get() = redoStack.lastOrNull()?.label
 
+    /** The step Undo would take back (and Redo would do again), without doing it. */
+    fun peekUndo(): Change? = undoStack.lastOrNull()
+    fun peekRedo(): Change? = redoStack.lastOrNull()
+
     fun record(c: Change) {
         undoStack.addLast(c)
         redoStack.clear()

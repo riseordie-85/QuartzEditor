@@ -201,6 +201,7 @@ private fun FaceControls(vm: EditorViewModel, w: WarpSession) {
                 vm.setFaceValue(f, if (kotlin.math.abs(x) < 0.03f) 0f else x)
             },
             onDone = { started[0] = false },
+            fromTyped = { it / 100f },
         )
     }
     Spacer(Modifier.height(4.dp))

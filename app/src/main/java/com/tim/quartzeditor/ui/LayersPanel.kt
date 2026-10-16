@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FilterNone
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -332,7 +333,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
                     item("Put in a new folder") { vm.groupActive() }()
                     if (active != null && !active.isGroup) item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }()
-                    if (active?.isVector == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
+                    if (active?.needsRaster == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
+                    if (active?.isSmart == true) item("Edit smart layer contents") { vm.openSmartContents(active.id) }()
+                    if (active != null && !active.isAdjustment) item(if (vm.isMultiSelecting) "Convert picked to smart layer" else "Convert to smart layer") { vm.convertToSmart() }()
                     if (canApplyStyle(active)) item("Apply layer style") { vm.applyLayerStyle(active!!.id) }()
                     item("Flatten image") { vm.flattenImage() }()
                     HorizontalDivider()
@@ -410,7 +413,12 @@ private fun LayerRow(
                     },
                 )
             }
-            .combinedClickable(onClick = { vm.selectLayer(layer.id, mask = false) }, onLongClick = { menu = true }),
+            .combinedClickable(
+                onClick = { vm.selectLayer(layer.id, mask = false) },
+                onLongClick = { menu = true },
+                // A smart layer: double-tap edits what's inside it
+                onDoubleClick = if (layer.isSmart) ({ vm.openSmartContents(layer.id) }) else null,
+            ),
     ) {
         if (picked) {
             Icon(Icons.Filled.CheckCircle, contentDescription = "Picked", tint = Q.accent, modifier = Modifier.padding(start = 4.dp).size(16.dp))
@@ -457,6 +465,14 @@ private fun LayerRow(
             // Text layers show a T like Photoshop; tapping it on the selected layer edits the text
             layer.isText -> IconThumb(Icons.Outlined.Title, selected && !maskSelected) {
                 if (selected && !maskSelected) vm.beginTextEdit(layer) else vm.selectLayer(layer.id, mask = false)
+            }
+            layer.isSmart -> Box {
+                Thumb(layer.thumb, outlined = selected && !maskSelected, onDoubleTap = { vm.openSmartContents(layer.id) }) { vm.selectLayer(layer.id, mask = false) }
+                // The smart layer badge
+                Icon(
+                    Icons.Outlined.FilterNone, contentDescription = "Smart layer (double-tap to edit)", tint = Color.White,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp).size(14.dp).clip(RoundedCornerShape(3.dp)).background(Color.Black.copy(alpha = 0.65f)).padding(1.dp),
+                )
             }
             else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
         }
@@ -518,6 +534,12 @@ private fun LayerRow(
         if (!layer.isGroup) item(if (p.clip) "Release clipping mask" else "Clip to layer below") {
             vm.onLayer(layer.id) { toggleClip() }
         }()
+        HorizontalDivider()
+        if (layer.isSmart) item("Edit contents") { vm.openSmartContents(layer.id) }()
+        if (!layer.isAdjustment) item(if (ids.size > 1) "Convert ${ids.size} to smart layer" else "Convert to smart layer") {
+            if (ids.size > 1) vm.convertToSmart() else vm.onLayer(layer.id) { convertToSmart() }
+        }()
+        if (layer.needsRaster) item("Rasterize layer") { vm.rasterizeLayer(layer.id) }()
     }
     }
 }
@@ -599,7 +621,8 @@ private fun IconThumb(icon: ImageVector, outlined: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onClick: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onDoubleTap: (() -> Unit)? = null, onClick: () -> Unit) {
     Box(
         Modifier
             .size(44.dp)
@@ -607,7 +630,7 @@ private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Bool
             .padding(2.dp)
             .clip(RoundedCornerShape(3.dp))
             .then(if (plain) Modifier.background(Color.White) else Modifier.checker(6f))
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleTap),
     ) {
         if (img != null) Image(img, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
     }
@@ -724,7 +747,7 @@ fun RenameDialog(current: String, title: String = "Rename layer", onDismiss: () 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
+        text = { OutlinedTextField(value = text, onValueChange = { text = it.replace("/", "") }, singleLine = true) },
         confirmButton = { TextButton(onClick = { if (text.isNotBlank()) onRename(text.trim()) }) { Text("Rename") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

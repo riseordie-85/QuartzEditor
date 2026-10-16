@@ -13,6 +13,8 @@ import com.tim.quartzeditor.engine.PatternPainter
 import com.tim.quartzeditor.engine.Patterns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.lifecycle.viewModelScope
 
 // Pattern fills: the paint bucket can fill with a pattern, a selection (or the whole layer) can be
 // filled with one, and you can make your own from a selection or from your photos.
@@ -136,4 +138,10 @@ fun EditorViewModel.deletePattern(key: String) {
     Patterns.delete(ctx, key)
     userPatterns = Patterns.mine(ctx)
     if (patternKey == key) choosePattern(Patterns.BUILT_IN.first().first)
+}
+
+/** Reads a pattern into memory in the background (so drawing it later doesn't have to). */
+fun EditorViewModel.warmPattern(key: String, a: Int, b: Int) {
+    val c = ctx
+    viewModelScope.launch(Dispatchers.IO) { runCatching { Patterns.bitmap(c, key, a, b) } }
 }
