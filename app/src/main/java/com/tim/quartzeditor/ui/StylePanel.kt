@@ -45,7 +45,7 @@ import com.tim.quartzeditor.engine.StrokePosition
 import kotlin.math.roundToInt
 
 private enum class StyleFx(val label: String) {
-    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
+    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), PATTERN("Pattern Overlay"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
 }
 
 /** Layer Style: switch effects on and off and tune them. They never change the layer's pixels. */
@@ -64,6 +64,7 @@ fun StylePanel(vm: EditorViewModel) {
         val on = when (kind) {
             StyleFx.BEVEL -> st.bevel.on
             StyleFx.GRADIENT -> st.gradientFill.on
+            StyleFx.PATTERN -> st.patternOverlay.on
             StyleFx.LONG_SHADOW -> st.longShadow.on
             StyleFx.STROKE -> st.stroke.on
             StyleFx.DROP_SHADOW -> st.dropShadow.on
@@ -103,6 +104,7 @@ fun StylePanel(vm: EditorViewModel) {
                     when (kind) {
                         StyleFx.BEVEL -> BevelControls(vm, st)
                         StyleFx.GRADIENT -> GradientFillControls(vm, st)
+                        StyleFx.PATTERN -> PatternOverlayControls(vm, st)
                         StyleFx.LONG_SHADOW -> {
                             val ls = st.longShadow
                             fun LayerStyle.lsh(change: LongShadowFx.() -> LongShadowFx): LayerStyle = copy(longShadow = longShadow.change().copy(on = true))
@@ -140,6 +142,7 @@ fun StylePanel(vm: EditorViewModel) {
 private fun LayerStyle.toggle(kind: StyleFx, on: Boolean): LayerStyle = when (kind) {
     StyleFx.BEVEL -> copy(bevel = bevel.copy(on = on))
     StyleFx.GRADIENT -> copy(gradientFill = gradientFill.copy(on = on))
+    StyleFx.PATTERN -> copy(patternOverlay = patternOverlay.copy(on = on))
     StyleFx.LONG_SHADOW -> copy(longShadow = longShadow.copy(on = on))
     StyleFx.STROKE -> copy(stroke = stroke.copy(on = on))
     StyleFx.DROP_SHADOW -> copy(dropShadow = dropShadow.copy(on = on))
@@ -151,7 +154,13 @@ private fun LayerStyle.toggle(kind: StyleFx, on: Boolean): LayerStyle = when (ki
 @Composable
 private fun StrokeControls(vm: EditorViewModel, st: LayerStyle) {
     val s = st.stroke
-    FxColor(vm, s.color) { c -> vm.setStyle("Stroke color") { it.copy(stroke = it.stroke.copy(color = c, on = true)) } }
+    ChipRow(listOf("Color", "Gradient"), if (s.useGradient) 1 else 0) { i -> vm.setStyle("Stroke fill") { it.copy(stroke = it.stroke.copy(useGradient = i == 1, on = true)) } }
+    Spacer(Modifier.height(6.dp))
+    if (s.useGradient) {
+        GradientFxControls(vm, s.gradient, "Stroke gradient", showOpacity = false) { change -> copy(stroke = stroke.copy(gradient = stroke.gradient.change(), on = true)) }
+    } else {
+        FxColor(vm, s.color) { c -> vm.setStyle("Stroke color") { it.copy(stroke = it.stroke.copy(color = c, on = true)) } }
+    }
     FxSlider(vm, "Size", s.size, 1f..100f, "${s.size.roundToInt()} px") { v -> copy(stroke = stroke.copy(size = v.roundToInt().toFloat(), on = true)) }
     FxSlider(vm, "Opacity", s.opacity, 0f..1f, "${(s.opacity * 100).roundToInt()}%") { v -> copy(stroke = stroke.copy(opacity = v, on = true)) }
     Text("Position", color = Q.textDim, fontSize = 13.sp)
@@ -179,6 +188,9 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
     FxSlider(vm, "Depth", b.depth, 0.1f..5f, "${(b.depth * 100).roundToInt()}%") { v -> bv { copy(depth = v) } }
     FxSlider(vm, "Size", b.size, 1f..150f, "${b.size.roundToInt()} px") { v -> bv { copy(size = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Soften", b.soften, 0f..32f, "${b.soften.roundToInt()} px") { v -> bv { copy(soften = v.roundToInt().toFloat()) } }
+    Text("Gloss contour", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    Spacer(Modifier.height(4.dp))
+    GlossPicker(b.gloss) { gc -> vm.setStyle("Gloss contour") { it.bv { copy(gloss = gc) } } }
     Text("Light", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
     FxSlider(vm, "Angle", b.angle, -180f..180f, "${b.angle.roundToInt()}°") { v -> bv { copy(angle = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Altitude", b.altitude, 0f..90f, "${b.altitude.roundToInt()}°") { v -> bv { copy(altitude = v.roundToInt().toFloat()) } }
@@ -190,11 +202,24 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
     FxSlider(vm, "Opacity", b.shadowOpacity, 0f..1f, "${(b.shadowOpacity * 100).roundToInt()}%") { v -> bv { copy(shadowOpacity = v) } }
 }
 
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
-    val g = st.gradientFill
-    fun LayerStyle.gf(change: GradientFx.() -> GradientFx): LayerStyle = copy(gradientFill = gradientFill.change().copy(on = true))
+    GradientFxControls(vm, st.gradientFill, "Gradient fill", showOpacity = true) { change -> copy(gradientFill = gradientFill.change().copy(on = true)) }
+}
+
+/**
+ * Picking and setting up a gradient for a layer style (Gradient Fill, or a stroke's gradient).
+ * [update] applies a change to that gradient within the style.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun GradientFxControls(
+    vm: EditorViewModel,
+    g: GradientFx,
+    what: String,
+    showOpacity: Boolean,
+    update: LayerStyle.(GradientFx.() -> GradientFx) -> LayerStyle,
+) {
     var editor by remember { mutableStateOf<Pair<GradientPreset, Int?>?>(null) }
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         vm.allGradients.forEachIndexed { i, p ->
@@ -202,24 +227,56 @@ private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
             val cols = p.resolve(vm.foreground, vm.background)
             val sel = cols == g.colors && (p.positions ?: emptyList<Float>()) == (g.positions ?: emptyList<Float>())
             GradientTile(vm, p, sel, 52.dp, 26.dp, onPick = {
-                vm.setStyle("Gradient fill") { it.gf { copy(colors = cols, positions = p.positions) } }
+                vm.setStyle(what) { it.update { copy(colors = cols, positions = p.positions) } }
             }, userIndex = mine, onEdit = { n -> editor = vm.userGradients[n] to n })
         }
-        // A new one starts from the layer's gradient fill
+        // A new one starts from the gradient there is
         NewGradientTile(52.dp, 26.dp) { editor = GradientPreset("Gradient", g.colors, positions = g.positions) to null }
     }
     editor?.let { (start, editing) ->
         GradientEditorDialog(vm, start, editing, onDone = { editor = null }, pickForTool = false, onSaved = { saved ->
-            vm.setStyle("Gradient fill") { it.gf { copy(colors = saved.colors, positions = saved.positions) } }
+            vm.setStyle(what) { it.update { copy(colors = saved.colors, positions = saved.positions) } }
         })
     }
     Spacer(Modifier.height(6.dp))
-    ChipRow(GradientType.entries.map { it.label }, g.type.ordinal) { i -> vm.setStyle("Gradient fill type") { it.gf { copy(type = GradientType.entries[i]) } } }
+    ChipRow(GradientType.entries.map { it.label }, g.type.ordinal) { i -> vm.setStyle("$what type") { it.update { copy(type = GradientType.entries[i]) } } }
     Spacer(Modifier.height(4.dp))
-    FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> gf { copy(opacity = v) } }
-    FxSlider(vm, "Angle", g.angle, -180f..180f, "${g.angle.roundToInt()}°") { v -> gf { copy(angle = v.roundToInt().toFloat()) } }
-    FxSlider(vm, "Scale", g.scale, 0.1f..2f, "${(g.scale * 100).roundToInt()}%") { v -> gf { copy(scale = v) } }
-    ToggleRow("Reverse", g.reverse) { r -> vm.setStyle("Gradient fill reverse") { it.gf { copy(reverse = r) } } }
+    if (showOpacity) FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> update { copy(opacity = v) } }
+    FxSlider(vm, "Angle", g.angle, -180f..180f, "${g.angle.roundToInt()}°") { v -> update { copy(angle = v.roundToInt().toFloat()) } }
+    FxSlider(vm, "Scale", g.scale, 0.1f..2f, "${(g.scale * 100).roundToInt()}%") { v -> update { copy(scale = v) } }
+    ToggleRow("Reverse", g.reverse) { r -> vm.setStyle("$what reverse") { it.update { copy(reverse = r) } } }
+}
+
+/** Pattern Overlay: which pattern, its size and strength. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PatternOverlayControls(vm: EditorViewModel, st: LayerStyle) {
+    val po = st.patternOverlay
+    fun LayerStyle.po(change: com.tim.quartzeditor.engine.PatternFx.() -> com.tim.quartzeditor.engine.PatternFx): LayerStyle =
+        copy(patternOverlay = patternOverlay.change().copy(on = true))
+    PatternGrid(vm, selected = po.key, colorA = po.colorA, colorB = po.colorB) { key ->
+        // Ready-made patterns take your colors as they are now
+        val a = vm.foreground or 0xFF000000.toInt()
+        val b = vm.background or 0xFF000000.toInt()
+        vm.setStyle("Pattern overlay") { it.po { copy(key = key, colorA = a, colorB = b) } }
+    }
+    if (po.key.startsWith("b:")) {
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Colors", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            SmallButton("Use foreground / background") {
+                val a = vm.foreground or 0xFF000000.toInt()
+                val b = vm.background or 0xFF000000.toInt()
+                vm.setStyle("Pattern colors") { it.po { copy(colorA = a, colorB = b) } }
+            }
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    FxSlider(vm, "Opacity", po.opacity, 0f..1f, "${(po.opacity * 100).roundToInt()}%") { v -> po { copy(opacity = v) } }
+    FxSlider(
+        vm, "Size", kotlin.math.log2(po.scale.coerceIn(0.125f, 4f)), -3f..2f, "${(po.scale * 100).roundToInt()}%",
+        fromTyped = { pct -> kotlin.math.log2((pct / 100f).coerceIn(0.125f, 4f)) },
+    ) { v -> po { copy(scale = Math.pow(2.0, v.toDouble()).toFloat().let { s -> if (kotlin.math.abs(s - 1f) < 0.04f) 1f else s }) } }
 }
 
 @Composable
@@ -241,6 +298,7 @@ private fun FxSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     display: String,
+    fromTyped: ((Float) -> Float?)? = null,
     change: LayerStyle.(Float) -> LayerStyle,
 ) {
     PanelSlider(
@@ -248,6 +306,7 @@ private fun FxSlider(
         value = value.coerceIn(range.start, range.endInclusive),
         range = range,
         display = display,
+        fromTyped = fromTyped,
         onChange = { v -> vm.setStyleLive { it.change(v) } },
         onDone = { vm.commitProps("Layer style") },
     )
@@ -281,4 +340,52 @@ private fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
     val colors = (listOf(vm.foreground, vm.background) + vm.recentColors + BASIC_COLORS).distinct().take(18)
     ColorDots(colors, current, onPick)
     Spacer(Modifier.height(4.dp))
+}
+
+/** The gloss contours, each drawn as its curve. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun GlossPicker(current: com.tim.quartzeditor.engine.GlossContour, onPick: (com.tim.quartzeditor.engine.GlossContour) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.tim.quartzeditor.engine.GlossContour.entries.forEach { gc ->
+            val sel = gc == current
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (sel) Q.accent.copy(alpha = 0.25f) else Q.field)
+                    .border(if (sel) 2.dp else 0.dp, if (sel) Q.accent else Color.Transparent, RoundedCornerShape(8.dp))
+                    .clickable { onPick(gc) }
+                    .padding(6.dp),
+            ) {
+                androidx.compose.foundation.Canvas(Modifier.size(40.dp, 28.dp)) {
+                    val path = androidx.compose.ui.graphics.Path()
+                    for (i in 0..40) {
+                        val t = i / 40f
+                        val y = glossCurve(gc, t)
+                        val px = t * size.width
+                        val py = size.height - y * size.height
+                        if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    }
+                    drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                }
+                Text(gc.label, color = Q.textDim, fontSize = 10.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** The same curves as the bevel's shader, for drawing the choices. */
+private fun glossCurve(g: com.tim.quartzeditor.engine.GlossContour, t: Float): Float = when (g) {
+    com.tim.quartzeditor.engine.GlossContour.LINEAR -> t
+    com.tim.quartzeditor.engine.GlossContour.CONE -> 1f - kotlin.math.abs(2f * t - 1f)
+    com.tim.quartzeditor.engine.GlossContour.CONE_INVERTED -> kotlin.math.abs(2f * t - 1f)
+    com.tim.quartzeditor.engine.GlossContour.GAUSSIAN -> t * t * (3f - 2f * t)
+    com.tim.quartzeditor.engine.GlossContour.HALF_ROUND -> kotlin.math.sqrt((1f - (1f - t) * (1f - t)).coerceAtLeast(0f))
+    com.tim.quartzeditor.engine.GlossContour.RING -> 0.5f - 0.5f * kotlin.math.cos(t * 12.566371f)
+    com.tim.quartzeditor.engine.GlossContour.STEPS -> {
+        val s = t * 4f
+        val f = s - kotlin.math.floor(s)
+        ((kotlin.math.floor(s) + f * f * (3f - 2f * f)) / 4f).coerceAtMost(1f)
+    }
 }

@@ -61,6 +61,17 @@ object Patterns {
 
     private val cache = ConcurrentHashMap<String, Bitmap>()
 
+    @Volatile
+    private var app: Context? = null
+
+    /** Lets drawing code (which has no Context) reach your own patterns. Call once at start-up. */
+    fun init(context: Context) {
+        app = context.applicationContext
+    }
+
+    /** [bitmap] for code without a Context (layer styles). */
+    fun bitmapFor(key: String, a: Int, b: Int): Bitmap? = app?.let { bitmap(it, key, a, b) }
+
     /** The pattern's picture (ready-made ones in colors [a] and [b]). Null if it's gone. */
     fun bitmap(context: Context, key: String, a: Int, b: Int): Bitmap? {
         val ck = if (key.startsWith("b:")) "$key/$a/$b" else key

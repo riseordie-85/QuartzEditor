@@ -335,6 +335,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private var thumbJob: Job? = null
 
     init {
+        com.tim.quartzeditor.engine.Patterns.init(app)
         viewModelScope.launch { effectsLoop() }
         // Keep thumbnails up to date shortly after changes
         viewModelScope.launch {

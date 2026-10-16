@@ -56,32 +56,13 @@ import kotlin.math.roundToInt
  * The patterns to fill with: the ready-made ones (in your foreground and background colors) and
  * your own. Hold one of yours to delete it; + adds one from your photos.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PatternPicker(vm: EditorViewModel) {
-    val addPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let { vm.addPatternFromPhoto(it) }
-    }
     val fg = vm.foreground or 0xFF000000.toInt()
     val bg = vm.background or 0xFF000000.toInt()
     val all = remember(vm.userPatterns) { Patterns.builtIns() + vm.userPatterns }
     Column {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            all.forEach { p ->
-                PatternThumb(vm, p, fg, bg, selected = p.key == vm.patternKey)
-            }
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(THUMB)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
-                    .clickable { addPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add a pattern from your photos", tint = Q.textDim)
-            }
-        }
+        PatternGrid(vm, vm.patternKey, fg, bg) { vm.choosePattern(it) }
         val name = all.firstOrNull { it.key == vm.patternKey }?.name ?: ""
         Text(
             if (name.isEmpty()) "" else if (vm.patternKey.startsWith("b:")) "$name · in your foreground and background colors" else "$name · hold it to delete",
@@ -103,11 +84,40 @@ fun PatternPicker(vm: EditorViewModel) {
     }
 }
 
+/**
+ * Every pattern as a tile, [selected] outlined; ready-made ones drawn in [colorA] on [colorB].
+ * Hold one of yours to delete it; + adds one from your photos (and picks it).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PatternGrid(vm: EditorViewModel, selected: String, colorA: Int, colorB: Int, onPick: (String) -> Unit) {
+    val addPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { vm.addPatternFromPhoto(it) }
+    }
+    val all = remember(vm.userPatterns) { Patterns.builtIns() + vm.userPatterns }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        all.forEach { p ->
+            PatternThumb(vm, p, colorA, colorB, selected = p.key == selected, onPick = onPick)
+        }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(THUMB)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                .clickable { addPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = "Add a pattern from your photos", tint = Q.textDim)
+        }
+    }
+}
+
 private val THUMB = 46.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PatternThumb(vm: EditorViewModel, p: PatternEntry, fg: Int, bg: Int, selected: Boolean) {
+private fun PatternThumb(vm: EditorViewModel, p: PatternEntry, fg: Int, bg: Int, selected: Boolean, onPick: (String) -> Unit) {
     val context = LocalContext.current
     // Your own patterns are read from storage in the background
     val bmp by produceState<android.graphics.Bitmap?>(null, p.key, fg, bg) {
@@ -122,7 +132,7 @@ private fun PatternThumb(vm: EditorViewModel, p: PatternEntry, fg: Int, bg: Int,
             .background(Q.field)
             .border(if (selected) 2.dp else 1.dp, if (selected) Q.accent else Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
             .combinedClickable(
-                onClick = { vm.choosePattern(p.key) },
+                onClick = { onPick(p.key) },
                 onLongClick = { if (!p.builtIn) menu = true },
             ),
     ) {

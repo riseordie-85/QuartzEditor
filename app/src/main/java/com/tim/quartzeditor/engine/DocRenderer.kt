@@ -497,7 +497,8 @@ object DocRenderer {
         val dx = layer.x + (preview?.dragX ?: 0f)
         val dy = layer.y + (preview?.dragY ?: 0f)
 
-        if (built == null && overlay == null && !(style.gradientFill.on && !transforming)) {
+        val pattern = style.patternOverlay.takeIf { it.on && !transforming && it.opacity > 0f }
+        if (built == null && overlay == null && pattern == null && !(style.gradientFill.on && !transforming)) {
             // No effects: the layer's opacity and fill simply multiply
             val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
             if (alpha <= 0f) return
@@ -533,6 +534,13 @@ object DocRenderer {
             drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
             canvas.restore()
         }
+        if (pattern != null) {
+            // The layer's shape, filled with the pattern (it moves with the layer)
+            canvas.saveLayer(bounds, Paint().apply { alpha = (pattern.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            Effects.drawPatternOverlay(canvas, pattern, dx, dy)
+            canvas.restore()
+        }
         val gradient = style.gradientFill.takeIf { it.on && !transforming && it.opacity > 0f }
         if (gradient != null) {
             // The layer's shape, filled with the gradient across where its pixels are
@@ -564,7 +572,8 @@ object DocRenderer {
             Effects.drawImage(canvas, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, android.graphics.BlendMode.MULTIPLY)
         }
         if (built != null && style.stroke.on) {
-            Effects.drawImage(canvas, built, built.stroke, dx, dy, style.stroke.color, style.stroke.opacity)
+            val area = (built.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }
+            Effects.drawStroke(canvas, built, style.stroke, dx, dy, area)
         }
         canvas.restore()
     }
