@@ -485,7 +485,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         // Every in-between point, so Liquify strokes stay smooth
                                         for (h in main.historical) {
                                             val (hx, hy) = vm.screenToCanvas(h.position.x, h.position.y)
-                                            vm.warpMove(hx, hy)
+                                            vm.warpMove(hx, hy, show = false)
                                         }
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                         vm.warpMove(cx, cy)

@@ -100,7 +100,7 @@ internal fun DrawScope.drawWarpOverlay(vm: EditorViewModel, w: WarpSession, s: F
             }
             vm.warpCursor?.let { c ->
                 val o = sc(c.x, c.y)
-                val r = vm.liquifySize / 2f * s
+                val r = vm.liquifyRadius(w) * s
                 drawCircle(shade, r, o, style = Stroke(line * 3f))
                 drawCircle(Color.White, r, o, style = Stroke(line))
                 drawCircle(Color.White, line * 2f, o)

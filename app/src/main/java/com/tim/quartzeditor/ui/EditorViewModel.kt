@@ -1850,7 +1850,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun redo() {
         val d = doc ?: return
-        if (stroke != null || busy != null || pendingFx != null || transform != null || cropBox != null || textEdit != null) return
+        if (stroke != null || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
         history.redo(d)?.let { toast("Redo: $it") }
     }
 

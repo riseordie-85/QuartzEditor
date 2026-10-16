@@ -105,13 +105,21 @@ fun WarpOptions(vm: EditorViewModel) {
                 color = Q.textDim, fontSize = 12.sp,
             )
             Spacer(Modifier.height(6.dp))
+            val started = remember { booleanArrayOf(false) }
             PanelSlider(
                 "Stiffness", w.stiffness, 1f..2.5f, when {
                     w.stiffness < 1.4f -> "Smooth"
                     w.stiffness < 2f -> "Firm"
                     else -> "Stiff"
                 },
-                onChange = { vm.setPuppetStiffness(it) },
+                onChange = {
+                    if (!started[0]) {
+                        started[0] = true
+                        vm.beginPuppetStiffness()
+                    }
+                    vm.setPuppetStiffness(it)
+                },
+                onDone = { started[0] = false },
             )
             Text("${w.pinTo.size} pin${if (w.pinTo.size == 1) "" else "s"}", color = Q.textDim, fontSize = 12.sp)
         }
@@ -143,7 +151,12 @@ fun WarpOptions(vm: EditorViewModel) {
                 onChange = { vm.liquifyStrength = it },
                 onDone = { vm.saveLiquifyPrefs() },
             )
-            Text("[ and ] change the size on a keyboard.", color = Q.textDim, fontSize = 11.sp)
+            val smallest = (w.mesh.cell * 2.5f).roundToInt()
+            Text(
+                if (vm.liquifySize < smallest) "On this layer the brush works at $smallest px or more. [ and ] change the size on a keyboard."
+                else "[ and ] change the size on a keyboard.",
+                color = Q.textDim, fontSize = 11.sp,
+            )
             Spacer(Modifier.height(12.dp))
             FaceControls(vm, w)
         }

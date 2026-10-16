@@ -51,6 +51,9 @@ class WarpSession(
     val sourceGrid: TileGrid,
     /** Layer-local area the mesh started over. */
     val src: Rect,
+    /** Where the layer was (its tiles' origin on the canvas). */
+    val lx: Int,
+    val ly: Int,
     /** A smaller copy of [src] (mask applied) to show. */
     val proxy: Bitmap,
     val mesh: WarpMesh,
@@ -77,13 +80,25 @@ class WarpSession(
     internal var faceValues: List<MutableMap<FaceSlider, Float>> = emptyList()
     private val border by lazy { FaceAware.borderOf(mesh) }
 
-    /** Where the mesh points end up: Liquify's brushes, then the face sliders. */
-    fun output(): FloatArray {
-        if (faceValues.all { m -> m.values.all { it == 0f } }) return mesh.pts
-        val out = mesh.pts.copyOf()
+    /** Where the mesh points end up: Liquify's brushes, then the face sliders (a new array). */
+    fun output(): FloatArray = FloatArray(mesh.pts.size).also { outputInto(it) }
+
+    fun outputInto(out: FloatArray) {
+        mesh.pts.copyInto(out)
         faces.forEachIndexed { i, f -> faceValues.getOrNull(i)?.takeIf { m -> m.values.any { it != 0f } }?.let { FaceAware.apply(out, border, f, it) } }
-        return out
     }
+
+    // Two arrays for what's on screen, used in turn (drawing copies the points it's given, so the
+    // one from the frame before can be reused)
+    private val shown = arrayOf(FloatArray(mesh.pts.size), FloatArray(mesh.pts.size))
+    private var shownIndex = 0
+    internal fun nextShown(): FloatArray {
+        shownIndex = 1 - shownIndex
+        return shown[shownIndex]
+    }
+
+    /** Something changed during the gesture under way (otherwise it isn't kept as a step). */
+    internal var changed = false
 
     /** Earlier states, for undo within the warp. */
     internal val steps = ArrayDeque<Snap>()
@@ -96,17 +111,20 @@ class WarpSession(
         val pinFrom: List<PointF>,
         val pinTo: List<PointF>,
         val faceValues: List<Map<FaceSlider, Float>>,
+        val stiffness: Float,
     )
 
     internal fun snap() = Snap(
         mesh.pts.copyOf(), ctrl.copyOf(), preset, bend, pinFrom.map { PointF(it.x, it.y) }, pinTo.map { PointF(it.x, it.y) },
-        faceValues.map { HashMap(it) },
+        faceValues.map { HashMap(it) }, stiffness,
     )
 
     internal fun restore(s: Snap) {
         // (Faces found after this step keep a slot each, at no change)
         faceValues = faces.indices.map { HashMap(s.faceValues.getOrNull(it) ?: emptyMap()) }
         s.pts.copyInto(mesh.pts)
+        mesh.refreshShift()
+        stiffness = s.stiffness
         ctrl = s.ctrl.copyOf()
         preset = s.preset
         bend = s.bend
@@ -136,6 +154,8 @@ class WarpSession(
 
 /** Picks Warp, Puppet Warp or Liquify (from the Transform button's long-press list or a shortcut). */
 fun EditorViewModel.chooseWarp(kind: WarpKind) {
+    // Already open: nothing to do (and nothing gets applied by accident)
+    if (warp?.kind == kind) return
     if (pendingFirst { chooseWarp(kind) }) return
     warpKind = kind
     prefs.edit().putInt("warpKind", kind.ordinal).apply()
@@ -225,7 +245,7 @@ fun EditorViewModel.beginWarp() {
         }
         if (doc !== d || l.tiles !== source || tool != Tool.WARP) return@runBusy
         val (src, proxy, mesh) = made
-        val s = WarpSession(kind, l, tiles, mask, source, src, proxy, mesh)
+        val s = WarpSession(kind, l, tiles, mask, source, src, lx, ly, proxy, mesh)
         warp = s
         showWarp(s)
         if (kind == WarpKind.PUPPET) toast("Tap to add pins, then drag them")
@@ -234,7 +254,9 @@ fun EditorViewModel.beginWarp() {
 
 internal fun EditorViewModel.showWarp(s: WarpSession) {
     s.version++
-    preview = LayerPreview(s.layer.id, mesh = MeshPreview(s.proxy, s.mesh.cols, s.mesh.rows, s.output().copyOf()))
+    val pts = s.nextShown()
+    s.outputInto(pts)
+    preview = LayerPreview(s.layer.id, mesh = MeshPreview(s.proxy, s.mesh.cols, s.mesh.rows, pts))
     doc?.invalidate()
 }
 
@@ -270,7 +292,7 @@ fun EditorViewModel.applyWarp(onDone: () -> Unit = {}) {
                 ?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = false).also { bmp.recycle() } }
                 ?: TileGrid(alphaOnly = false)
             val m = s.mask?.let { mk ->
-                WarpMath.render(mk, true, s.src, pts, cols, rows, limit)
+                WarpMath.renderMask(mk, s.src, s.lx, s.ly, pts, cols, rows, limit)
                     ?.let { (bmp, area) -> TileGrid.fromBitmap(bmp, area.left, area.top, alphaOnly = true).also { bmp.recycle() } }
                     ?: TileGrid(alphaOnly = true)
             }
@@ -306,6 +328,7 @@ fun EditorViewModel.resetWarp() {
     if (WarpMath.nearlyUnchanged(s.output(), s.mesh.rest) && s.pinTo.isEmpty()) return
     s.pushStep()
     s.mesh.rest.copyInto(s.mesh.pts)
+    s.mesh.maxShift = 0f
     s.faceValues = s.faces.map { HashMap() }
     s.ctrl = WarpMath.restControls(s.mesh.area)
     s.preset = WarpPreset.CUSTOM
@@ -362,6 +385,7 @@ fun EditorViewModel.warpDown(x: Float, y: Float, reach: Float): Boolean {
         }
         WarpKind.LIQUIFY -> {
             s.pushStep()
+            s.changed = false
             warpCursor = PointF(x, y)
             val t = liquifyTool
             if (t.continuous) {
@@ -370,7 +394,10 @@ fun EditorViewModel.warpDown(x: Float, y: Float, reach: Float): Boolean {
                     while (isActive && warp === s) {
                         val c = warpCursor ?: break
                         // On the main thread, like every other change to the mesh (it's quick)
-                        if (WarpMath.liquify(s.mesh, t, c.x, c.y, liquifySize / 2f, liquifyStrength)) showWarp(s)
+                        if (WarpMath.liquify(s.mesh, t, c.x, c.y, liquifyRadius(s), liquifyStrength)) {
+                            s.changed = true
+                            showWarp(s)
+                        }
                         delay(16)
                     }
                 }
@@ -380,8 +407,14 @@ fun EditorViewModel.warpDown(x: Float, y: Float, reach: Float): Boolean {
     }
 }
 
-/** The finger that started the gesture is at ([x], [y]) now. */
-fun EditorViewModel.warpMove(x: Float, y: Float) {
+/** The brush radius Liquify really uses: never smaller than the mesh's cells (or it would catch no points). */
+fun EditorViewModel.liquifyRadius(s: WarpSession): Float = max(liquifySize / 2f, s.mesh.cell * 1.25f)
+
+/**
+ * The finger that started the gesture is at ([x], [y]) now. [show]: redraw (false for the
+ * in-between points of one touch event; the last one redraws).
+ */
+fun EditorViewModel.warpMove(x: Float, y: Float, show: Boolean = true) {
     val s = warp ?: return
     val dx = x - s.startX
     val dy = y - s.startY
@@ -399,19 +432,18 @@ fun EditorViewModel.warpMove(x: Float, y: Float) {
             }
             s.preset = WarpPreset.CUSTOM
             WarpMath.applyPatch(s.ctrl, s.mesh)
-            showWarp(s)
+            if (show) showWarp(s)
         }
         WarpKind.PUPPET -> {
             val p0 = s.dragStartPin ?: return
             val i = s.dragPin.takeIf { it in s.pinTo.indices } ?: return
             s.pinTo[i] = PointF(p0.x + dx, p0.y + dy)
-            updatePuppet(s)
+            if (show) updatePuppet(s)
         }
         WarpKind.LIQUIFY -> {
-            warpCursor = PointF(x, y)
-            if (!liquifyTool.continuous) {
-                if (WarpMath.push(s.mesh, s.lastX, s.lastY, x, y, liquifySize / 2f, liquifyStrength)) showWarp(s)
-            }
+            if (show) warpCursor = PointF(x, y) else warpCursor?.set(x, y)
+            if (!liquifyTool.continuous && WarpMath.push(s.mesh, s.lastX, s.lastY, x, y, liquifyRadius(s), liquifyStrength)) s.changed = true
+            if (show && s.changed) showWarp(s)
         }
     }
     s.lastX = x
@@ -425,7 +457,8 @@ fun EditorViewModel.warpUp(moved: Boolean) {
     liquifyJob = null
     warpCursor = null
     // A touch that changed nothing isn't a step to undo
-    if (!moved && s.kind != WarpKind.LIQUIFY) s.steps.removeLastOrNull()
+    if (if (s.kind == WarpKind.LIQUIFY) !s.changed else !moved) s.steps.removeLastOrNull()
+    s.changed = false
     s.dragCtrl = -1
     s.dragUV = null
     s.dragStartCtrl = null
@@ -461,9 +494,12 @@ fun EditorViewModel.warpTap(x: Float, y: Float, reach: Float) {
     val (i, j, dist) = s.mesh.nearest(x, y)
     if (dist > s.mesh.cell * 1.5f) return
     s.pushStep()
-    // Where that spot was before warping: near enough, the nearest mesh point's start plus the same offset
-    val k = (j * s.mesh.stride + i) * 2
-    s.pinFrom.add(PointF(s.mesh.rest[k] + (x - s.mesh.pts[k]), s.mesh.rest[k + 1] + (y - s.mesh.pts[k + 1])))
+    // Where that spot was before warping (found in the warped cell holding it)
+    val from = s.mesh.restOf(x, y) ?: run {
+        val k = (j * s.mesh.stride + i) * 2
+        PointF(s.mesh.rest[k] + (x - s.mesh.pts[k]), s.mesh.rest[k + 1] + (y - s.mesh.pts[k + 1]))
+    }
+    s.pinFrom.add(from)
     s.pinTo.add(PointF(x, y))
     s.pinSelected = s.pinTo.lastIndex
     updatePuppet(s)
@@ -479,10 +515,15 @@ fun EditorViewModel.deletePin() {
     updatePuppet(s)
 }
 
+/** Stiffness slider moving. Call [beginPuppetStiffness] when it starts. */
 fun EditorViewModel.setPuppetStiffness(v: Float) {
     val s = warp ?: return
     s.stiffness = v
     updatePuppet(s)
+}
+
+fun EditorViewModel.beginPuppetStiffness() {
+    warp?.pushStep()
 }
 
 private fun nearestPin(s: WarpSession, x: Float, y: Float, reach: Float): Int {
@@ -511,7 +552,8 @@ private fun EditorViewModel.updatePuppet(s: WarpSession) {
 fun EditorViewModel.setWarpPreset(p: WarpPreset) {
     val s = warp ?: return
     if (s.preset == p) return
-    s.pushStep()
+    // Custom just keeps the shape there is: nothing to undo
+    if (p != WarpPreset.CUSTOM) s.pushStep()
     s.preset = p
     if (p != WarpPreset.CUSTOM) {
         s.ctrl = WarpMath.preset(p, s.bend, s.mesh.area)

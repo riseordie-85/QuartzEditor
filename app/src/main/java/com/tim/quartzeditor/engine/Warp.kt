@@ -3,6 +3,7 @@ package com.tim.quartzeditor.engine
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import kotlin.math.abs
@@ -88,6 +89,76 @@ class WarpMesh(val area: RectF, val cols: Int, val rows: Int) {
     }
 
     val isUnchanged: Boolean get() = pts.contentEquals(rest)
+
+    /** At least as far as any point has moved from where it started (so brushes know where to look). */
+    var maxShift = 0f
+
+    /** Works out [maxShift] again after the points were replaced. */
+    fun refreshShift() {
+        var m = 0f
+        var k = 0
+        while (k < pts.size) {
+            m = max(m, max(abs(pts[k] - rest[k]), abs(pts[k + 1] - rest[k + 1])))
+            k += 2
+        }
+        maxShift = m
+    }
+
+    /**
+     * The columns and rows of points that could be within [r] of (x, y) now: those that started
+     * within [r] + [maxShift] (inside the edge, which never moves). Null when there are none.
+     */
+    fun window(x: Float, y: Float, r: Float): IntArray? {
+        val reach = r + maxShift
+        val cw = area.width() / cols
+        val ch = area.height() / rows
+        val i0 = kotlin.math.floor((x - reach - area.left) / cw).toInt().coerceAtLeast(1)
+        val i1 = ceil((x + reach - area.left) / cw).toInt().coerceAtMost(cols - 1)
+        val j0 = kotlin.math.floor((y - reach - area.top) / ch).toInt().coerceAtLeast(1)
+        val j1 = ceil((y + reach - area.top) / ch).toInt().coerceAtMost(rows - 1)
+        return if (i0 > i1 || j0 > j1) null else intArrayOf(i0, i1, j0, j1)
+    }
+
+    /**
+     * Where the spot now at (x, y) was before warping: found in the warped cell that holds it
+     * (searched around the nearest point). Null when it isn't on the mesh.
+     */
+    fun restOf(x: Float, y: Float): PointF? {
+        val (ni, nj, _) = nearest(x, y)
+        for (j in (nj - 2).coerceAtLeast(0)..(nj + 1).coerceAtMost(rows - 1)) {
+            for (i in (ni - 2).coerceAtLeast(0)..(ni + 1).coerceAtMost(cols - 1)) {
+                val a = j * stride + i
+                val b = a + 1
+                val c = a + stride
+                val d = c + 1
+                // Each cell is drawn as two triangles: (a, b, c) and (b, d, c)
+                for (tri in arrayOf(intArrayOf(a, b, c), intArrayOf(b, d, c))) {
+                    val w = barycentric(x, y, tri) ?: continue
+                    var rx = 0f
+                    var ry = 0f
+                    for (n in 0..2) {
+                        rx += rest[tri[n] * 2] * w[n]
+                        ry += rest[tri[n] * 2 + 1] * w[n]
+                    }
+                    return PointF(rx, ry)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun barycentric(x: Float, y: Float, t: IntArray): FloatArray? {
+        val x0 = pts[t[0] * 2]; val y0 = pts[t[0] * 2 + 1]
+        val x1 = pts[t[1] * 2]; val y1 = pts[t[1] * 2 + 1]
+        val x2 = pts[t[2] * 2]; val y2 = pts[t[2] * 2 + 1]
+        val det = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+        if (abs(det) < 1e-6f) return null
+        val l0 = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / det
+        val l1 = ((y2 - y0) * (x - x2) + (x0 - x2) * (y - y2)) / det
+        val l2 = 1f - l0 - l1
+        val e = -1e-3f
+        return if (l0 >= e && l1 >= e && l2 >= e) floatArrayOf(l0, l1, l2) else null
+    }
 
     companion object {
         /** A mesh over [area] with cells about [targetCell] pixels across (at least 4 and at most [maxCells] along a side). */
@@ -258,6 +329,8 @@ object WarpMath {
             pys /= sw
             qxs /= sw
             qys /= sw
+            // Weights that add up to 1, so far-off points (tiny weights at high stiffness) keep their rotation
+            for (i in 0 until n) w[i] /= sw
             // M = Σ w q̂ conj(p̂) (as complex numbers): the best rotation from the pins' starting to current places
             var mr = 0f
             var mi = 0f
@@ -272,7 +345,7 @@ object WarpMath {
             val len = hypot(mr, mi)
             val dx = vx - pxs
             val dy = vy - pys
-            if (len < 1e-9f) {
+            if (len < 1e-12f) {
                 out[k] = dx + qxs
                 out[k + 1] = dy + qys
             } else {
@@ -296,17 +369,19 @@ object WarpMath {
     /**
      * One dab of a Liquify brush at (cx, cy) with radius [r] and [strength] 0..1. Push moves the
      * picture by (dx, dy); the others work a little each time they're called. The mesh's edge stays
-     * put. Returns whether anything moved.
+     * put. Only points near the brush are looked at. Returns whether anything moved.
      */
     fun liquify(mesh: WarpMesh, tool: LiquifyTool, cx: Float, cy: Float, r: Float, strength: Float, dx: Float = 0f, dy: Float = 0f): Boolean {
+        val s = strength.coerceIn(0.01f, 1f)
+        val win = mesh.window(cx, cy, r) ?: return false
+        if (tool == LiquifyTool.SMOOTH) return smooth(mesh, win, cx, cy, r, s)
         val p = mesh.pts
         val rest = mesh.rest
         val r2 = r * r
-        val s = strength.coerceIn(0.01f, 1f)
         var any = false
-        if (tool == LiquifyTool.SMOOTH) return smooth(mesh, cx, cy, r, s)
-        for (j in 1 until mesh.rows) {
-            for (i in 1 until mesh.cols) {
+        var shift = mesh.maxShift
+        for (j in win[2]..win[3]) {
+            for (i in win[0]..win[1]) {
                 val k = (j * mesh.stride + i) * 2
                 val ox = p[k] - cx
                 val oy = p[k + 1] - cy
@@ -344,8 +419,10 @@ object WarpMath {
                     }
                     LiquifyTool.SMOOTH -> Unit
                 }
+                shift = max(shift, max(abs(p[k] - rest[k]), abs(p[k + 1] - rest[k + 1])))
             }
         }
+        mesh.maxShift = shift
         return any
     }
 
@@ -365,16 +442,20 @@ object WarpMath {
     }
 
     /** Evens out how much nearby points have been moved. */
-    private fun smooth(mesh: WarpMesh, cx: Float, cy: Float, r: Float, s: Float): Boolean {
+    private fun smooth(mesh: WarpMesh, win: IntArray, cx: Float, cy: Float, r: Float, s: Float): Boolean {
         val p = mesh.pts
         val rest = mesh.rest
-        val before = p.copyOf()
         val r2 = r * r
+        // New places are worked out from the old ones, then written
+        val cols = win[1] - win[0] + 1
+        val rows = win[3] - win[2] + 1
+        val next = FloatArray(cols * rows * 2)
+        val touched = BooleanArray(cols * rows)
         var any = false
-        for (j in 1 until mesh.rows) for (i in 1 until mesh.cols) {
+        for (j in win[2]..win[3]) for (i in win[0]..win[1]) {
             val k = (j * mesh.stride + i) * 2
-            val ox = before[k] - cx
-            val oy = before[k + 1] - cy
+            val ox = p[k] - cx
+            val oy = p[k + 1] - cy
             val d2 = ox * ox + oy * oy
             if (d2 >= r2) continue
             val f = falloff(sqrt(d2) / r)
@@ -382,15 +463,24 @@ object WarpMath {
             var ay = 0f
             for ((di, dj) in NEIGHBORS) {
                 val kk = ((j + dj) * mesh.stride + (i + di)) * 2
-                ax += before[kk] - rest[kk]
-                ay += before[kk + 1] - rest[kk + 1]
+                ax += p[kk] - rest[kk]
+                ay += p[kk + 1] - rest[kk + 1]
             }
             ax /= 4f
             ay /= 4f
             val a = (0.15f * s * f).coerceAtMost(1f)
-            p[k] += (rest[k] + ax - before[k]) * a
-            p[k + 1] += (rest[k + 1] + ay - before[k + 1]) * a
+            val n = (j - win[2]) * cols + (i - win[0])
+            next[n * 2] = p[k] + (rest[k] + ax - p[k]) * a
+            next[n * 2 + 1] = p[k + 1] + (rest[k + 1] + ay - p[k + 1]) * a
+            touched[n] = true
             any = true
+        }
+        for (j in win[2]..win[3]) for (i in win[0]..win[1]) {
+            val n = (j - win[2]) * cols + (i - win[0])
+            if (!touched[n]) continue
+            val k = (j * mesh.stride + i) * 2
+            p[k] = next[n * 2]
+            p[k + 1] = next[n * 2 + 1]
         }
         return any
     }
@@ -441,6 +531,36 @@ object WarpMath {
         c.translate(-out.left.toFloat(), -out.top.toFloat())
         c.drawBitmapMesh(source, cols, rows, pts, 0, null, 0, Paint(Paint.FILTER_BITMAP_FLAG))
         source.recycle()
+        return bmp to out
+    }
+
+    /**
+     * The full-size mask after warping: the warped part of [grid] (layer-local area [src], layer at
+     * ([lx], [ly])) over the rest of the mask, which stays where it was. Canvas pixels, within [limit].
+     */
+    fun renderMask(grid: Map<Long, Bitmap>, src: Rect, lx: Int, ly: Int, pts: FloatArray, cols: Int, rows: Int, limit: Rect): Pair<Bitmap, Rect>? {
+        val warped = render(grid, true, src, pts, cols, rows, limit)
+        val all = TileGrid(alphaOnly = true).also { it.tiles.putAll(grid) }.tileBounds()?.apply { offset(lx, ly) }
+        val out = Rect(warped?.second ?: all ?: return null)
+        if (all != null) out.union(all)
+        if (!out.intersect(limit) || out.isEmpty) {
+            warped?.first?.recycle()
+            return null
+        }
+        val bmp = Bitmap.createBitmap(out.width(), out.height(), Bitmap.Config.ALPHA_8)
+        val c = Canvas(bmp)
+        c.translate(-out.left.toFloat(), -out.top.toFloat())
+        // The mask as it was, without the part that was warped...
+        for ((key, tile) in grid) c.drawBitmap(tile, (lx + TileGrid.tx(key) * TileGrid.SIZE).toFloat(), (ly + TileGrid.ty(key) * TileGrid.SIZE).toFloat(), null)
+        c.drawRect(
+            Rect(src).apply { offset(lx, ly) },
+            Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR) },
+        )
+        // ...and that part, warped
+        warped?.let { (w, area) ->
+            c.drawBitmap(w, area.left.toFloat(), area.top.toFloat(), null)
+            w.recycle()
+        }
         return bmp to out
     }
 
