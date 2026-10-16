@@ -531,7 +531,7 @@ private val FX_KIND_LABELS = mapOf(
     FxKind.BLUR to "Gaussian Blur",
 )
 
-private fun fxKindIcon(k: FxKind): ImageVector = when (k) {
+internal fun fxKindIcon(k: FxKind): ImageVector = when (k) {
     FxKind.ADJUST -> Icons.Outlined.Tune
     FxKind.LEVELS -> Icons.Outlined.BarChart
     FxKind.CURVES -> Icons.Outlined.ShowChart

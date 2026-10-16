@@ -188,6 +188,19 @@ fun Workspace(vm: EditorViewModel) {
                 PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 
+                // Panels folded away: the layers as a small stack at the edge
+                if (!panelsOpen) {
+                    LayerStrip(
+                        vm,
+                        onExpand = {
+                            vm.toggleSection(PanelSection.LAYERS, open = true)
+                            panelsOpen = true
+                        },
+                        onPlaceImage = requestPlace,
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
+                    )
+                }
+
                 // Show / hide panels
                 RoundButton(
                     if (panelsOpen) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -197,7 +210,10 @@ fun Workspace(vm: EditorViewModel) {
             }
             if (docked) {
                 Spacer(Modifier.width(12.dp))
-                PanelColumn(vm, requestPlace, Modifier.width(310.dp).fillMaxHeight())
+                // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
+                // picture keeps its room; closing it brings the panels back
+                if (vm.popup != null) FloatingPanel(vm, Modifier.width(310.dp).fillMaxHeight())
+                else PanelColumn(vm, requestPlace, Modifier.width(310.dp).fillMaxHeight())
             }
         }
 
@@ -251,15 +267,18 @@ fun Workspace(vm: EditorViewModel) {
         }
 
         // Layer Style / Adjustments / Filters float over the picture, so the preview stays visible
+        // (Docked panels show them in their own place instead, above)
         LaunchedEffect(vm.popup) { if (!wide && vm.popup != null) panelsOpen = false }
-        FloatingPanel(
-            vm,
-            Modifier
-                .align(if (wide) Alignment.TopEnd else Alignment.Center)
-                .padding(top = if (wide) 64.dp else 16.dp, bottom = 16.dp, start = 16.dp, end = if (docked) 346.dp else 16.dp)
-                .widthIn(max = 340.dp)
-                .heightIn(max = maxHeight * 0.85f),
-        )
+        if (!docked) {
+            FloatingPanel(
+                vm,
+                Modifier
+                    .align(if (wide) Alignment.TopEnd else Alignment.Center)
+                    .padding(top = if (wide) 64.dp else 16.dp, bottom = 16.dp, start = 16.dp, end = if (wide) 80.dp else 16.dp)
+                    .widthIn(max = 340.dp)
+                    .heightIn(max = maxHeight * 0.85f),
+            )
+        }
 
         BusyOverlay(vm.busy)
     }
