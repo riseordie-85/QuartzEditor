@@ -208,3 +208,22 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
 
 - Shape and text layers keep what they are (the shape, the words, the font) and redraw their pixels from
   it whenever it changes, so blend modes, masks, styles, merging and export treat them like any layer.
+
+## Where the code is
+Everything is under `app/src/main/java/com/tim/quartzeditor/`.
+- `engine/` — the picture itself, with no screens: layers and tiles (`Doc`, `TileGrid`), drawing
+  (`DocRenderer`), brushes, selections, fills and gradients (`FillTools`), patterns, layer styles
+  (`Styles`), adjustments and filters (`Fx`, `Tone`), transforms, warps (`Warp`), face finding
+  (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`) and
+  project files (`ProjectIO`).
+- `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
+  "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
+- `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:
+  `ProjectActions` (open, save, export), `PaintActions` (brush and eraser), `MoveActions`,
+  `LayerActions`, `MaskActions`, `FxActions` (adjustments and filters), `StyleActions`, `ApplyStyle`,
+  `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
+  text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
+  `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`.
+- The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
+  over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
+  `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`.
