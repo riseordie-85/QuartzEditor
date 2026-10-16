@@ -313,7 +313,10 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     }
                 }
             }
-            BarButton(Icons.Outlined.CreateNewFolder, "New folder") { vm.addFolder() }
+            // With several layers picked, they all go into the new folder
+            BarButton(Icons.Outlined.CreateNewFolder, if (vm.isMultiSelecting) "Put picked layers in a folder" else "New folder") {
+                if (vm.isMultiSelecting) vm.groupActive() else vm.addFolder()
+            }
             BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
             BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
             Box {
@@ -700,14 +703,7 @@ private fun PercentChip(label: String, value: Float, onLive: (Float) -> Unit, on
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Column(Modifier.width(220.dp).padding(horizontal = 14.dp)) {
-                Text("$label ${(value * 100).roundToInt()}%", color = Q.text, fontSize = 14.sp)
-                Slider(
-                    value = value,
-                    onValueChange = onLive,
-                    onValueChangeFinished = onDone,
-                    valueRange = 0f..1f,
-                    colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
-                )
+                PanelSlider(label, value, 0f..1f, "${(value * 100).roundToInt()}%", onChange = onLive, onDone = onDone)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0.25f, 0.5f, 0.75f, 1f).forEach { v ->
                         SmallButton("${(v * 100).roundToInt()}%") {
@@ -723,11 +719,11 @@ private fun PercentChip(label: String, value: Float, onLive: (Float) -> Unit, on
 }
 
 @Composable
-fun RenameDialog(current: String, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+fun RenameDialog(current: String, title: String = "Rename layer", onDismiss: () -> Unit, onRename: (String) -> Unit) {
     var text by remember { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename layer") },
+        title = { Text(title) },
         text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
         confirmButton = { TextButton(onClick = { if (text.isNotBlank()) onRename(text.trim()) }) { Text("Rename") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

@@ -145,6 +145,7 @@ fun WarpOptions(vm: EditorViewModel) {
                 "Size", ((ln(vm.liquifySize.coerceIn(8f, 2000f)) - lo) / (hi - lo)), 0f..1f, "${vm.liquifySize.roundToInt()} px",
                 onChange = { vm.liquifySize = exp(lo + (hi - lo) * it) },
                 onDone = { vm.saveLiquifyPrefs() },
+                fromTyped = { px -> (ln(px.coerceIn(8f, 2000f)) - lo) / (hi - lo) },
             )
             PanelSlider(
                 "Strength", vm.liquifyStrength, 0.05f..1f, "${(vm.liquifyStrength * 100).roundToInt()}%",

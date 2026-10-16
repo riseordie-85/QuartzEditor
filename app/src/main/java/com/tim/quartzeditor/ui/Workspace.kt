@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -81,6 +82,7 @@ fun Workspace(vm: EditorViewModel) {
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }
     var gridOpen by remember { mutableStateOf(false) }
+    var renameOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         Modifier
@@ -142,6 +144,7 @@ fun Workspace(vm: EditorViewModel) {
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Home (saves to Projects)") }, onClick = { menu = false; vm.closeDocument() })
                         HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Rename image…") }, onClick = { menu = false; renameOpen = true })
                         DropdownMenuItem(text = { Text("Export image…") }, onClick = { menu = false; exportOpen = true })
                         DropdownMenuItem(text = { Text("Save project file…") }, onClick = {
                             menu = false
@@ -280,11 +283,20 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
 
+    if (renameOpen) {
+        RenameDialog(vm.doc?.name ?: "", title = "Rename image", onDismiss = { renameOpen = false }) {
+            vm.renameDocument(it)
+            renameOpen = false
+        }
+    }
     if (exportOpen) {
         ExportDialog(
+            name = vm.doc?.name ?: "Untitled",
             onDismiss = { exportOpen = false },
-            onExport = { format, share ->
+            onExport = { format, share, fileName ->
                 exportOpen = false
+                // The image takes the name too (its project and project files use it)
+                vm.renameDocument(fileName)
                 vm.export(format) { uri ->
                     if (share) {
                         val send = Intent(Intent.ACTION_SEND).apply {
@@ -339,14 +351,20 @@ private fun RoundButton(icon: ImageVector, label: String, modifier: Modifier = M
 }
 
 @Composable
-private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportFormat, Boolean) -> Unit) {
+private fun ExportDialog(name: String, onDismiss: () -> Unit, onExport: (ExportFormat, Boolean, String) -> Unit) {
     var format by rememberSaveable { mutableStateOf(ExportFormat.PNG) }
+    var fileName by rememberSaveable { mutableStateOf(name) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Export image") },
         text = {
             Column {
                 Text("Saves a flattened copy to Pictures/Quartz Editor (it shows up in Quartz Gallery).", color = Q.textDim, fontSize = 14.sp)
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    fileName, { fileName = it.replace("/", "").take(80) }, label = { Text("File name") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ExportFormat.entries.forEach { f ->
@@ -361,11 +379,11 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportFormat, Boolean
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onExport(format, false) }) { Text("Save") } },
+        confirmButton = { TextButton(onClick = { onExport(format, false, fileName) }) { Text("Save") } },
         dismissButton = {
             Row {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
-                TextButton(onClick = { onExport(format, true) }) { Text("Save & share") }
+                TextButton(onClick = { onExport(format, true, fileName) }) { Text("Save & share") }
             }
         },
     )

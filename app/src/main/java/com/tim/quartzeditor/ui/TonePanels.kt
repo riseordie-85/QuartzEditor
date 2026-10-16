@@ -124,7 +124,8 @@ internal fun LevelsPanel(vm: EditorViewModel) {
         onChange = { v -> edit(c.copy(inBlack = (v / 255f).coerceAtMost(c.inWhite - 2f / 255f))) }, onDone = done)
     // Midtones: 0.1 … 9.99 on a log scale (1.00 in the middle)
     PanelSlider("Midtones", log10(c.gamma.coerceIn(0.1f, 9.99f)), -1f..1f, String.format(Locale.US, "%.2f", c.gamma),
-        onChange = { t -> edit(c.copy(gamma = if (kotlin.math.abs(t) < 0.02f) 1f else 10f.pow(t).coerceIn(0.1f, 9.99f))) }, onDone = done)
+        onChange = { t -> edit(c.copy(gamma = if (kotlin.math.abs(t) < 0.02f) 1f else 10f.pow(t).coerceIn(0.1f, 9.99f))) }, onDone = done,
+        fromTyped = { g -> log10(g.coerceIn(0.1f, 9.99f)) })
     PanelSlider("Highlights", c.inWhite * 255f, 2f..255f, "${(c.inWhite * 255).roundToInt()}",
         onChange = { v -> edit(c.copy(inWhite = (v / 255f).coerceAtLeast(c.inBlack + 2f / 255f))) }, onDone = done)
     Text("Output", color = Q.text, fontSize = 13.sp)
@@ -329,7 +330,8 @@ internal fun BlurPanel(vm: EditorViewModel) {
     val t = sqrt((fx.blur / 250f).coerceIn(0f, 1f))
     PanelSlider("Radius", t, 0f..1f, if (fx.blur < 10f) String.format(Locale.US, "%.1f px", fx.blur) else "${fx.blur.roundToInt()} px",
         onChange = { v -> vm.editFx(fx.copy(blur = (v * v * 250f).let { if (it < 0.3f) 0f else it }, kind = vm.kindFor(fx, FxKind.BLUR))) },
-        onDone = { vm.editFxDone() })
+        onDone = { vm.editFxDone() },
+        fromTyped = { px -> kotlin.math.sqrt(px.coerceIn(0f, 250f) / 250f) })
     Row {
         listOf(2f, 5f, 10f, 25f, 50f).forEach { r ->
             SmallButton("${r.roundToInt()}", primary = fx.blur == r) {

@@ -93,6 +93,7 @@ fun PatternPicker(vm: EditorViewModel) {
             "Size", log2(vm.patternScale.coerceIn(0.125f, 4f)), -3f..2f, "${(vm.patternScale * 100).roundToInt()}%",
             onChange = { vm.patternScale = 2f.pow(it).let { s -> if (kotlin.math.abs(s - 1f) < 0.04f) 1f else s } },
             onDone = { vm.savePatternScale() },
+            fromTyped = { pct -> log2((pct / 100f).coerceIn(0.125f, 4f)) },
         )
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

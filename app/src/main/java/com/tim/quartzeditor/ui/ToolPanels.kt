@@ -139,7 +139,7 @@ fun ToolOptions(vm: EditorViewModel) {
             if (vm.selectShape == SelectShape.WAND) {
                 Spacer(Modifier.height(6.dp))
                 Text("Tap the picture to select pixels of that color.", color = Q.textDim, fontSize = 12.sp)
-                PanelSlider("Tolerance", vm.wandTolerance, 0f..1f, "${(vm.wandTolerance * 255).roundToInt()}", onChange = { vm.wandTolerance = it }, onDone = { vm.prefs.edit().putFloat("wandTol", vm.wandTolerance).apply() })
+                PanelSlider("Tolerance", vm.wandTolerance, 0f..1f, "${(vm.wandTolerance * 255).roundToInt()}", onChange = { vm.wandTolerance = it }, onDone = { vm.prefs.edit().putFloat("wandTol", vm.wandTolerance).apply() }, fromTyped = { it / 255f })
                 ToggleRow("Only touching pixels", vm.wandContiguous) {
                     vm.wandContiguous = it
                     vm.prefs.edit().putBoolean("wandContig", it).apply()
@@ -153,6 +153,7 @@ fun ToolOptions(vm: EditorViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SmallButton("Select subject") { vm.selectSubject(background = false) }
                 SmallButton("Background") { vm.selectSubject(background = true) }
+                SmallButton("Invert") { vm.invertSelection() }
             }
             Text("Finds the main subject on your device (it may download once through Google Play services).", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.height(10.dp))
@@ -297,7 +298,7 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Spacer(Modifier.width(4.dp))
         BarIcon(Icons.Outlined.SelectAll, "Select all") { vm.selectAll() }
         BarChip("Deselect", false) { vm.deselect() }
-        BarIcon(Icons.Outlined.InvertColors, "Invert selection") { vm.invertSelection() }
+        BarChip("Invert", false) { vm.invertSelection() }
         Box {
             var menu by remember { mutableStateOf(false) }
             BarIcon(Icons.Outlined.MoreVert, "More") { menu = true }

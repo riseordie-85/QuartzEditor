@@ -41,6 +41,9 @@ import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Texture
 import androidx.compose.material.icons.outlined.GridOn
+import androidx.compose.material.icons.outlined.InvertColors
+import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.Gesture
@@ -144,7 +147,12 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             ) { vm.onToolButton(Tool.MOVE) }
             ToolButton(
                 selectIcon(vm.selectShape), "Select: ${vm.selectShape.label} (tap again for the next shape, hold for all)", t == Tool.SELECT, buttonSize,
-                options = SelectShape.entries.map { s -> ToolOption(selectIcon(s), s.label, t == Tool.SELECT && vm.selectShape == s) { vm.chooseSelectShape(s) } },
+                options = SelectShape.entries.map { s -> ToolOption(selectIcon(s), s.label, t == Tool.SELECT && vm.selectShape == s) { vm.chooseSelectShape(s) } } +
+                    listOf(
+                        ToolOption(Icons.Outlined.PersonOutline, "Select subject", false, divider = true) { vm.selectSubject(background = false) },
+                        ToolOption(Icons.Outlined.Landscape, "Select background", false) { vm.selectSubject(background = true) },
+                        ToolOption(Icons.Outlined.InvertColors, "Invert selection", false) { vm.invertSelection() },
+                    ),
             ) { vm.onToolButton(Tool.SELECT) }
             ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
             ToolButton(
@@ -312,6 +320,7 @@ private fun ToolButton(
         if (options != null) {
             DropdownMenu(expanded = open, onDismissRequest = { open = false }, offset = DpOffset(size + 8.dp, -size)) {
                 options.forEach { o ->
+                    if (o.divider) androidx.compose.material3.HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text(o.label) },
                         leadingIcon = { Icon(o.icon, contentDescription = null) },
@@ -328,7 +337,7 @@ private fun ToolButton(
 }
 
 /** One of the tools a toolbar button holds. */
-private class ToolOption(val icon: ImageVector, val label: String, val current: Boolean, val onPick: () -> Unit)
+private class ToolOption(val icon: ImageVector, val label: String, val current: Boolean, val divider: Boolean = false, val onPick: () -> Unit)
 
 private val SHAPE_CHOICES = com.tim.quartzeditor.engine.ShapeKind.TOOL_SHAPES
 

@@ -222,7 +222,8 @@ fun ShapeOptions(vm: EditorViewModel) {
         // 0.5 … 300 px, finer at the small end
         val t = sqrt(((spec.strokeWidth - 0.5f) / 299.5f).coerceIn(0f, 1f))
         PanelSlider("Outline width", t, 0f..1f, "${formatPx(spec.strokeWidth)} px",
-            onChange = { v -> set("Outline width", live = true) { it.copy(strokeWidth = 0.5f + v * v * 299.5f) } }, onDone = { done("Outline width") })
+            onChange = { v -> set("Outline width", live = true) { it.copy(strokeWidth = 0.5f + v * v * 299.5f) } }, onDone = { done("Outline width") },
+            fromTyped = { px -> kotlin.math.sqrt(((px - 0.5f) / 299.5f).coerceIn(0f, 1f)) })
         if (canFill) {
             ChipRow(StrokeAlign.entries.map { it.label }, spec.strokeAlign.ordinal) { i -> set("Outline position") { it.copy(strokeAlign = StrokeAlign.entries[i]) } }
             Spacer(Modifier.height(6.dp))
@@ -368,7 +369,8 @@ fun TextOptions(vm: EditorViewModel) {
     }
     Spacer(Modifier.height(4.dp))
     PanelSlider("Letter spacing", spec.tracking, -0.2f..1f, "${(spec.tracking * 1000).roundToInt()}",
-        onChange = { v -> set("Letter spacing", live = true) { it.copy(tracking = if (kotlin.math.abs(v) < 0.01f) 0f else v) } }, onDone = { done("Letter spacing") })
+        onChange = { v -> set("Letter spacing", live = true) { it.copy(tracking = if (kotlin.math.abs(v) < 0.01f) 0f else v) } }, onDone = { done("Letter spacing") },
+        fromTyped = { it / 1000f })
     PanelSlider("Line spacing", spec.leading, 0.6f..3f, String.format(java.util.Locale.US, "%.2f×", spec.leading),
         onChange = { v -> set("Line spacing", live = true) { it.copy(leading = if (kotlin.math.abs(v - 1f) < 0.03f) 1f else v) } }, onDone = { done("Line spacing") })
     PanelSlider("Arc", spec.curve, -1f..1f, if (kotlin.math.abs(spec.curve) < 0.02f) "Straight" else "${(spec.curve * 100).roundToInt()}%",

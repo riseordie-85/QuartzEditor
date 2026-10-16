@@ -200,3 +200,13 @@ fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
         onSaved(uri)
     }
 }
+
+/** Renames the open image (used for its project, project file and exports). */
+fun EditorViewModel.renameDocument(name: String) {
+    val d = doc ?: return
+    val n = name.trim().take(80)
+    if (n.isEmpty() || n == d.name) return
+    val old = d.name
+    d.name = n
+    history.record(com.tim.quartzeditor.engine.RenameChange(old, n))
+}

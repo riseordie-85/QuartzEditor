@@ -45,6 +45,10 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.CropLandscape
 import androidx.compose.material.icons.outlined.CropPortrait
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -86,6 +90,17 @@ import com.tim.quartzeditor.engine.ProjectIO
 import com.tim.quartzeditor.engine.ProjectInfo
 
 private data class SizePreset(val label: String, val w: Int, val h: Int)
+
+private fun loadSizePresets(prefs: android.content.SharedPreferences): List<SizePreset> = runCatching {
+    val a = org.json.JSONArray(prefs.getString("sizePresets", "[]"))
+    List(a.length()) { i -> a.getJSONObject(i).let { SizePreset(it.getString("label"), it.getInt("w"), it.getInt("h")) } }
+}.getOrDefault(emptyList())
+
+private fun saveSizePresets(prefs: android.content.SharedPreferences, list: List<SizePreset>) {
+    val a = org.json.JSONArray()
+    list.forEach { a.put(org.json.JSONObject().put("label", it.label).put("w", it.w).put("h", it.h)) }
+    prefs.edit().putString("sizePresets", a.toString()).apply()
+}
 
 /** Start screen: recent photos or projects on one side, a new blank image on the other. */
 @Composable
@@ -313,7 +328,10 @@ private fun ProjectsGrid(vm: EditorViewModel) {
 private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
     val context = LocalContext.current
     val screen: DisplayMetrics = context.resources.displayMetrics
-    val presets = remember {
+    // Your own sizes, kept in the app
+    var mine by remember { mutableStateOf(loadSizePresets(vm.prefs)) }
+    var savingPreset by remember { mutableStateOf(false) }
+    val builtIn = remember {
         listOf(
             SizePreset("Screen", minOf(screen.widthPixels, screen.heightPixels), maxOf(screen.widthPixels, screen.heightPixels)),
             SizePreset("Square", 2048, 2048),
@@ -323,6 +341,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
             SizePreset("A4", 2480, 3508),
         )
     }
+    val presets = builtIn + mine
     var name by rememberSaveable { mutableStateOf("Untitled-${ProjectIO.list(context).size + 1}") }
     var w by rememberSaveable { mutableStateOf("1920") }
     var h by rememberSaveable { mutableStateOf("1080") }
@@ -332,6 +351,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
     val valid = wi in 1..Doc.MAX_SIDE && hi in 1..Doc.MAX_SIDE
 
     Column {
+        FieldLabel("Name")
         BasicTextField(
             value = name,
             onValueChange = { name = it },
@@ -377,6 +397,7 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
                 }
                 DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                     presets.forEach { p ->
+                        val own = p in mine
                         DropdownMenuItem(
                             text = { Text("${p.label}   ${p.w} × ${p.h}") },
                             onClick = {
@@ -384,8 +405,28 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
                                 w = p.w.toString()
                                 h = p.h.toString()
                             },
+                            // Your own sizes can be removed
+                            trailingIcon = if (own) ({
+                                Icon(
+                                    Icons.Outlined.Close, contentDescription = "Remove ${p.label}", tint = Q.textDim,
+                                    modifier = Modifier.clip(CircleShape).clickable {
+                                        mine = mine - p
+                                        saveSizePresets(vm.prefs, mine)
+                                    },
+                                )
+                            }) else null,
                         )
                     }
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Save this size…") },
+                        leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        enabled = valid,
+                        onClick = {
+                            open = false
+                            savingPreset = true
+                        },
+                    )
                 }
             }
             Spacer(Modifier.width(10.dp))
@@ -403,6 +444,22 @@ private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
         if (!valid) {
             Spacer(Modifier.height(6.dp))
             Text("Width and height can be 1 to ${Doc.MAX_SIDE} pixels.", color = Color(0xFFFF8A80), fontSize = 13.sp)
+        }
+        if (savingPreset) {
+            var label by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { savingPreset = false },
+                title = { Text("Save size $wi × $hi") },
+                text = { OutlinedTextField(label, { label = it.take(30) }, label = { Text("Name (e.g. Lobby screen)") }, singleLine = true) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        mine = mine + SizePreset(label.trim().ifBlank { "$wi × $hi" }, wi, hi)
+                        saveSizePresets(vm.prefs, mine)
+                        savingPreset = false
+                    }) { Text("Save") }
+                },
+                dismissButton = { TextButton(onClick = { savingPreset = false }) { Text("Cancel") } },
+            )
         }
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {

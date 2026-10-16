@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
@@ -196,6 +197,13 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
 // ===================================================================== small pieces
 
+/**
+ * A labeled slider with its value in a box beside it that you can type into (for exact numbers
+ * like 90°). [display] is what the box shows. Typing works out the slider value by itself when
+ * [display] shows the value as it is (or as a percent of 0..1); otherwise pass [fromTyped], which
+ * turns a typed number into a slider value (null: not allowed). Text that isn't a number in the
+ * box (like "Smooth") just shows.
+ */
 @Composable
 fun PanelSlider(
     label: String,
@@ -204,21 +212,59 @@ fun PanelSlider(
     display: String,
     onChange: (Float) -> Unit,
     onDone: () -> Unit = {},
+    fromTyped: ((Float) -> Float?)? = null,
 ) {
+    val typed: ((Float) -> Float?)? = fromTyped ?: typedMapping(value, range, display)
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth()) {
-            Text(label, color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Text(display, color = Q.text, fontSize = 13.sp)
+        if (label.isNotEmpty()) Text(label, color = Q.textDim, fontSize = 13.sp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = value,
+                onValueChange = onChange,
+                onValueChangeFinished = onDone,
+                valueRange = range,
+                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
+                modifier = Modifier.weight(1f).height(30.dp),
+            )
+            if (display.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                if (typed != null) {
+                    // Only the number is typed; the unit stays beside it
+                    val unit = display.replace(NUMBER, "").replace("+", "").trim()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PanelField(
+                            NUMBER.find(display)?.value ?: "",
+                            onCommit = { t ->
+                                t.replace(',', '.').trim().toFloatOrNull()?.let(typed)?.let { v ->
+                                    onChange(v.coerceIn(range.start, range.endInclusive))
+                                    onDone()
+                                }
+                            },
+                            numeric = range.start >= 0f,
+                            modifier = Modifier.width(if (unit.isEmpty()) 64.dp else 54.dp),
+                        )
+                        if (unit.isNotEmpty()) Text(unit, color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(start = 3.dp).widthIn(max = 28.dp), maxLines = 1)
+                    }
+                } else {
+                    Text(display, color = Q.text, fontSize = 13.sp, modifier = Modifier.widthIn(min = 40.dp), maxLines = 1)
+                }
+            }
         }
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            onValueChangeFinished = onDone,
-            valueRange = range,
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
-            modifier = Modifier.height(30.dp),
-        )
     }
+}
+
+private val NUMBER = Regex("-?\\d+(\\.\\d+)?")
+
+/**
+ * How a typed number becomes the slider's value, when [display] shows [value] as it is (rounded)
+ * or as a percent of a 0..1-ish value. Null when it's shown some other way.
+ */
+private fun typedMapping(value: Float, range: ClosedFloatingPointRange<Float>, display: String): ((Float) -> Float?)? {
+    val n = NUMBER.find(display)?.value?.toFloatOrNull() ?: return null
+    if (display.contains('%') && range.endInclusive <= 5f) {
+        return if (kotlin.math.abs(n / 100f - value) <= 0.006f) ({ t -> t / 100f }) else null
+    }
+    return if (kotlin.math.abs(n - value) <= kotlin.math.max(0.51f, kotlin.math.abs(value) * 0.01f)) ({ t -> t }) else null
 }
 
 @Composable
@@ -254,7 +300,7 @@ fun PanelField(
         textStyle = TextStyle(color = Q.text, fontSize = 14.sp, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default),
         cursorBrush = SolidColor(Q.accent),
         keyboardOptions = KeyboardOptions(
-            keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text,
+            keyboardType = if (numeric) KeyboardType.Decimal else KeyboardType.Text,
             capitalization = if (mono) KeyboardCapitalization.Characters else KeyboardCapitalization.Sentences,
             imeAction = ImeAction.Done,
         ),
@@ -459,6 +505,7 @@ internal fun AdjustPanel(vm: EditorViewModel) {
             display = (if (a.bipolar && v > 0.005f) "+" else "") + "${(v * 100).roundToInt()}",
             onChange = { nv -> vm.editFx(fx.copy(adjust = fx.adjust + (a to nv))) },
             onDone = { vm.editFxDone() },
+            fromTyped = { it / 100f },
         )
     }
     FxButtons(vm)

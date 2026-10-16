@@ -122,3 +122,15 @@ class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
         }
     }
 }
+
+/** The image's name changed. */
+class RenameChange(private val before: String, private val after: String) : Change {
+    override val label = "Rename image"
+    override val cost = 0L
+    override fun undo(doc: Doc) {
+        doc.name = before
+    }
+    override fun redo(doc: Doc) {
+        doc.name = after
+    }
+}
