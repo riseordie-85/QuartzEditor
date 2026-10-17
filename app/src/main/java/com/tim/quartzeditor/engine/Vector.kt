@@ -272,7 +272,8 @@ enum class TextAlignOption(val label: String, val anchor: Float) { LEFT("Left", 
 
 /**
  * A text layer. The text's own space has its anchor at (0, 0): the start (left / middle / end,
- * by [align]) of the first line's baseline. [matrix] places it on the layer.
+ * by [align]) of the first line's baseline; for box text ([boxWidth] > 0) the box's top-left
+ * corner, with lines wrapping to the box. [matrix] places it on the layer.
  */
 data class TextSpec(
     val text: String,
@@ -293,6 +294,10 @@ data class TextSpec(
     /** Arc: -1 (smile) … 0 (straight) … 1 (rainbow). Single line only. */
     val curve: Float = 0f,
     val matrix: Affine = AFFINE_IDENTITY,
+    /** Box text (from Photoshop): lines wrap at this width (text-space pixels); 0 = no box. */
+    val boxWidth: Float = 0f,
+    /** From Photoshop: the font it used, until the text is first edited (then it's said whether it's here). */
+    val psdFont: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("text", text)
@@ -308,6 +313,8 @@ data class TextSpec(
         .put("caps", allCaps)
         .put("curve", curve.toDouble())
         .put("matrix", matrix.toJson())
+        .put("box", boxWidth.toDouble())
+        .also { o -> psdFont?.let { o.put("psdFont", it) } }
 
     /** Shown in the Layers panel. */
     val title: String get() = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40) ?: "Text"
@@ -327,6 +334,8 @@ data class TextSpec(
             allCaps = o.optBoolean("caps", false),
             curve = o.optDouble("curve", 0.0).toFloat(),
             matrix = affineFrom(o.optJSONArray("matrix")),
+            boxWidth = o.optDouble("box", 0.0).toFloat(),
+            psdFont = if (o.has("psdFont")) o.optString("psdFont") else null,
         )
     }
 }
@@ -402,7 +411,9 @@ object VectorArt {
             return TextBuilt(paint, null, path, text, 0f, 0f, b)
         }
         val widest = text.split('\n').maxOf { paint.measureText(it) }
-        val width = ceil(widest.toDouble()).toInt().coerceAtLeast(1) + 1
+        val box = t.boxWidth > 0f
+        // Box text wraps to its box; otherwise as wide as the widest line
+        val width = if (box) ceil(t.boxWidth.toDouble()).toInt().coerceAtLeast(1) else ceil(widest.toDouble()).toInt().coerceAtLeast(1) + 1
         val alignment = when (t.align) {
             TextAlignOption.LEFT -> Layout.Alignment.ALIGN_NORMAL
             TextAlignOption.CENTER -> Layout.Alignment.ALIGN_CENTER
@@ -413,8 +424,9 @@ object VectorArt {
             .setIncludePad(false)
             .setLineSpacing(0f, t.leading.coerceIn(0.5f, 3f))
             .build()
-        val left = -width * t.align.anchor
-        val top = -layout.getLineBaseline(0).toFloat()
+        // Box text hangs from the box's corner; other text sits on its first baseline at the anchor
+        val left = if (box) 0f else -width * t.align.anchor
+        val top = if (box) 0f else -layout.getLineBaseline(0).toFloat()
         val b = RectF(left, top, left + width, top + layout.height)
         b.inset(-slack, -slack)
         return TextBuilt(paint, layout, null, text, left, top, b)

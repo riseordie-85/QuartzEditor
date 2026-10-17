@@ -86,6 +86,8 @@ fun EditorViewModel.openPsd(uri: Uri) {
         val result = withContext(Dispatchers.IO) {
             // Read from a copy (the file is read in place, not loaded into memory all at once)
             val tmp = java.io.File(ctx.cacheDir, "import.psd")
+            // Fonts you've imported can stand for the file's own
+            com.tim.quartzeditor.engine.Fonts.refreshImported(ctx)
             try {
                 ctx.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
                     ?: throw IllegalArgumentException("Couldn't read that file.")

@@ -15,8 +15,15 @@ from the build). Background removal's model is fetched by Google Play services i
   their own blend mode, open or closed), layer masks (and folder masks), vector masks, blend modes, opacity
   and fill, clipping masks, hidden layers, transparency locks and names. Fill and shape layers are drawn
   from their color or gradient and outline. Layer styles come across as ours: Drop Shadow, Inner Shadow,
-  Outer Glow, Stroke (color or gradient), Color Overlay, Gradient Overlay and Bevel & Emboss. Text and
-  smart objects come in as their pixels. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger
+  Outer Glow, Stroke (color or gradient), Color Overlay, Gradient Overlay and Bevel & Emboss.
+  **Text layers stay text** (like Photoshop, they show the file's own pixels until you edit them): the
+  words, size, color, alignment, tracking, leading, caps and faux bold/italic, point or box text (box text
+  wraps to its box), and Arc warps. The font is the same Google Font when it is one (any weight), a font
+  you imported with that name, or a close free match for common ones (Arial → Arimo, Helvetica Neue →
+  Inter, Gotham/Proxima Nova → Montserrat, Futura → Jost…); editing says when it isn't the original.
+  **Smart objects stay smart**: embedded pictures (PNG, JPEG, …) and embedded Photoshop files become the
+  smart layer's contents, placed where they were (edit them in their own tab). Linked files, TIFF, warps
+  and smart filters keep what you see as the contents. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger
   than 4096 px are shrunk to fit. Afterwards a short list says what didn't come across exactly
   (adjustment layers aren't brought in yet; Inner Glow, Satin and Pattern Overlay effects; blend modes we
   don't have, shown as the nearest one).
@@ -155,8 +162,10 @@ the list; the button shows the one you used last.
 - **History** (the page button next to undo/redo): every step, oldest first; tap one to go back (or
   forward) to it.
 - **Zoomed out** (below about 60%), the picture is drawn from half- or quarter-size copies of each layer,
-  made as needed and kept up to date, so big pictures with many layers stay smooth; exports, merges and
-  everything else always use full size.
+  made in the background and kept up to date, so big pictures with many layers stay smooth; exports,
+  merges and everything else always use full size. The picture is kept as a finished image between
+  changes, so scrolling the layers or sliding panels doesn't draw every layer again, and layer
+  thumbnails are made in the background.
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
 - **Grid** (menu → Show grid, or Ctrl+'): evenly spaced lines from the canvas's top-left corner. Grid
   settings: spacing in pixels (or split the canvas into 2–12 equal parts), subdivisions, color, and Snap to

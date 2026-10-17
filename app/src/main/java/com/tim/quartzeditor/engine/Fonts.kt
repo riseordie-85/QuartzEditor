@@ -28,7 +28,8 @@ enum class FontSource { SYSTEM, GOOGLE, IMPORTED }
  * All fonts the text tool can use:
  * - built-in Android fonts ("sys:BOLD")
  * - a curated set of Google Fonts, downloaded through Google Play services the first time
- *   they're used and cached on the phone ("g:Lobster")
+ *   they're used and cached on the phone ("g:Lobster"; a weight and italic can follow, like
+ *   "g:Montserrat@800i", for text brought in from Photoshop)
  * - fonts you import from your phone (.ttf/.otf), copied into the app ("file:MyFont.ttf")
  */
 object Fonts {
@@ -88,7 +89,7 @@ object Fonts {
         cached(key)?.let { return it }
         val tf = when {
             // Never wait forever on Google Play services
-            key.startsWith("g:") -> kotlinx.coroutines.withTimeoutOrNull(20_000) { downloadGoogle(context, key.removePrefix("g:")) }
+            key.startsWith("g:") -> kotlinx.coroutines.withTimeoutOrNull(20_000) { downloadGoogle(context, googleQuery(key)) }
             key.startsWith("file:") -> withContext(Dispatchers.IO) {
                 val f = File(fontDir(context), key.removePrefix("file:"))
                 if (f.exists()) runCatching { Typeface.Builder(f).build() }.getOrNull() else null
@@ -105,12 +106,23 @@ object Fonts {
         return tf
     }
 
-    private suspend fun downloadGoogle(context: Context, family: String): Typeface? =
+    /** What to ask Google Play services for: "name=Montserrat" (with "&weight=800&italic=1" for "g:Montserrat@800i"). */
+    private fun googleQuery(key: String): String {
+        val body = key.removePrefix("g:")
+        val family = body.substringBefore('@')
+        val style = body.substringAfter('@', "")
+        if (style.isEmpty()) return "name=$family"
+        val weight = style.trimEnd('i').toIntOrNull() ?: 400
+        val italic = style.endsWith('i')
+        return "name=$family&weight=$weight" + (if (italic) "&italic=1" else "") + "&besteffort=true"
+    }
+
+    private suspend fun downloadGoogle(context: Context, query: String): Typeface? =
         suspendCancellableCoroutine { cont ->
             val request = FontRequest(
                 "com.google.android.gms.fonts",
                 "com.google.android.gms",
-                "name=$family",
+                query,
                 R.array.com_google_android_gms_fonts_certs,
             )
             val callback = object : FontsContractCompat.FontRequestCallback() {
@@ -181,7 +193,16 @@ object Fonts {
 
     fun label(key: String): String = when {
         key.startsWith("sys:") -> TextFont.entries.firstOrNull { it.key == key }?.label ?: "Bold"
-        key.startsWith("g:") -> key.removePrefix("g:")
+        key.startsWith("g:") -> key.removePrefix("g:").let { body ->
+            val style = body.substringAfter('@', "")
+            if (style.isEmpty()) body else {
+                val w = when (style.trimEnd('i').toIntOrNull() ?: 400) {
+                    100 -> " Thin"; 200 -> " ExtraLight"; 300 -> " Light"; 500 -> " Medium"
+                    600 -> " SemiBold"; 700 -> " Bold"; 800 -> " ExtraBold"; 900 -> " Black"; else -> ""
+                }
+                body.substringBefore('@') + w + if (style.endsWith('i')) " Italic" else ""
+            }
+        }
         key.startsWith("file:") -> key.removePrefix("file:").substringBeforeLast('.')
         else -> key
     }

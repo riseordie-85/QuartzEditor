@@ -39,6 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -133,6 +135,55 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     }
 
     Box(modifier.onSizeChanged { vm.setViewSize(it.width.toFloat(), it.height.toFloat()) }) {
+        // The picture, in a layer of its own that keeps what it drew: when anything else on the
+        // screen moves (the layers list scrolling, a panel sliding), it's shown as it is instead of
+        // drawing every layer again. It's drawn again only when the picture or the view changes.
+        androidx.compose.foundation.layout.Spacer(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawBehind {
+            val d = vm.doc ?: return@drawBehind
+            // Read so the canvas redraws when the picture changes
+            @Suppress("UNUSED_VARIABLE") val v = d.renderVersion
+            val s = vm.scale
+            val ox = vm.offsetX
+            val oy = vm.offsetY
+            drawRect(Color(vm.canvasColor))
+            val left = ox
+            val top = oy
+            val right = ox + d.width * s
+            val bottom = oy + d.height * s
+            drawIntoCanvas { c ->
+                val nc = c.nativeCanvas
+                // Soft edge so the canvas stands out from the workspace
+                val shadow = Paint().apply { color = android.graphics.Color.argb(90, 0, 0, 0) }
+                nc.drawRect(left + 3f, top + 3f, right + 3f, bottom + 3f, shadow)
+                if (vm.showChecker) {
+                    checker.setLocalMatrix(Matrix().apply { setTranslate(left, top) })
+                    nc.drawRect(left, top, right, bottom, Paint().apply { shader = checker })
+                } else {
+                    nc.drawRect(left, top, right, bottom, Paint().apply { color = android.graphics.Color.WHITE })
+                }
+                nc.save()
+                nc.translate(ox, oy)
+                nc.scale(s, s)
+                val visible = RectF(-ox / s, -oy / s, (size.width - ox) / s, (size.height - oy) / s)
+                // Zoomed out, smaller copies of the tiles are drawn; any not made yet follow in the next frames
+                val more = com.tim.quartzeditor.engine.TileLod.drawing(s) {
+                    DocRenderer.draw(
+                        nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
+                        view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
+                        viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
+                    )
+                }
+                // Copies made in the background: draw again when they're ready
+                com.tim.quartzeditor.engine.TileLod.onReady = { if (vm.doc === d) d.invalidate() }
+                if (more) lodHandler.post { if (vm.doc === d) d.invalidate() }
+                nc.restore()
+            }
+                }
+        )
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -697,42 +748,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 }
         ) {
             val d = vm.doc ?: return@Canvas
-            // Read so the canvas redraws when the picture changes
-            @Suppress("UNUSED_VARIABLE") val v = d.renderVersion
+            // (The picture itself is drawn by the layer underneath; this draws what goes over it)
             val s = vm.scale
             val ox = vm.offsetX
             val oy = vm.offsetY
-            drawRect(Color(vm.canvasColor))
-            val left = ox
-            val top = oy
-            val right = ox + d.width * s
-            val bottom = oy + d.height * s
-            drawIntoCanvas { c ->
-                val nc = c.nativeCanvas
-                // Soft edge so the canvas stands out from the workspace
-                val shadow = Paint().apply { color = android.graphics.Color.argb(90, 0, 0, 0) }
-                nc.drawRect(left + 3f, top + 3f, right + 3f, bottom + 3f, shadow)
-                if (vm.showChecker) {
-                    checker.setLocalMatrix(Matrix().apply { setTranslate(left, top) })
-                    nc.drawRect(left, top, right, bottom, Paint().apply { shader = checker })
-                } else {
-                    nc.drawRect(left, top, right, bottom, Paint().apply { color = android.graphics.Color.WHITE })
-                }
-                nc.save()
-                nc.translate(ox, oy)
-                nc.scale(s, s)
-                val visible = RectF(-ox / s, -oy / s, (size.width - ox) / s, (size.height - oy) / s)
-                // Zoomed out, smaller copies of the tiles are drawn; any not made yet follow in the next frames
-                val more = com.tim.quartzeditor.engine.TileLod.drawing(s) {
-                    DocRenderer.draw(
-                        nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
-                        view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
-                        viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
-                    )
-                }
-                if (more) lodHandler.post { if (vm.doc === d) d.invalidate() }
-                nc.restore()
-            }
             // Alignment grid
             drawGrid(vm, s, ox, oy, d.width, d.height)
             // Guides
@@ -822,6 +841,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
             // Snap lines
             if (vm.snapGuidesX.isNotEmpty() || vm.snapGuidesY.isNotEmpty()) {
+                val top = oy
+                val bottom = oy + d.height * s
+                val left = ox
+                val right = ox + d.width * s
                 val guide = Color(0xFFFF2DAA)
                 val w = 1.5.dp.toPx()
                 for (x in vm.snapGuidesX) {

@@ -806,6 +806,24 @@ object DocRenderer {
         return bmp
     }
 
+    /**
+     * Small picture of tiles (a layer's pixels, or with [mask] its mask: white shows, black hides)
+     * over the canvas area. Works from copies of the tile maps, so it can run in the background.
+     */
+    fun gridThumb(tiles: Map<Long, Bitmap>, mask: Boolean, x: Int, y: Int, docW: Int, docH: Int, maxPx: Int): Bitmap {
+        val s = maxPx.toFloat() / max(docW, docH)
+        val w = (docW * s).roundToInt().coerceAtLeast(1)
+        val h = (docH * s).roundToInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        if (mask) c.drawColor(Color.WHITE)
+        c.scale(w / docW.toFloat(), h / docH.toFloat())
+        c.clipRect(0f, 0f, docW.toFloat(), docH.toFloat())
+        val grid = TileGrid(alphaOnly = mask).also { it.tiles.putAll(tiles) }
+        grid.drawTo(c, x.toFloat(), y.toFloat(), Paint().apply { isFilterBitmap = true; if (mask) color = Color.BLACK }, RectF(0f, 0f, docW.toFloat(), docH.toFloat()))
+        return bmp
+    }
+
     /** Small picture of a layer's mask: white shows, black hides. */
     fun maskThumb(layer: Layer, docW: Int, docH: Int, maxPx: Int): Bitmap? {
         val m = layer.mask ?: return null

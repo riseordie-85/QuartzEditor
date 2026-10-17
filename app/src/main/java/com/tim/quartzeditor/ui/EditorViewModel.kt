@@ -937,16 +937,42 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val thumbVersions = HashMap<Long, List<Any>>()
 
+    private var thumbsJob: Job? = null
+
+    /**
+     * Brings the Layers panel's thumbnails up to date. They're drawn in the background (a big
+     * picture with many layers would otherwise stall the screen); the next check picks up any
+     * that changed meanwhile.
+     */
     private fun refreshThumbs(d: Doc, force: Boolean = false) {
-        if (force) thumbVersions.clear()
+        if (force) {
+            thumbVersions.clear()
+            thumbsJob?.cancel()
+        }
+        if (thumbsJob?.isActive == true) return
+        class Todo(val layer: Layer, val version: List<Any>, val tiles: Map<Long, android.graphics.Bitmap>, val mask: Map<Long, android.graphics.Bitmap>?, val x: Int, val y: Int)
+        val todo = ArrayList<Todo>()
         for (l in d.layers) {
-            val v = listOf(l.pixelVersion, l.x, l.y, l.mask != null, d.width, d.height)
+            val v = listOf(l.pixelVersion, l.x, l.y, System.identityHashCode(l.tiles), System.identityHashCode(l.mask), d.width, d.height)
             if (!force && thumbVersions[l.id] == v && l.thumb != null) continue
-            thumbVersions[l.id] = v
-            try {
-                l.thumb = DocRenderer.layerThumb(l, d.width, d.height, THUMB_PX).asImageBitmap()
-                l.maskThumb = DocRenderer.maskThumb(l, d.width, d.height, THUMB_PX)?.asImageBitmap()
-            } catch (_: Exception) {
+            todo.add(Todo(l, v, HashMap(l.tiles.tiles), l.mask?.let { HashMap(it.tiles) }, l.x, l.y))
+        }
+        if (todo.isEmpty()) return
+        val w = d.width
+        val h = d.height
+        thumbsJob = viewModelScope.launch {
+            for (t in todo) {
+                val pics = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    try {
+                        DocRenderer.gridThumb(t.tiles, false, t.x, t.y, w, h, THUMB_PX) to t.mask?.let { DocRenderer.gridThumb(it, true, t.x, t.y, w, h, THUMB_PX) }
+                    } catch (_: Exception) {
+                        null
+                    }
+                } ?: continue
+                if (doc !== d && tabs.none { it.doc === d }) return@launch
+                t.layer.thumb = pics.first.asImageBitmap()
+                t.layer.maskThumb = pics.second?.asImageBitmap()
+                thumbVersions[t.layer.id] = t.version
             }
         }
     }

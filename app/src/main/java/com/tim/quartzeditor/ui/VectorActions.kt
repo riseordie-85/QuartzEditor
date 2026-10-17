@@ -456,6 +456,19 @@ fun EditorViewModel.beginTextEdit(l: Layer) {
         if (tool != Tool.TEXT) onToolButton(Tool.TEXT)
         if (d.activeId != l.id) selectLayer(l.id)
         textEdit = TextEditSession(l.id, d.snapshot(), isNew = false)
+        // From Photoshop: until now it showed Photoshop's pixels; from here it's drawn here, in its
+        // font if this device has it (or a close match, said once)
+        l.props.text?.psdFont?.let { original ->
+            val spec = l.props.text ?: return@let
+            val pick = com.tim.quartzeditor.engine.PsdFonts.map(original.ifEmpty { null })
+            val missing = com.tim.quartzeditor.engine.Fonts.cached(spec.fontKey) == null
+            if (original.isNotEmpty() && (missing || !pick.exact)) {
+                val shown = if (missing) "the standard font" else com.tim.quartzeditor.engine.Fonts.label(spec.fontKey)
+                toast("\"$original\" isn't on this device, so it's shown in $shown. Pick another font in Properties, or add it with Import font… there")
+            }
+            l.props = l.props.copy(text = spec.copy(psdFont = null))
+            redrawVectorNow(l)
+        }
     }
 }
 

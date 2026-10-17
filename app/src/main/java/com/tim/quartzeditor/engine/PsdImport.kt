@@ -45,11 +45,16 @@ object PsdImport {
         } finally {
             raf.close()
         }
-        val f = PsdReader.read(buf)
-        return Builder(f, name).build()
+        return fromBuffer(buf, name, 0)
     }
 
-    private class Builder(val f: PsdFile, name: String) {
+    /** A Photoshop file held in [buf] ([depth]: how many smart objects deep this file is). */
+    private fun fromBuffer(buf: java.nio.ByteBuffer, name: String, depth: Int): Result {
+        val f = PsdReader.read(buf)
+        return Builder(f, name, depth).build()
+    }
+
+    private class Builder(val f: PsdFile, name: String, val depth: Int = 0) {
         val notes = ArrayList<String>()
         /** Shrinks pictures bigger than the app's limit. */
         val s: Float = min(1f, Doc.MAX_SIDE.toFloat() / max(f.width, f.height))
@@ -59,7 +64,6 @@ object PsdImport {
         val skippedAdjustments = ArrayList<String>()
         val unsupportedFx = LinkedHashSet<String>()
         val approxBlends = LinkedHashSet<String>()
-        var asPixels = 0
         var groupFx = 0
 
         /** How the layer clipped to it should be treated, per folder: what its base was. */
@@ -91,7 +95,10 @@ object PsdImport {
             if (clippedToFolder > 0) notes.add("Clipping to a folder isn't supported: $clippedToFolder layer${if (clippedToFolder > 1) "s show" else " shows"} unclipped.")
             if (approxBlends.isNotEmpty()) notes.add("Blend modes shown as the nearest one we have: ${approxBlends.joinToString()}.")
             if (unsupportedColors > 0) notes.add("Some colors were saved as book (Pantone) colors and came in as black.")
-            if (asPixels > 0) notes.add("$asPixels text or smart object layer${if (asPixels > 1) "s" else ""} came in as pixels (they look the same but can't be retyped or replaced).")
+            if (textAsPixels > 0) notes.add("$textAsPixels text layer${if (textAsPixels > 1) "s" else ""} with a warp (or no text) came in as pixels.")
+            if (mixedText > 0) notes.add("$mixedText text layer${if (mixedText > 1) "s have" else " has"} several fonts, sizes or colors: when edited, the first one is used for all of it.")
+            if (smartFromPixels.isNotEmpty()) notes.add("${smartFromPixels.size} smart object${if (smartFromPixels.size > 1) "s" else ""} kept as smart layers, using what you see as their contents (${smartFromPixels.distinct().joinToString()}).")
+            if (fonts.isNotEmpty()) notes.add("Fonts not on this device are shown as the original pixels until you edit the text; then a close match is used: ${fonts.joinToString()}.")
             return Result(doc, notes)
         }
 
@@ -170,8 +177,12 @@ object PsdImport {
             }
         }
 
+        var textAsPixels = 0
+        var mixedText = 0
+        val smartFromPixels = ArrayList<String>()
+        val fonts = LinkedHashSet<String>()
+
         fun layer(pl: PsdLayer, parent: Long, clip: Boolean): Layer? {
-            if (pl.isText || pl.isSmart) asPixels++
             val vector = pl.vectorMask?.takeIf { !it.disabled && it.paths.isNotEmpty() }
             val grid: TileGrid = when {
                 pl.hasPixels -> pixels(pl)
@@ -197,7 +208,139 @@ object PsdImport {
                 parent = parent,
                 clip = clip,
             )
+            // Text stays text, and smart objects stay smart (showing Photoshop's pixels until changed)
+            pl.text?.let { t -> textProps(pl, t, props)?.let { return Layer(doc.newId(), it, grid, mask = mask?.first, kind = LayerKind.TEXT) } }
+            if (pl.isSmart) smartProps(pl, props, grid)?.let { return Layer(doc.newId(), it, grid, mask = mask?.first, kind = LayerKind.SMART) }
             return Layer(doc.newId(), props, grid, mask = mask?.first)
+        }
+
+        // ------------------------------------------------------------ text and smart objects
+
+        /** A Photoshop text layer as ours, or null to keep it as pixels (warped, empty). */
+        fun textProps(pl: PsdLayer, t: PsdText, props: LayerProps): LayerProps? {
+            if (t.warped || t.text.isBlank()) {
+                textAsPixels++
+                return null
+            }
+            if (t.mixed) mixedText++
+            val font = PsdFonts.map(t.fontName)
+            val tf = t.transform
+            val m = Matrix()
+            m.setValues(floatArrayOf(tf[0].toFloat(), tf[2].toFloat(), tf[4].toFloat(), tf[1].toFloat(), tf[3].toFloat(), tf[5].toFloat(), 0f, 0f, 1f))
+            val box = t.box
+            if (box != null) m.preTranslate(box[0].toFloat(), box[1].toFloat())
+            if (s < 1f) m.postScale(s, s)
+            // Photoshop's auto leading is 120% of the size, about a font's own line height
+            val leading = if (t.autoLeading || t.leading <= 0.0) 1f else (t.leading / (t.fontSize * 1.2)).toFloat().coerceIn(0.5f, 3f)
+            if (!font.exact) t.fontName?.let { fonts.add("${it} → ${font.label}") }
+            val spec = TextSpec(
+                text = t.text,
+                fontKey = font.key,
+                size = t.fontSize.toFloat().coerceIn(1f, 4000f),
+                color = t.color,
+                align = when (t.justification) {
+                    1 -> TextAlignOption.RIGHT
+                    2 -> TextAlignOption.CENTER
+                    else -> TextAlignOption.LEFT
+                },
+                tracking = (t.tracking / 1000.0).toFloat(),
+                leading = leading,
+                fauxBold = t.fauxBold,
+                fauxItalic = t.fauxItalic,
+                underline = t.underline,
+                allCaps = t.allCaps,
+                curve = t.arc.toFloat(),
+                matrix = m.toAffine(),
+                boxWidth = if (box != null) (box[2] - box[0]).toFloat().coerceAtLeast(1f) else 0f,
+                psdFont = t.fontName ?: "",
+            )
+            return props.copy(text = spec)
+        }
+
+        /**
+         * A Photoshop smart object as our smart layer: what's inside it (an embedded picture or
+         * Photoshop file) placed where it was. When that can't be read (a linked file, TIFF, a warp
+         * or smart filters), what you see becomes its contents.
+         */
+        fun smartProps(pl: PsdLayer, props: LayerProps, grid: TileGrid): LayerProps? {
+            val so = pl.smart
+            val id = ((so?.get("Idnt") as? String) ?: pl.placedId)?.trim('\u0000', ' ')
+            fun quadFrom(v: Any?): FloatArray? = (v as? List<*>)?.mapNotNull { (it as? Number)?.toFloat() }?.takeIf { it.size == 8 }?.toFloatArray()
+            val quad = quadFrom(so?.get("nonAffineTransform")) ?: quadFrom(so?.get("Trnf")) ?: pl.placedQuad?.map { it.toFloat() }?.toFloatArray()
+            // Smart filters are in the pixels but not in the contents
+            val filtered = (so?.get("filterFX") as? Map<*, *>)?.let { fx -> fx["enab"] != false } ?: false
+            // A warp bends the contents past the plain corners: the pixels reach elsewhere
+            val bent = quad != null && pl.width > 0 && run {
+                val xs = floatArrayOf(quad[0], quad[2], quad[4], quad[6])
+                val ys = floatArrayOf(quad[1], quad[3], quad[5], quad[7])
+                abs(xs.min() - pl.left) > 3 || abs(xs.max() - pl.right) > 3 || abs(ys.min() - pl.top) > 3 || abs(ys.max() - pl.bottom) > 3
+            }
+            val linked = id?.let { key -> f.linked[key] ?: f.linked.entries.firstOrNull { it.key.trim('\u0000', ' ') == key }?.value }
+            var why: String? = when {
+                filtered -> "smart filters"
+                bent -> "warped"
+                linked == null -> "linked file"
+                else -> null
+            }
+            var contents: Doc? = null
+            if (why == null && quad != null && linked != null) {
+                contents = try {
+                    embedded(linked)
+                } catch (e: OutOfMemoryError) {
+                    null
+                } catch (e: Exception) {
+                    null
+                }
+                if (contents == null) why = linked.type.trim().ifEmpty { "file" }.uppercase()
+            }
+            if (contents != null && quad != null) {
+                val q = FloatArray(8) { quad[it] * s }
+                return props.copy(smart = SmartSpec(contents, q))
+            }
+            // What you see becomes the contents (still a smart layer)
+            val b = grid.tileBounds() ?: return null
+            val r = Transformer.contentBounds(grid.tiles)?.let { Rect(it) } ?: b
+            if (r.isEmpty) return null
+            val inner = Doc(r.width(), r.height(), props.name)
+            val il = Layer(inner.newId(), LayerProps(props.name), TileGrid(alphaOnly = false).also { it.tiles.putAll(grid.tiles) }, -r.left, -r.top)
+            inner.layers.add(il)
+            inner.activeId = il.id
+            smartFromPixels.add(why ?: "unreadable")
+            return props.copy(smart = SmartSpec(inner, SmartSpec.quadOf(RectF(r))))
+        }
+
+        /** A smart object's embedded file as a document: a picture Android can read, or a Photoshop file. */
+        fun embedded(l: PsdLinked): Doc? {
+            val buf = f.buffer.duplicate()
+            buf.position(l.offset.toInt())
+            buf.limit((l.offset + l.length).toInt())
+            val data = buf.slice()
+            val head = ByteArray(4)
+            data.duplicate().get(head)
+            val name = l.name.trim().substringBeforeLast('.').ifBlank { "Smart object" }
+            // Photoshop inside Photoshop
+            if (head[0] == '8'.code.toByte() && head[1] == 'B'.code.toByte() && head[2] == 'P'.code.toByte() && head[3] == 'S'.code.toByte()) {
+                if (depth >= 2) return null
+                return fromBuffer(data, name, depth + 1).doc
+            }
+            // A picture: decoded no bigger than the app's limit
+            val bytes = ByteArray(l.length.toInt())
+            data.duplicate().get(bytes)
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (max(bounds.outWidth, bounds.outHeight) / sample > Doc.MAX_SIDE) sample *= 2
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }) ?: return null
+            val inner = Doc(bmp.width.coerceAtMost(Doc.MAX_SIDE), bmp.height.coerceAtMost(Doc.MAX_SIDE), name)
+            val il = Layer(inner.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false).also { it.dropEmptyTiles() })
+            bmp.recycle()
+            inner.layers.add(il)
+            inner.activeId = il.id
+            return inner
         }
 
         // ------------------------------------------------------------ pixels

@@ -34,6 +34,9 @@ class PsdKnot(val inX: Double, val inY: Double, val x: Double, val y: Double, va
 /** A shape outline from a vector mask: its points, and whether it closes. */
 class PsdSubpath(val knots: List<PsdKnot>, val closed: Boolean)
 
+/** A smart object's embedded file: where its bytes are in the .psd. */
+class PsdLinked(val id: String, val name: String, val type: String, val offset: Long, val length: Long)
+
 class PsdVectorMask(val paths: List<PsdSubpath>, val invert: Boolean, val disabled: Boolean)
 
 class PsdLayer {
@@ -67,6 +70,13 @@ class PsdLayer {
     var solidColor: Map<String, Any?>? = null
     var gradientFill: Map<String, Any?>? = null
     var vectorMask: PsdVectorMask? = null
+    /** Smart object: its placement ("SoLd" descriptor). */
+    var smart: Map<String, Any?>? = null
+    /** Smart object (older files' "PlLd"): its id and corners (8 numbers, canvas pixels). */
+    var placedId: String? = null
+    var placedQuad: DoubleArray? = null
+    /** Text layer: what it says and how it looks ("TySh"). */
+    var text: PsdText? = null
 
     val width: Int get() = right - left
     val height: Int get() = bottom - top
@@ -110,6 +120,8 @@ class PsdFile(
     val globalAltitude: Double,
     /** The flattened picture's first extra channel is its transparency (otherwise extra channels are saved selections). */
     val mergedAlpha: Boolean = false,
+    /** Smart objects' embedded files, by id. */
+    val linked: Map<String, PsdLinked> = emptyMap(),
 ) {
     val psb: Boolean get() = version == 2
 }
@@ -160,6 +172,7 @@ object PsdReader {
         val lmEnd = r.pos + lmLen
         var layers: List<PsdLayer> = emptyList()
         var mergedAlpha = false
+        val linked = HashMap<String, PsdLinked>()
         if (lmLen > 0) {
             val infoLen = if (psb) r.u64() else r.u32()
             val infoEnd = r.pos + infoLen
@@ -170,26 +183,54 @@ object PsdReader {
             r.pos = infoEnd
             // Global layer mask info
             if (r.pos + 4 <= lmEnd) r.skip(r.u32())
-            // 16-bit files keep their layers in a block here instead
-            if (layers.isEmpty()) {
-                while (r.pos + 12 <= lmEnd) {
-                    val sig = r.ascii(4)
-                    if (sig != "8BIM" && sig != "8B64") break
-                    val key = r.ascii(4)
-                    val len = if (psb && key in LONG_KEYS) r.u64() else r.u32()
-                    val at = r.pos
-                    if ((key == "Lr16" || key == "Lr32" || key == "Layr") && len > 0) {
-                        mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
-                        layers = readLayerInfo(r, psb, depth)
-                    }
-                    r.pos = at + len
-                    // Blocks here are padded to 4 bytes
-                    while ((r.pos - at) % 4 != 0L && r.pos < lmEnd) r.pos++
+            // More blocks: 16-bit files keep their layers here, and smart objects' embedded files are here
+            while (r.pos + 12 <= lmEnd) {
+                val sig = r.ascii(4)
+                if (sig != "8BIM" && sig != "8B64") break
+                val key = r.ascii(4)
+                val len = if (psb && key in LONG_KEYS) r.u64() else r.u32()
+                val at = r.pos
+                if ((key == "Lr16" || key == "Lr32" || key == "Layr") && len > 0 && layers.isEmpty()) {
+                    mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
+                    layers = readLayerInfo(r, psb, depth)
                 }
+                if (key == "lnk2" || key == "lnkD" || key == "lnk3") {
+                    try {
+                        readLinked(r, at + len, linked)
+                    } catch (e: Exception) {
+                    } catch (e: StackOverflowError) {
+                    }
+                }
+                r.pos = at + len
+                // Blocks here are padded to 4 bytes
+                while ((r.pos - at) % 4 != 0L && r.pos < lmEnd) r.pos++
             }
         }
         r.pos = lmEnd
-        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha)
+        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha, linked)
+    }
+
+    /** Smart objects' files: embedded ones ("liFD") keep their bytes here, found by the smart object's id. */
+    private fun readLinked(r: Reader, end: Long, out: MutableMap<String, PsdLinked>) {
+        while (r.pos + 8 < end) {
+            val len = r.u64()
+            val start = r.pos
+            val kind = r.ascii(4)
+            val version = r.i32()
+            val id = r.latin1(r.u8())
+            val name = r.unicode()
+            val type = r.ascii(4)
+            r.skip(4) // creator
+            val dataLen = r.u64()
+            if (r.u8() != 0) {
+                r.skip(4)
+                Descriptors.read(r)
+            }
+            if (kind == "liFD" && dataLen > 0 && r.pos + dataLen <= end) out[id] = PsdLinked(id, name, type, r.pos, dataLen)
+            r.pos = start + len
+            while ((r.pos - start) % 4 != 0L) r.pos++
+            if (version < 0) break
+        }
     }
 
     /** The layer records and where each channel's data is. */
@@ -311,6 +352,35 @@ object PsdReader {
                 l.multiEffects = Descriptors.read(r)
             }
             "vmsk", "vsms" -> l.vectorMask = readVectorMask(r, len)
+            "SoLd", "SoLE" -> {
+                r.skip(12) // "soLD", version, descriptor version
+                l.smart = Descriptors.read(r)
+            }
+            "TySh" -> {
+                r.skip(2) // version
+                val tf = DoubleArray(6) { r.f64() }
+                r.skip(6) // text version, descriptor version
+                val desc = Descriptors.read(r)
+                // The warp comes after the text
+                var warpStyle: String? = null
+                var warpValue = 0.0
+                var warpHorizontal = true
+                try {
+                    r.skip(6)
+                    val warp = Descriptors.read(r)
+                    warpStyle = (warp["warpStyle"] as? PsdEnum)?.value
+                    warpValue = (warp["warpValue"] as? Number)?.toDouble() ?: 0.0
+                    warpHorizontal = (warp["warpRotate"] as? PsdEnum)?.value != "Vrtc"
+                } catch (e: Exception) {
+                }
+                l.text = PsdText.from(tf, desc, warpStyle, warpValue, warpHorizontal)
+            }
+            "PlLd" -> {
+                r.skip(8) // "plcL", version
+                l.placedId = r.latin1(r.u8())
+                r.skip(16) // page, pages, anti-alias, kind
+                l.placedQuad = DoubleArray(8) { r.f64() }
+            }
         }
     }
 
@@ -670,8 +740,12 @@ internal object Descriptors {
             null
         }
         "tdta" -> {
-            r.skip(r.u32())
-            null
+            val n = r.u32()
+            if (n > 50_000_000) throw PsdException("Bad data.")
+            val b = ByteArray(n.toInt())
+            for (i in b.indices) b[i] = r.buf.get((r.pos + i).toInt())
+            r.skip(n)
+            b
         }
         "ObAr" -> {
             r.i32() // version
@@ -699,6 +773,237 @@ internal object Descriptors {
                 "Idnt", "indx" -> r.i32()
                 "name" -> { r.unicode(); id(r); r.unicode() }
                 else -> throw PsdException("Unknown reference")
+            }
+        }
+    }
+}
+
+/**
+ * A text layer's words and look, from Photoshop's text descriptor and its "EngineData". [transform]
+ * maps the text's own space to the canvas (xx, xy, yx, yy, tx, ty); for point text its origin is
+ * the first line's baseline at the alignment point, for box text ([box]: left, top, right, bottom)
+ * the box's corner. When the text has several styles, the first one is used ([mixed]).
+ */
+class PsdText(
+    val text: String,
+    val transform: DoubleArray,
+    val fontName: String?,
+    val fontSize: Double,
+    /** ARGB. */
+    val color: Int,
+    /** 0 left, 1 right, 2 center (justified kinds count as left). */
+    val justification: Int,
+    /** In thousandths of an em. */
+    val tracking: Double,
+    val autoLeading: Boolean,
+    val leading: Double,
+    val fauxBold: Boolean,
+    val fauxItalic: Boolean,
+    val underline: Boolean,
+    val allCaps: Boolean,
+    val box: DoubleArray?,
+    val mixed: Boolean,
+    /** A warp we can't do (Arc is turned into our curve). */
+    val warped: Boolean,
+    /** Arc warp: −1 … 1 like our curve. */
+    val arc: Double,
+) {
+    companion object {
+        fun from(tf: DoubleArray, desc: Map<String, Any?>, warpStyle: String?, warpValue: Double, warpHorizontal: Boolean): PsdText {
+            val txt = ((desc["Txt "] as? String) ?: "").trimEnd('\u0000').replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
+            val engine = (desc["EngineData"] as? ByteArray)?.let { runCatching { EngineData.parse(it) }.getOrNull() } as? Map<*, *>
+            fun Any?.m(key: String): Any? = (this as? Map<*, *>)?.get(key)
+            fun Any?.l(i: Int): Any? = (this as? List<*>)?.getOrNull(i)
+            val dict = engine.m("EngineDict")
+            val resources = engine.m("ResourceDict")
+            val runs = dict.m("StyleRun").m("RunArray") as? List<*>
+            val normal = (resources.m("StyleSheetSet") as? List<*>)?.getOrNull(((resources.m("TheNormalStyleSheet") as? Number)?.toInt() ?: 0))
+                .m("StyleSheetData") as? Map<*, *>
+            fun styleOf(run: Any?): Map<*, *>? = run.m("StyleSheet").m("StyleSheetData") as? Map<*, *>
+            // The first run that isn't just a line break
+            val first = styleOf(runs?.firstOrNull())
+            fun v(key: String): Any? = first?.get(key) ?: normal?.get(key)
+            fun num(key: String, def: Double) = (v(key) as? Number)?.toDouble() ?: def
+            fun bool(key: String, def: Boolean) = (v(key) as? Boolean) ?: def
+            val fonts = resources.m("FontSet") as? List<*>
+            val fontIndex = (v("Font") as? Number)?.toInt() ?: 0
+            val fontName = fonts?.getOrNull(fontIndex).m("Name") as? String
+            val fill = (v("FillColor").m("Values") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }
+            val color = if (fill != null && fill.size >= 4) {
+                fun c(x: Double) = (x.coerceIn(0.0, 1.0) * 255 + 0.5).toInt()
+                (c(fill[0]) shl 24) or (c(fill[1]) shl 16) or (c(fill[2]) shl 8) or c(fill[3])
+            } else {
+                0xFF000000.toInt()
+            }
+            // Several styles: different fonts, sizes or colors in one layer
+            val mixed = (runs?.size ?: 0) > 1 && runs!!.mapNotNull { styleOf(it) }.map { listOf(it["Font"], it["FontSize"], (it["FillColor"].m("Values"))) }.distinct().size > 1
+            val para = dict.m("ParagraphRun").m("RunArray").l(0).m("ParagraphSheet").m("Properties")
+            val just = when ((para.m("Justification") as? Number)?.toInt() ?: 0) {
+                1 -> 1
+                2 -> 2
+                else -> 0
+            }
+            val shape = dict.m("Rendered").m("Shapes").m("Children").l(0)
+            val isBox = (shape.m("ShapeType") as? Number)?.toInt() == 1
+            val box = if (isBox) (shape.m("Cookie").m("Photoshop").m("BoxBounds") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }?.takeIf { it.size == 4 }?.toDoubleArray() else null
+            val arc = warpStyle == "warpArc" && warpHorizontal
+            return PsdText(
+                text = txt,
+                transform = tf,
+                fontName = fontName,
+                fontSize = num("FontSize", 12.0),
+                color = color,
+                justification = just,
+                tracking = num("Tracking", 0.0),
+                autoLeading = bool("AutoLeading", true),
+                leading = num("Leading", 0.0),
+                fauxBold = bool("FauxBold", false),
+                fauxItalic = bool("FauxItalic", false),
+                underline = bool("Underline", false),
+                allCaps = (v("FontCaps") as? Number)?.toInt() == 2,
+                box = box,
+                mixed = mixed,
+                warped = warpStyle != null && warpStyle != "warpNone" && !(arc && box == null),
+                arc = if (arc) (warpValue / 100.0).coerceIn(-1.0, 1.0) else 0.0,
+            )
+        }
+    }
+}
+
+/**
+ * Photoshop's text "EngineData": a PostScript-like listing (<< /Key value >>, [ arrays ],
+ * (strings) in UTF-16, numbers, true/false). Read into maps, lists, numbers, booleans and strings.
+ */
+object EngineData {
+    fun parse(b: ByteArray): Any? = Parser(b).value()
+
+    private class Parser(val b: ByteArray) {
+        var i = 0
+        var depth = 0
+
+        fun skipSpace() {
+            while (i < b.size) {
+                val c = b[i].toInt() and 0xFF
+                if (c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D || c == 0) i++ else break
+            }
+        }
+
+        fun value(): Any? {
+            skipSpace()
+            if (i >= b.size) return null
+            if (++depth > 64) throw PsdException("Text data nested too deep.")
+            try {
+                val c = b[i].toInt().toChar()
+                return when {
+                    c == '<' && i + 1 < b.size && b[i + 1].toInt().toChar() == '<' -> dict()
+                    c == '[' -> array()
+                    c == '(' -> string()
+                    c == '/' -> "/" + name()
+                    else -> word()
+                }
+            } finally {
+                depth--
+            }
+        }
+
+        fun dict(): Map<String, Any?> {
+            i += 2
+            val out = LinkedHashMap<String, Any?>()
+            while (true) {
+                skipSpace()
+                if (i >= b.size) break
+                if (b[i].toInt().toChar() == '>' && i + 1 < b.size && b[i + 1].toInt().toChar() == '>') {
+                    i += 2
+                    break
+                }
+                if (b[i].toInt().toChar() != '/') {
+                    // Not a key: skip it
+                    value()
+                    continue
+                }
+                val key = name()
+                out[key] = value()
+            }
+            return out
+        }
+
+        fun array(): List<Any?> {
+            i++
+            val out = ArrayList<Any?>()
+            while (true) {
+                skipSpace()
+                if (i >= b.size) break
+                if (b[i].toInt().toChar() == ']') {
+                    i++
+                    break
+                }
+                val before = i
+                out.add(value())
+                if (i == before) i++
+            }
+            return out
+        }
+
+        fun name(): String {
+            i++ // the slash
+            val start = i
+            while (i < b.size) {
+                val c = b[i].toInt().toChar()
+                if (c.isWhitespace() || c == '/' || c == '[' || c == ']' || c == '(' || c == '<' || c == '>' || b[i].toInt() == 0) break
+                i++
+            }
+            return String(b, start, i - start, Charsets.ISO_8859_1)
+        }
+
+        fun string(): String {
+            i++ // (
+            val out = java.io.ByteArrayOutputStream()
+            while (i < b.size) {
+                val c = b[i].toInt() and 0xFF
+                if (c == '\\'.code && i + 1 < b.size) {
+                    val n = b[i + 1].toInt() and 0xFF
+                    out.write(
+                        when (n.toChar()) {
+                            'n' -> 0x0A
+                            'r' -> 0x0D
+                            't' -> 0x09
+                            else -> n
+                        }
+                    )
+                    i += 2
+                    continue
+                }
+                if (c == ')'.code) {
+                    i++
+                    break
+                }
+                out.write(c)
+                i++
+            }
+            val bytes = out.toByteArray()
+            return if (bytes.size >= 2 && (bytes[0].toInt() and 0xFF) == 0xFE && (bytes[1].toInt() and 0xFF) == 0xFF) {
+                String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            } else {
+                String(bytes, Charsets.ISO_8859_1)
+            }
+        }
+
+        fun word(): Any? {
+            val start = i
+            while (i < b.size) {
+                val c = b[i].toInt().toChar()
+                if (c.isWhitespace() || c == '/' || c == '[' || c == ']' || c == '(' || c == '<' || c == '>' || b[i].toInt() == 0) break
+                i++
+            }
+            if (i == start) {
+                i++
+                return null
+            }
+            val w = String(b, start, i - start, Charsets.ISO_8859_1)
+            return when (w) {
+                "true" -> true
+                "false" -> false
+                else -> w.toDoubleOrNull() ?: w
             }
         }
     }

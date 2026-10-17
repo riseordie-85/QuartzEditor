@@ -194,30 +194,37 @@ class TileGrid(val alphaOnly: Boolean) {
 object TileLod {
     private val zoom = ThreadLocal<Float?>()
 
-    /** Copies made in this frame so far, and whether some were left for the next one. */
-    private var madeThisFrame = 0
-    private var leftOver = false
-
-    /** At most this many copies are made in one frame, so zooming out never stalls (the rest follow). */
-    private const val PER_FRAME = 24
-
     private class Copy(val generation: Int, val bitmap: Bitmap)
 
-    // Main thread only (the only thread that sets a zoom)
+    /** Copies by tile (they go away with their tile). Guarded by itself. */
     private val copies = java.util.WeakHashMap<Bitmap, Array<Copy?>>()
+    /** Tiles waiting for their copies. Guarded by [copies]. */
+    private val waiting = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Bitmap, Boolean>())
 
-    /** Runs the screen's draw with [scale] screen pixels per canvas pixel. Returns true when some copies are still to come (draw again). */
+    /** Copies are made on a thread of their own, so zooming out on a big picture never stalls the screen. */
+    private val maker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "tile-copies").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY - 1
+        }
+    }
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val redrawAsked = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Called (on the main thread) when new copies are ready, to draw again. */
+    @Volatile
+    var onReady: (() -> Unit)? = null
+
+    /** Runs the screen's draw with [scale] screen pixels per canvas pixel. */
     fun drawing(scale: Float, block: () -> Unit): Boolean {
         val old = zoom.get()
         zoom.set(scale)
-        madeThisFrame = 0
-        leftOver = false
         try {
             block()
         } finally {
             zoom.set(old)
         }
-        return leftOver
+        return false
     }
 
     /** 0 = full tiles, 1 = half size, 2 = quarter size. */
@@ -230,35 +237,54 @@ object TileLod {
         }
     }
 
-    /** [tile]'s copy at [level] (1 or 2), or null when it isn't made yet (draw the tile itself). */
+    /** [tile]'s copy at [level] (1 or 2), or null when it isn't made yet (draw the tile itself; it's on its way). */
     fun get(tile: Bitmap, level: Int): Bitmap? {
         if (tile.isRecycled) return null
-        val slots = copies.getOrPut(tile) { arrayOfNulls(2) }
         val gen = tile.generationId
-        slots[level - 1]?.let { if (it.generation == gen && !it.bitmap.isRecycled) return it.bitmap }
-        // The quarter size comes from the half size
-        val from = if (level == 1) tile else (get(tile, 1) ?: return null)
-        if (madeThisFrame >= PER_FRAME) {
-            leftOver = true
-            return null
+        synchronized(copies) {
+            val c = copies[tile]?.get(level - 1)
+            if (c != null && c.generation == gen && !c.bitmap.isRecycled) return c.bitmap
+            if (!waiting.add(tile)) return null
         }
-        madeThisFrame++
+        maker.execute { make(tile) }
+        return null
+    }
+
+    /** Makes both copies of [tile] (in the background). */
+    private fun make(tile: Bitmap) {
+        try {
+            if (tile.isRecycled) return
+            val gen = tile.generationId
+            val half = shrink(tile) ?: return
+            val quarter = shrink(half)
+            synchronized(copies) {
+                copies[tile] = arrayOf(Copy(gen, half), quarter?.let { Copy(gen, it) })
+            }
+        } catch (e: Throwable) {
+            // Out of memory or a tile freed meanwhile: it's drawn at full size
+        } finally {
+            synchronized(copies) { waiting.remove(tile) }
+        }
+        if (redrawAsked.compareAndSet(false, true)) {
+            // A moment later, so many copies finishing together draw once
+            main.postDelayed({
+                redrawAsked.set(false)
+                onReady?.invoke()
+            }, 60)
+        }
+    }
+
+    private fun shrink(from: Bitmap): Bitmap? {
         val size = from.width / 2
         if (size < 1) return null
-        val small = try {
-            val config = if (tile.config == Bitmap.Config.ALPHA_8) Bitmap.Config.ALPHA_8 else Bitmap.Config.ARGB_8888
-            Bitmap.createBitmap(size, size, config).also { b ->
-                if (config != Bitmap.Config.ALPHA_8) {
-                    b.setHasAlpha(true)
-                    b.setHasMipMap(true)
-                }
-                Canvas(b).drawBitmap(from, null, Rect(0, 0, size, size), FILTER)
+        val config = if (from.config == Bitmap.Config.ALPHA_8) Bitmap.Config.ALPHA_8 else Bitmap.Config.ARGB_8888
+        return Bitmap.createBitmap(size, size, config).also { b ->
+            if (config != Bitmap.Config.ALPHA_8) {
+                b.setHasAlpha(true)
+                b.setHasMipMap(true)
             }
-        } catch (e: OutOfMemoryError) {
-            return null
+            Canvas(b).drawBitmap(from, null, Rect(0, 0, size, size), FILTER)
         }
-        slots[level - 1] = Copy(gen, small)
-        return small
     }
 
     private val FILTER = Paint(Paint.FILTER_BITMAP_FLAG)
