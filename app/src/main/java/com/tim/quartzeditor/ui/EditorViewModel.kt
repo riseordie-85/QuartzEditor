@@ -281,6 +281,27 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Space held on a keyboard: one finger moves the view, whatever the tool. */
     var tempPan by mutableStateOf(false)
 
+    // ---------------------------------------------------------------- the modifier button (Shift / Alt)
+
+    /** The on-screen modifier: held (or locked on) for Shift; dragged out to the ring for Alt. */
+    var modShift by mutableStateOf(false)
+    var modAlt by mutableStateOf(false)
+    /** Locked on with a double-tap (stays on until tapped again). */
+    var modLocked by mutableStateOf(false)
+    /** Shift or Alt held on a keyboard. */
+    var keyShift by mutableStateOf(false)
+    var keyAlt by mutableStateOf(false)
+    val shiftOn: Boolean get() = (modShift && !modAlt) || keyShift
+    val altOn: Boolean get() = modAlt || keyAlt
+    var showModifier by mutableStateOf(prefs.getBoolean("showModifier", true))
+    /** Where the button sits, as fractions of the picture area (null: bottom left). */
+    var modifierAt by mutableStateOf(
+        if (prefs.contains("modX")) androidx.compose.ui.geometry.Offset(prefs.getFloat("modX", 0f), prefs.getFloat("modY", 0f)) else null
+    )
+
+    /** Where the last brush stroke ended (layer id, canvas point), for Shift-tap straight lines. */
+    internal var lastStrokeEnd: Triple<Long, Float, Float>? = null
+
     /** Bumped by the Tab key to show or hide the panels. */
     var panelsToggle by mutableIntStateOf(0)
 
@@ -779,6 +800,29 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val at = smartPositions(d)
         history.undo(d)?.let { toast("Undo: $it") }
         redrawMovedSmart(d, at)
+    }
+
+    /**
+     * Goes to the picture as it was after [steps] of the steps in the History panel (0 = before all
+     * of them), undoing or redoing as many as it takes.
+     */
+    fun jumpHistory(steps: Int) {
+        val d = doc ?: return
+        if (stroke != null || busy != null) return
+        if (pendingFirst { jumpHistory(steps) }) return
+        var guard = 200
+        while (history.undoLabels.size > steps && guard-- > 0) {
+            closeTabsChangedBy(history.peekUndo())
+            val at = smartPositions(d)
+            history.undo(d) ?: break
+            redrawMovedSmart(d, at)
+        }
+        while (history.undoLabels.size < steps && guard-- > 0) {
+            closeTabsChangedBy(history.peekRedo())
+            val at = smartPositions(d)
+            history.redo(d) ?: break
+            redrawMovedSmart(d, at)
+        }
     }
 
     fun redo() {

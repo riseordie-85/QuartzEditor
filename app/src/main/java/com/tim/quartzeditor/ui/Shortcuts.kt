@@ -18,6 +18,17 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
     val alt = e.isAltPressed
     val repeat = e.repeatCount > 0
 
+    // Shift and Alt held: the same as the modifier button
+    when (e.keyCode) {
+        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> {
+            keyShift = true
+            return false
+        }
+        KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
+            keyAlt = true
+            return false
+        }
+    }
     // Hold Space to move the view with one finger (whatever tool is picked)
     if (e.keyCode == KeyEvent.KEYCODE_SPACE && !cmd) {
         tempPan = true
@@ -185,9 +196,15 @@ fun EditorViewModel.onTabKey(e: KeyEvent): Boolean {
 /** The keyboard went away mid-press (another app, a window on top): let go of Space. */
 fun EditorViewModel.releaseKeys() {
     tempPan = false
+    keyShift = false
+    keyAlt = false
 }
 
 fun EditorViewModel.onKeyUp(e: KeyEvent): Boolean {
+    when (e.keyCode) {
+        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> keyShift = false
+        KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> keyAlt = false
+    }
     if (e.keyCode == KeyEvent.KEYCODE_SPACE && tempPan) {
         tempPan = false
         return true

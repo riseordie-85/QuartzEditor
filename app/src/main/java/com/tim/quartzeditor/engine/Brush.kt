@@ -169,6 +169,10 @@ class StrokeSession(
     var dabCount = 0
         private set
 
+    /** The last point painted (canvas pixels), or null before the first. */
+    val lastPoint: android.graphics.PointF?
+        get() = if (lastX.isNaN()) null else android.graphics.PointF(lastX + layer.x, lastY + layer.y)
+
     val lockAlpha: Boolean get() = target == StrokeTarget.PIXELS && layer.props.lockAlpha
 
     /** Adds the next touch point (canvas pixels). */

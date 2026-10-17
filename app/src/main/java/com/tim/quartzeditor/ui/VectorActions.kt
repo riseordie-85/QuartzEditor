@@ -280,11 +280,11 @@ internal fun EditorViewModel.nextShapeKind() {
 }
 
 /** The shape being dragged out, from canvas point ([x0], [y0]) to ([x1], [y1]). */
-fun EditorViewModel.dragShape(x0: Float, y0: Float, x1: Float, y1: Float) {
+fun EditorViewModel.dragShape(x0: Float, y0: Float, x1: Float, y1: Float, square: Boolean = shapeSquare, fromCenter: Boolean = false) {
     if (shapeKind == ShapeKind.ARROW) {
         // From the start of the drag to its end; "straight" snaps to 45° steps
         var a = kotlin.math.atan2(y1 - y0, x1 - x0)
-        if (shapeSquare) a = (Math.round(a / (Math.PI / 4)) * (Math.PI / 4)).toFloat()
+        if (square) a = (Math.round(a / (Math.PI / 4)) * (Math.PI / 4)).toFloat()
         val len = kotlin.math.hypot(x1 - x0, y1 - y0)
         val h = (len * 0.35f).coerceAtLeast(12f)
         val m = android.graphics.Matrix().apply {
@@ -297,10 +297,15 @@ fun EditorViewModel.dragShape(x0: Float, y0: Float, x1: Float, y1: Float) {
     }
     var w = x1 - x0
     var h = y1 - y0
-    if (shapeSquare) {
+    if (square) {
         val m = max(abs(w), abs(h))
         w = if (w < 0) -m else m
         h = if (h < 0) -m else m
+    }
+    if (fromCenter) {
+        // The drag start is the middle
+        shapeDraft = shapeStyle.copy(kind = shapeKind, w = abs(w) * 2f, h = abs(h) * 2f, path = emptyList(), closed = true, matrix = translation(x0 - abs(w), y0 - abs(h)))
+        return
     }
     val left = min(x0, x0 + w)
     val top = min(y0, y0 + h)

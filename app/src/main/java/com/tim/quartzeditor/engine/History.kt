@@ -77,6 +77,16 @@ class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
     val undoLabel: String? get() = undoStack.lastOrNull()?.label
     val redoLabel: String? get() = redoStack.lastOrNull()?.label
 
+    /** The steps that can be undone, oldest first (for the History panel). */
+    val undoLabels: List<String> get() = undoStack.map { it.label }
+
+    /** The steps that can be redone, next one first. */
+    val redoLabels: List<String> get() = redoStack.reversed().map { it.label }
+
+    /** Older steps were let go (to stay within memory), so the first one listed isn't the start. */
+    var trimmed = false
+        private set
+
     /** The step Undo would take back (and Redo would do again), without doing it. */
     fun peekUndo(): Change? = undoStack.lastOrNull()
     fun peekRedo(): Change? = redoStack.lastOrNull()
@@ -115,6 +125,7 @@ class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
     fun clear() {
         undoStack.clear()
         redoStack.clear()
+        trimmed = false
         editsSinceSave = 0
         version++
     }
@@ -123,6 +134,7 @@ class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
         var total = undoStack.sumOf { it.cost } + redoStack.sumOf { it.cost }
         while (undoStack.size > 1 && (undoStack.size > maxSteps || total > budgetBytes)) {
             total -= undoStack.removeFirst().cost
+            trimmed = true
         }
     }
 }

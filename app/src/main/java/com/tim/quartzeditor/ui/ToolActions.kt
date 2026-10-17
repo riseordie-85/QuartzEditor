@@ -548,7 +548,7 @@ fun EditorViewModel.applyCropRatio(r: CropRatio) {
  * Drags a crop handle. [handle]: 0..3 corners (TL, TR, BR, BL), 4..7 edges (top, right, bottom, left),
  * -1 = the whole box. [start] is the box when the drag began; ([dx], [dy]) how far the finger moved.
  */
-fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float) {
+fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float, keepShape: Boolean = false, fromCenter: Boolean = false) {
     var l = start.left
     var t = start.top
     var r = start.right
@@ -564,10 +564,24 @@ fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float) {
         6 -> b += dy
         7 -> l += dx
     }
+    // From the center (Alt): the opposite side moves the other way
+    if (fromCenter && handle >= 0) {
+        when (handle) {
+            0 -> { r -= dx; b -= dy }
+            1 -> { l -= dx; b -= dy }
+            2 -> { l -= dx; t -= dy }
+            3 -> { r -= dx; t -= dy }
+            4 -> b -= dy
+            5 -> l -= dx
+            6 -> t -= dy
+            7 -> r -= dx
+        }
+    }
     val min = 8f
     if (r - l < min) { if (handle == 0 || handle == 3 || handle == 7) l = r - min else r = l + min }
     if (b - t < min) { if (handle == 0 || handle == 1 || handle == 4) t = b - min else b = t + min }
-    val ratio = ratioValue(cropRatio)
+    // Shift keeps the box's shape as it was
+    val ratio = ratioValue(cropRatio) ?: if (keepShape && start.height() > 0f) start.width() / start.height() else null
     if (ratio != null && handle >= 0) {
         // Keep the shape: the dragged side decides, the other follows
         val w = r - l
@@ -586,6 +600,12 @@ fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float) {
             val nh = w / ratio
             if (handle == 0 || handle == 1) t = b - nh else b = t + nh
         }
+    }
+    if (fromCenter && handle >= 0) {
+        // Keep it centered where it was
+        val ox = start.centerX() - (l + r) / 2f
+        val oy = start.centerY() - (t + b) / 2f
+        l += ox; r += ox; t += oy; b += oy
     }
     val maxSide = Doc.MAX_SIDE.toFloat()
     if (r - l > maxSide) r = l + maxSide

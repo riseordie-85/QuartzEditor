@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -140,6 +141,7 @@ fun Workspace(vm: EditorViewModel) {
                     @Suppress("UNUSED_VARIABLE") val v = h.version
                     RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
                     RoundButton(Icons.AutoMirrored.Outlined.Redo, "Redo (three-finger tap)", enabled = h.canRedo) { vm.redo() }
+                    HistoryButton(vm)
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen (or pinch in quickly)") { vm.fit() }
                 }
 
@@ -172,6 +174,20 @@ fun Workspace(vm: EditorViewModel) {
                         )
                         DropdownMenuItem(text = { Text("Grid settings…") }, onClick = { menu = false; gridOpen = true })
                         DropdownMenuItem(
+                            text = { Text("Modifier button (Shift / Alt)") },
+                            trailingIcon = { if (vm.showModifier) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = {
+                                menu = false
+                                vm.showModifier = !vm.showModifier
+                                vm.prefs.edit().putBoolean("showModifier", vm.showModifier).apply()
+                                if (!vm.showModifier) {
+                                    vm.modShift = false
+                                    vm.modAlt = false
+                                    vm.modLocked = false
+                                }
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Checkerboard for see-through") },
                             trailingIcon = { if (vm.showChecker) Icon(Icons.Outlined.Check, contentDescription = "On") },
                             onClick = { menu = false; vm.toggleChecker() },
@@ -195,6 +211,9 @@ fun Workspace(vm: EditorViewModel) {
                 WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
+
+                // The on-screen Shift / Alt
+                ModifierButton(vm)
 
                 // Tabs, while a smart layer's contents are open
                 TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).widthIn(max = 420.dp))
@@ -434,4 +453,48 @@ private fun ExportDialog(name: String, onDismiss: () -> Unit, onExport: (ExportF
             }
         },
     )
+}
+
+/**
+ * The History panel: every step you can go back to, oldest first, with where you are marked.
+ * Tap a step to go back (or forward) to the picture as it was after it.
+ */
+@Composable
+private fun HistoryButton(vm: EditorViewModel) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        RoundButton(Icons.Outlined.Description, "History") { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.widthIn(min = 240.dp).heightIn(max = 460.dp)) {
+            val h = vm.history
+            @Suppress("UNUSED_VARIABLE") val v = h.version
+            val done = h.undoLabels
+            val ahead = h.redoLabels
+            Text("History", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+            @Composable
+            fun row(label: String, steps: Int, current: Boolean, undone: Boolean) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            label,
+                            color = if (undone) Q.textDim else Q.text,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    },
+                    leadingIcon = {
+                        if (current) Icon(Icons.Outlined.Check, contentDescription = "You're here", tint = Q.accent)
+                        else Spacer(Modifier.size(24.dp))
+                    },
+                    onClick = { vm.jumpHistory(steps) },
+                )
+            }
+            row(if (h.trimmed) "Earlier (older steps let go)" else "Opened", 0, done.isEmpty(), undone = false)
+            done.forEachIndexed { i, label -> row(label, i + 1, i == done.lastIndex, undone = false) }
+            ahead.forEachIndexed { j, label -> row(label, done.size + 1 + j, false, undone = true) }
+            if (done.isEmpty() && ahead.isEmpty()) {
+                Text("Nothing done yet", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+        }
+    }
 }

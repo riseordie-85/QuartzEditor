@@ -213,12 +213,24 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                         // Lasso outline being drawn
                         val lasso = android.graphics.Path().apply { moveTo(startCx, startCy) }
+                        // Where the stroke starts (Shift keeps it on a straight line from here)
+                        var strokeOx = startCx
+                        var strokeOy = startCy
                         when (tool) {
                             Tool.BRUSH, Tool.ERASER -> if (vm.isOnCanvas(start.x, start.y)) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
+                                // Shift and a tap: a straight line from where the last stroke ended (like Photoshop)
+                                val join = vm.lastStrokeEnd?.takeIf { vm.shiftOn && it.first == vm.doc?.activeId }
+                                val bx = join?.second ?: cx
+                                val by = join?.third ?: cy
                                 // Can't paint here: wait and see whether it becomes a pinch or stays a touch
-                                mode = if (vm.strokeBlockReason() == null && vm.beginStroke(cx, cy)) GestureMode.STROKE else GestureMode.BLOCKED
-                                if (mode == GestureMode.STROKE) cursor = start
+                                mode = if (vm.strokeBlockReason() == null && vm.beginStroke(bx, by)) GestureMode.STROKE else GestureMode.BLOCKED
+                                if (mode == GestureMode.STROKE) {
+                                    cursor = start
+                                    strokeOx = bx
+                                    strokeOy = by
+                                    if (join != null) vm.strokeTo(cx, cy)
+                                }
                             }
                             Tool.EYEDROPPER -> if (vm.isOnCanvas(start.x, start.y)) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
@@ -325,6 +337,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.endStroke()
                                         cursor = null
                                         mode = GestureMode.DONE
+                                    } else if (vm.shiftOn) {
+                                        // Straight: along 0°, 45° or 90° from where it started
+                                        val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        val (px, py) = snap45(strokeOx, strokeOy, x, y)
+                                        vm.strokeTo(px, py)
+                                        cursor = main.position
                                     } else {
                                         for (h in main.historical) {
                                             val (x, y) = vm.screenToCanvas(h.position.x, h.position.y)
@@ -336,7 +354,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     }
                                 }
                                 GestureMode.MOVE -> if (main != null) {
-                                    val d = main.position - start
+                                    val d = axisLock(vm, main.position - start)
                                     vm.moveTo(d.x / vm.scale, d.y / vm.scale, 10.dp.toPx() / vm.scale)
                                 }
                                 GestureMode.PAN -> {
@@ -352,7 +370,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 GestureMode.PENDING -> if (main != null && (main.position - start).getDistance() > slop) {
                                     moved = true
                                     mode = when (tool) {
-                                        Tool.MOVE -> if (vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
+                                        Tool.MOVE -> {
+                                            // Alt: move a copy, leaving the original where it was
+                                            if (vm.altOn) vm.duplicateLayer()
+                                            if (vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
+                                        }
                                         Tool.PAN, Tool.EYEDROPPER, Tool.TRANSFORM, Tool.BUCKET, Tool.CROP, Tool.WARP -> GestureMode.PAN
                                         // Polygonal lasso and magic wand work by taps: a drag moves the view
                                         Tool.SELECT -> if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.POLYGON || vm.selectShape == com.tim.quartzeditor.engine.SelectShape.WAND) GestureMode.PAN else GestureMode.SELECTING
@@ -368,6 +390,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                             if (vm.strokeBlockReason() != null) {
                                                 GestureMode.BLOCKED
                                             } else if (vm.beginStroke(sx, sy)) {
+                                                strokeOx = sx
+                                                strokeOy = sy
                                                 val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
                                                 vm.strokeTo(x, y)
                                                 cursor = main.position
@@ -378,7 +402,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         }
                                     }
                                     if (mode == GestureMode.MOVE) {
-                                        vm.moveTo((main.position.x - start.x) / vm.scale, (main.position.y - start.y) / vm.scale, 10.dp.toPx() / vm.scale)
+                                        val d = axisLock(vm, main.position - start)
+                                        vm.moveTo(d.x / vm.scale, d.y / vm.scale, 10.dp.toPx() / vm.scale)
                                     }
                                     if (mode == GestureMode.SHAPING || mode == GestureMode.PEN) {
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
@@ -397,10 +422,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     val q0 = tStart.corners()
                                     when (val h = hit) {
                                         is TransformHit.Corner -> vm.updateTransform { cur ->
-                                            val target = android.graphics.PointF(q0[h.i].x + ddx, q0[h.i].y + ddy)
+                                            // Alt scales from the middle: the opposite corner moves the other way
+                                            val k = if (vm.altOn) 2f else 1f
+                                            val target = android.graphics.PointF(q0[h.i].x + ddx * k, q0[h.i].y + ddy * k)
                                             // Skew / perspective / distort work from where the gesture started (a move that
                                             // would fold the box over leaves it where it last was)
-                                            if (tStart.distort) tStart.dragCornerBy(h.i, ddx, ddy) ?: cur else tStart.copy(keepAspect = cur.keepAspect).dragCorner(h.i, target)
+                                            if (tStart.distort) tStart.dragCornerBy(h.i, ddx, ddy) ?: cur
+                                            else centered(vm, tStart, tStart.copy(keepAspect = cur.keepAspect != vm.shiftOn).dragCorner(h.i, target))
                                         }
                                         is TransformHit.Edge -> vm.updateTransform { cur ->
                                             if (tStart.distort) {
@@ -408,14 +436,16 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                             } else {
                                                 val a = q0[h.i]
                                                 val b = q0[(h.i + 1) % 4]
-                                                val target = android.graphics.PointF((a.x + b.x) / 2f + ddx, (a.y + b.y) / 2f + ddy)
-                                                tStart.copy(keepAspect = cur.keepAspect).dragEdge(h.i, target, target)
+                                                val k = if (vm.altOn) 2f else 1f
+                                                val target = android.graphics.PointF((a.x + b.x) / 2f + ddx * k, (a.y + b.y) / 2f + ddy * k)
+                                                centered(vm, tStart, tStart.copy(keepAspect = cur.keepAspect != vm.shiftOn).dragEdge(h.i, target, target))
                                             }
                                         }
                                         TransformHit.Move -> {
                                             // Snaps the box's edges and middle to the canvas's
                                             val box = android.graphics.RectF(q0.minOf { it.x }, q0.minOf { it.y }, q0.maxOf { it.x }, q0.maxOf { it.y })
-                                            val (sx, sy) = vm.snapDelta(box, ddx, ddy, 10.dp.toPx() / vm.scale)
+                                            val locked = axisLock(vm, Offset(ddx, ddy))
+                                            val (sx, sy) = vm.snapDelta(box, locked.x, locked.y, 10.dp.toPx() / vm.scale)
                                             vm.updateTransform { cur ->
                                                 // Whole pixels, so a plain move stays sharp
                                                 tStart.copy(keepAspect = cur.keepAspect).moved(sx.roundToInt().toFloat(), sy.roundToInt().toFloat())
@@ -427,10 +457,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                             val a1 = Math.toDegrees(kotlin.math.atan2((cy - c.y).toDouble(), (cx - c.x).toDouble()))
                                             var deg = (a1 - a0).toFloat()
                                             if (!tStart.distort) {
-                                                // Snap to straight angles
+                                                // Snap to straight angles (Shift: every 15°)
                                                 val target = tStart.angle + deg
-                                                val nearest = Math.round(target / 90f) * 90f
-                                                if (abs(target - nearest) < 2.5f) deg = nearest - tStart.angle
+                                                if (vm.shiftOn) {
+                                                    deg = Math.round(target / 15f) * 15f - tStart.angle
+                                                } else {
+                                                    val nearest = Math.round(target / 90f) * 90f
+                                                    if (abs(target - nearest) < 2.5f) deg = nearest - tStart.angle
+                                                }
                                             }
                                             vm.updateTransform { cur -> tStart.copy(keepAspect = cur.keepAspect).rotated(deg) }
                                         }
@@ -441,7 +475,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 }
                                 GestureMode.SELECTING -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                    val r = android.graphics.RectF(minOf(startCx, cx), minOf(startCy, cy), maxOf(startCx, cx), maxOf(startCy, cy))
+                                    // Shift: a square or circle; Alt: drawn from the middle
+                                    val r = constrainedBox(vm, startCx, startCy, cx, cy)
                                     vm.selectDraft = when (vm.selectShape) {
                                         com.tim.quartzeditor.engine.SelectShape.RECT -> com.tim.quartzeditor.engine.Selection.rect(r)
                                         com.tim.quartzeditor.engine.SelectShape.ELLIPSE -> com.tim.quartzeditor.engine.Selection.oval(r)
@@ -457,11 +492,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 }
                                 GestureMode.GRADIENT -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                    vm.gradientTo(cx, cy)
+                                    // Shift: straight across, down or at 45°
+                                    val (gx, gy) = if (vm.shiftOn) snap45(startCx, startCy, cx, cy) else cx to cy
+                                    vm.gradientTo(gx, gy)
                                 }
                                 GestureMode.CROP -> if (main != null && cropStart != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                    vm.dragCrop(cropStart, cropHandle, cx - startCx, cy - startCy)
+                                    vm.dragCrop(cropStart, cropHandle, cx - startCx, cy - startCy, keepShape = vm.shiftOn, fromCenter = vm.altOn)
                                 }
                                 GestureMode.SHAPING -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
@@ -517,7 +554,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     Tool.BUCKET -> if (vm.isOnCanvas(start.x, start.y)) vm.bucketFill(startCx, startCy)
                                     Tool.SELECT -> when (vm.selectShape) {
                                         com.tim.quartzeditor.engine.SelectShape.POLYGON -> vm.polygonTap(startCx, startCy, 24.dp.toPx() / vm.scale)
-                                        com.tim.quartzeditor.engine.SelectShape.WAND -> vm.magicWand(startCx, startCy)
+                                        com.tim.quartzeditor.engine.SelectShape.WAND -> withSelectMode(vm) { vm.magicWand(startCx, startCy) }
                                         else -> vm.selectTap()
                                     }
                                     // A tap picks the shape under your finger (to change it in Properties)
@@ -535,8 +572,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.SELECTING -> {
                                 val draft = vm.selectDraft
                                 if (draft != null) {
-                                    if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.LASSO) draft.close()
-                                    vm.commitSelectionShape(draft)
+                                    if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.LASSO) {
+                                        draft.close()
+                                        // Shift adds the lasso to the selection, Alt takes it away
+                                        withSelectMode(vm) { vm.commitSelectionShape(draft) }
+                                    } else {
+                                        vm.commitSelectionShape(draft)
+                                    }
                                 }
                                 vm.selectDraft = null
                             }
@@ -851,7 +893,62 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 private fun dragShapeSnapped(vm: EditorViewModel, x0: Float, y0: Float, x1: Float, y1: Float, radius: Float) {
     val (ax, ay) = vm.snapPoint(x0, y0, radius)
     val (bx, by) = vm.snapPoint(x1, y1, radius)
-    vm.dragShape(ax, ay, bx, by)
+    // Shift: square, circle or 45° lines; Alt: from the middle
+    vm.dragShape(ax, ay, bx, by, square = vm.shapeSquare || vm.shiftOn, fromCenter = vm.altOn)
+}
+
+/** ([x], [y]) moved onto the nearest 0°, 45° or 90° line through ([ox], [oy]) (Shift). */
+internal fun snap45(ox: Float, oy: Float, x: Float, y: Float): Pair<Float, Float> {
+    val dx = x - ox
+    val dy = y - oy
+    if (dx == 0f && dy == 0f) return x to y
+    val a = Math.round(kotlin.math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
+    val ux = kotlin.math.cos(a).toFloat()
+    val uy = kotlin.math.sin(a).toFloat()
+    val len = dx * ux + dy * uy
+    return (ox + ux * len) to (oy + uy * len)
+}
+
+/** Shift: only along the way it moved most (straight across or straight up and down). */
+private fun axisLock(vm: EditorViewModel, d: Offset): Offset =
+    if (!vm.shiftOn) d else if (abs(d.x) >= abs(d.y)) Offset(d.x, 0f) else Offset(0f, d.y)
+
+/** The box dragged from ([x0], [y0]) to ([x1], [y1]): square with Shift, from its middle with Alt. */
+private fun constrainedBox(vm: EditorViewModel, x0: Float, y0: Float, x1: Float, y1: Float): android.graphics.RectF {
+    var w = x1 - x0
+    var h = y1 - y0
+    if (vm.shiftOn) {
+        val m = max(abs(w), abs(h))
+        w = if (w < 0) -m else m
+        h = if (h < 0) -m else m
+    }
+    return if (vm.altOn) android.graphics.RectF(x0 - abs(w), y0 - abs(h), x0 + abs(w), y0 + abs(h))
+    else android.graphics.RectF(minOf(x0, x0 + w), minOf(y0, y0 + h), maxOf(x0, x0 + w), maxOf(y0, y0 + h))
+}
+
+/** With Alt, a resized transform box is kept centered where it started. */
+private fun centered(vm: EditorViewModel, start: com.tim.quartzeditor.engine.TransformState, t: com.tim.quartzeditor.engine.TransformState): com.tim.quartzeditor.engine.TransformState {
+    if (!vm.altOn) return t
+    val c0 = start.center
+    val c1 = t.center
+    return t.moved(c0.x - c1.x, c0.y - c1.y)
+}
+
+/** Runs [action] with Shift as Add and Alt as Subtract (both: Intersect) for the selection mode. */
+private fun withSelectMode(vm: EditorViewModel, action: () -> Unit) {
+    val old = vm.selectMode
+    val m = when {
+        vm.shiftOn && vm.altOn -> com.tim.quartzeditor.engine.SelectMode.INTERSECT
+        vm.altOn -> com.tim.quartzeditor.engine.SelectMode.SUBTRACT
+        vm.shiftOn -> com.tim.quartzeditor.engine.SelectMode.ADD
+        else -> old
+    }
+    vm.selectMode = m
+    try {
+        action()
+    } finally {
+        vm.selectMode = old
+    }
 }
 
 private fun checkerShader(cell: Int): BitmapShader {

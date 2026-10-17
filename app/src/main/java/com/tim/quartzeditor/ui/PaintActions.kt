@@ -69,6 +69,7 @@ fun EditorViewModel.strokeTo(x: Float, y: Float) {
 fun EditorViewModel.endStroke() {
     val s = stroke ?: return
     val d = doc ?: return
+    s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
     val change = s.commit()
     stroke = null
     if (change != null) {
