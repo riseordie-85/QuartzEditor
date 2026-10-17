@@ -79,8 +79,13 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .size(btn)
                     .clip(CircleShape)
-                    .background(if (vm.modAlt) Q.accent.copy(alpha = 0.6f) else if (on) Q.accent else Q.toolbar.copy(alpha = 0.85f))
-                    .border(if (vm.modLocked) 3.dp else 1.dp, if (vm.modLocked) Color.White else Q.text.copy(alpha = 0.35f), CircleShape)
+                    // Shift: filled with the accent color; Alt: the emblem itself turns the accent color
+                    .background(if (vm.modShift && !vm.modAlt) Q.accent else Q.toolbar.copy(alpha = 0.85f))
+                    .border(
+                        if (vm.modLocked) 3.dp else if (vm.modAlt) 2.dp else 1.dp,
+                        if (vm.modLocked) Color.White else if (vm.modAlt) Q.accent else Q.text.copy(alpha = 0.35f),
+                        CircleShape,
+                    )
                     .pointerInput(Unit) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -138,9 +143,16 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                     },
             ) {
-                // Shift (or resting): the emblem; slid out to Alt: says so
-                if (vm.modAlt) Text("Alt", color = Color.White, fontSize = 16.sp)
-                else Icon(QIcons.ModifierKey, contentDescription = "Shift", tint = if (on) Color.White else Q.text, modifier = Modifier.size(btn * 0.86f))
+                Icon(
+                    QIcons.ModifierKey,
+                    contentDescription = if (vm.modAlt) "Alt" else "Shift",
+                    tint = when {
+                        vm.modAlt -> Q.accent
+                        on -> Color.White
+                        else -> Q.text
+                    },
+                    modifier = Modifier.size(btn * 0.86f),
+                )
             }
             // The grip: drag to move the button
             Box(
