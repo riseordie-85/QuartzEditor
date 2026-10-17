@@ -10,7 +10,16 @@ from the build). Background removal's model is fetched by Google Play services i
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
   portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
-- **Open File Picker**: any image, or a `.qedit` project file.
+- **Open File Picker**: any image, a `.qedit` project file, or a **Photoshop file** (`.psd`, `.psb`).
+- **Photoshop files** open with their layers: pixel layers, folders at any depth (Pass Through or with
+  their own blend mode, open or closed), layer masks (and folder masks), vector masks, blend modes, opacity
+  and fill, clipping masks, hidden layers, transparency locks and names. Fill and shape layers are drawn
+  from their color or gradient and outline. Layer styles come across as ours: Drop Shadow, Inner Shadow,
+  Outer Glow, Stroke (color or gradient), Color Overlay, Gradient Overlay and Bevel & Emboss. Text and
+  smart objects come in as their pixels. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger
+  than 4096 px are shrunk to fit. Afterwards a short list says what didn't come across exactly
+  (adjustment layers aren't brought in yet; Inner Glow, Satin and Pattern Overlay effects; blend modes we
+  don't have, shown as the nearest one).
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
 
 ## Workspace
@@ -226,6 +235,9 @@ place, so the picture keeps its room; closing it brings the panels back as you l
   angle and altitude, gloss contour, highlight and shadow colors), Pattern Overlay (any pattern, size,
   opacity; it moves with the layer), Stroke (outside, inside, center; a color or a gradient), Drop Shadow, Inner
   Shadow, Outer Glow, Color Overlay.
+  Colors: tap the swatch or the rainbow wheel for the full picker (the layer changes as you drag), or
+  tap white, black or a rainbow color; below are your last 4 colors and the 4 main colors in the
+  picture.
   They follow the layer and never change its pixels. With effects on, Opacity fades everything and Fill
   fades only the layer's own pixels. Merge down, flatten and export bake them in. **Apply layer style**
   (Layers ⋮, next to Rasterize layer, or hold the layer) bakes them into the layer's own pixels and clears

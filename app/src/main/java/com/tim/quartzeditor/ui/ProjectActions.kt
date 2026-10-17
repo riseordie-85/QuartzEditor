@@ -79,8 +79,49 @@ fun EditorViewModel.openProjectFile(uri: Uri) {
     }
 }
 
-/** Opens whatever was picked in the file picker: a project or an image. */
+/** Opens a Photoshop file (.psd or .psb) as a new document with its layers. */
+fun EditorViewModel.openPsd(uri: Uri) {
+    runBusy("Opening Photoshop file…") {
+        val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
+        val result = withContext(Dispatchers.IO) {
+            // Read from a copy (the file is read in place, not loaded into memory all at once)
+            val tmp = java.io.File(ctx.cacheDir, "import.psd")
+            try {
+                ctx.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
+                    ?: throw IllegalArgumentException("Couldn't read that file.")
+                com.tim.quartzeditor.engine.PsdImport.read(tmp, name)
+            } finally {
+                tmp.delete()
+            }
+        }
+        setDocument(result.doc)
+        if (result.notes.isNotEmpty()) importReport = name to result.notes
+        else toast("Opened ${result.doc.layers.size} layers from Photoshop")
+    }
+}
+
+/** True when [uri] is a Photoshop file (by its name, type or first bytes). */
+internal fun EditorViewModel.isPsd(uri: Uri): Boolean {
+    val type = ctx.contentResolver.getType(uri).orEmpty().lowercase()
+    if ("photoshop" in type || type.endsWith("/psd")) return true
+    val name = com.tim.quartzeditor.data.Media.displayNameWithExtension(ctx, uri).lowercase()
+    if (name.endsWith(".psd") || name.endsWith(".psb")) return true
+    return try {
+        ctx.contentResolver.openInputStream(uri)?.use { s ->
+            val head = ByteArray(4)
+            s.read(head) == 4 && String(head, Charsets.ISO_8859_1) == "8BPS"
+        } ?: false
+    } catch (e: Exception) {
+        false
+    }
+}
+
+/** Opens whatever was picked in the file picker: a project, a Photoshop file or an image. */
 fun EditorViewModel.openPicked(uri: Uri) {
+    if (isPsd(uri)) {
+        openPsd(uri)
+        return
+    }
     val type = ctx.contentResolver.getType(uri).orEmpty()
     val isProject = uri.toString().endsWith(".${ProjectIO.EXTENSION}") ||
         (!type.startsWith("image/") && looksLikeProject(uri))
@@ -106,7 +147,7 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
     }
     if (uri == null) return false
     if (doc != null) saveToProjects(quiet = true)
-    openImage(uri)
+    if (isPsd(uri)) openPsd(uri) else openImage(uri)
     return true
 }
 

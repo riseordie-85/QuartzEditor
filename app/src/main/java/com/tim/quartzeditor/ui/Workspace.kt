@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -352,6 +354,20 @@ fun Workspace(vm: EditorViewModel) {
     RasterizeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
     if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
+    // After opening a Photoshop file: what didn't come across exactly
+    vm.importReport?.let { (name, notes) ->
+        AlertDialog(
+            onDismissRequest = { vm.importReport = null },
+            title = { Text("Opened \"$name\"") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text("${vm.doc?.layers?.size ?: 0} layers came across. A few things are different:", color = Q.textDim, fontSize = 14.sp)
+                    for (n in notes) Text("• $n", color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.importReport = null }) { Text("OK") } },
+        )
+    }
     if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
     if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
         editGuidesOpen = false

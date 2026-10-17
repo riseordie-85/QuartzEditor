@@ -108,7 +108,7 @@ fun StylePanel(vm: EditorViewModel) {
                         StyleFx.LONG_SHADOW -> {
                             val ls = st.longShadow
                             fun LayerStyle.lsh(change: LongShadowFx.() -> LongShadowFx): LayerStyle = copy(longShadow = longShadow.change().copy(on = true))
-                            FxColor(vm, ls.color) { c -> vm.setStyle("Long shadow color") { it.lsh { copy(color = c) } } }
+                            StyleColor(vm, ls.color, "Long shadow color") { c -> lsh { copy(color = c) } }
                             FxSlider(vm, "Opacity", ls.opacity, 0f..1f, "${(ls.opacity * 100).roundToInt()}%") { v -> lsh { copy(opacity = v) } }
                             FxSlider(vm, "Angle", ls.angle, -180f..180f, "${ls.angle.roundToInt()}°") { v -> lsh { copy(angle = v.roundToInt().toFloat()) } }
                             FxSlider(vm, "Length", ls.length, 1f..2000f, "${ls.length.roundToInt()} px") { v -> lsh { copy(length = v.roundToInt().toFloat()) } }
@@ -120,14 +120,14 @@ fun StylePanel(vm: EditorViewModel) {
                         StyleFx.INNER_SHADOW -> ShadowControls(vm, st.innerShadow, inner = true)
                         StyleFx.OUTER_GLOW -> {
                             val g = st.outerGlow
-                            FxColor(vm, g.color) { c -> vm.setStyle("Glow color") { it.copy(outerGlow = it.outerGlow.copy(color = c, on = true)) } }
+                            StyleColor(vm, g.color, "Glow color") { c -> copy(outerGlow = outerGlow.copy(color = c, on = true)) }
                             FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> copy(outerGlow = outerGlow.copy(opacity = v, on = true)) }
                             FxSlider(vm, "Size", g.size, 1f..150f, "${g.size.roundToInt()} px") { v -> copy(outerGlow = outerGlow.copy(size = v, on = true)) }
                             FxBlend(g.blend) { b -> vm.setStyle("Glow blend") { it.copy(outerGlow = it.outerGlow.copy(blend = b, on = true)) } }
                         }
                         StyleFx.COLOR_OVERLAY -> {
                             val o = st.colorOverlay
-                            FxColor(vm, o.color) { c -> vm.setStyle("Overlay color") { it.copy(colorOverlay = it.colorOverlay.copy(color = c, on = true)) } }
+                            StyleColor(vm, o.color, "Overlay color") { c -> copy(colorOverlay = colorOverlay.copy(color = c, on = true)) }
                             FxSlider(vm, "Opacity", o.opacity, 0f..1f, "${(o.opacity * 100).roundToInt()}%") { v -> copy(colorOverlay = colorOverlay.copy(opacity = v, on = true)) }
                             FxBlend(o.blend) { b -> vm.setStyle("Overlay blend") { it.copy(colorOverlay = it.colorOverlay.copy(blend = b, on = true)) } }
                         }
@@ -162,7 +162,7 @@ private fun StrokeControls(vm: EditorViewModel, st: LayerStyle) {
     if (s.useGradient) {
         GradientFxControls(vm, s.gradient, "Stroke gradient", showOpacity = false) { change -> copy(stroke = stroke.copy(gradient = stroke.gradient.change(), on = true)) }
     } else {
-        FxColor(vm, s.color) { c -> vm.setStyle("Stroke color") { it.copy(stroke = it.stroke.copy(color = c, on = true)) } }
+        StyleColor(vm, s.color, "Stroke color") { c -> copy(stroke = stroke.copy(color = c, on = true)) }
     }
     FxSlider(vm, "Size", s.size, 1f..100f, "${s.size.roundToInt()} px") { v -> copy(stroke = stroke.copy(size = v.roundToInt().toFloat(), on = true)) }
     FxSlider(vm, "Opacity", s.opacity, 0f..1f, "${(s.opacity * 100).roundToInt()}%") { v -> copy(stroke = stroke.copy(opacity = v, on = true)) }
@@ -199,11 +199,11 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
     FxSlider(vm, "Angle", b.angle, -180f..180f, "${b.angle.roundToInt()}°") { v -> bv { copy(angle = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Altitude", b.altitude, 0f..90f, "${b.altitude.roundToInt()}°") { v -> bv { copy(altitude = v.roundToInt().toFloat()) } }
     Text("Highlight", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
-    FxColor(vm, b.highlight) { c -> vm.setStyle("Bevel highlight") { it.bv { copy(highlight = c) } } }
+    StyleColor(vm, b.highlight, "Bevel highlight") { c -> bv { copy(highlight = c) } }
     FxSlider(vm, "Opacity", b.highlightOpacity, 0f..1f, "${(b.highlightOpacity * 100).roundToInt()}%") { v -> bv { copy(highlightOpacity = v) } }
     FxBlend(b.highlightBlend) { m -> vm.setStyle("Highlight blend") { it.bv { copy(highlightBlend = m) } } }
     Text("Shadow", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
-    FxColor(vm, b.shadow) { c -> vm.setStyle("Bevel shadow") { it.bv { copy(shadow = c) } } }
+    StyleColor(vm, b.shadow, "Bevel shadow") { c -> bv { copy(shadow = c) } }
     FxSlider(vm, "Opacity", b.shadowOpacity, 0f..1f, "${(b.shadowOpacity * 100).roundToInt()}%") { v -> bv { copy(shadowOpacity = v) } }
     FxBlend(b.shadowBlend) { m -> vm.setStyle("Shadow blend") { it.bv { copy(shadowBlend = m) } } }
 }
@@ -292,7 +292,7 @@ private fun PatternOverlayControls(vm: EditorViewModel, st: LayerStyle) {
 private fun ShadowControls(vm: EditorViewModel, sh: ShadowFx, inner: Boolean) {
     fun LayerStyle.set(change: ShadowFx.() -> ShadowFx): LayerStyle =
         if (inner) copy(innerShadow = innerShadow.change().copy(on = true)) else copy(dropShadow = dropShadow.change().copy(on = true))
-    FxColor(vm, sh.color) { c -> vm.setStyle("Shadow color") { it.set { copy(color = c) } } }
+    StyleColor(vm, sh.color, "Shadow color") { c -> set { copy(color = c) } }
     FxSlider(vm, "Opacity", sh.opacity, 0f..1f, "${(sh.opacity * 100).roundToInt()}%") { v -> set { copy(opacity = v) } }
     FxSlider(vm, "Angle", sh.angle, -180f..180f, "${sh.angle.roundToInt()}°") { v -> set { copy(angle = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Distance", sh.distance, 0f..200f, "${sh.distance.roundToInt()} px") { v -> set { copy(distance = v.roundToInt().toFloat()) } }
@@ -331,9 +331,32 @@ private fun FxSlider(
     )
 }
 
-/** Swatches: your foreground and background colors, recent colors, then the basics. */
+/**
+ * A layer style's color: a full color picker first, then white, black and the rainbow; your last
+ * few colors; and the main colors in the picture. [onLive] (with [onLiveDone]) follows the picker
+ * as it moves; without it the picker's color is used when it closes.
+ */
 @Composable
-internal fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
+internal fun FxColor(vm: EditorViewModel, current: Int, onLive: ((Int) -> Unit)? = null, onLiveDone: (() -> Unit)? = null, onPick: (Int) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    // The picture's main colors (worked out in the background, when this shows)
+    androidx.compose.runtime.LaunchedEffect(Unit) { vm.ensurePalette() }
+    if (picking) {
+        var last by remember { mutableStateOf<Int?>(null) }
+        ColorPickDialog(
+            vm,
+            initial = current,
+            title = "Color",
+            onLive = { c ->
+                last = c
+                onLive?.invoke(c)
+            },
+            onDone = {
+                picking = false
+                if (onLive != null) onLiveDone?.invoke() else last?.let(onPick)
+            },
+        )
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Color", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(48.dp))
         Box(
@@ -342,24 +365,58 @@ internal fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color(current))
                 .border(1.dp, Q.text.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .clickable { picking = true }
         )
         Spacer(Modifier.width(8.dp))
-        Text(
-            "Use foreground",
-            color = Q.text,
-            fontSize = 12.sp,
+        // The color picker: a rainbow wheel
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(Q.field)
-                .clickable { onPick(vm.foreground) }
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-        )
+                .size(28.dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(androidx.compose.ui.graphics.Brush.sweepGradient(PICKER_RAINBOW))
+                .clickable { picking = true },
+        ) {
+            Box(Modifier.size(12.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Q.panel))
+        }
+        Spacer(Modifier.width(6.dp))
+        Text("Pick…", color = Q.text, fontSize = 12.sp, modifier = Modifier.clickable { picking = true }.padding(4.dp))
     }
     Spacer(Modifier.height(6.dp))
-    val colors = (listOf(vm.foreground, vm.background) + vm.recentColors + BASIC_COLORS).distinct().take(18)
-    ColorDots(colors, current, onPick)
+    ColorDots(STYLE_BASICS, current, onPick)
+    val recent = vm.recentColors.take(4)
+    if (recent.isNotEmpty()) {
+        Text("Recent", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
+        ColorDots(recent, current, onPick)
+    }
+    val fromPicture = vm.imagePalette
+    if (fromPicture.isNotEmpty()) {
+        Text("From the picture", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
+        ColorDots(fromPicture, current, onPick)
+    }
     Spacer(Modifier.height(4.dp))
 }
+
+/** [FxColor] for a layer style: the picker changes the layer live, as one undo step. */
+@Composable
+private fun StyleColor(vm: EditorViewModel, current: Int, label: String, change: LayerStyle.(Int) -> LayerStyle) {
+    FxColor(
+        vm, current,
+        onLive = { c -> vm.setStyleLive { it.change(c) } },
+        onLiveDone = { vm.commitProps(label) },
+    ) { c -> vm.setStyle(label) { it.change(c) } }
+}
+
+/** White, black, then the rainbow. */
+private val STYLE_BASICS = listOf(
+    0xFFFFFFFF.toInt(), 0xFF000000.toInt(),
+    0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
+    0xFF00ACC1.toInt(), 0xFF1E88E5.toInt(), 0xFF5E35B1.toInt(), 0xFFD81B60.toInt(),
+)
+
+private val PICKER_RAINBOW = listOf(
+    Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00), Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000),
+)
 
 /** The gloss contours, each drawn as its curve. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

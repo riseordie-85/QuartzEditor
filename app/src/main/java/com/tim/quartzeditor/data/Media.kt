@@ -64,6 +64,15 @@ object Media {
         return (name ?: uri.lastPathSegment ?: "Image").substringBeforeLast('.').ifBlank { "Image" }
     }
 
+    /** The file's name with its extension (for telling what kind of file it is). */
+    fun displayNameWithExtension(context: Context, uri: Uri): String = try {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } catch (e: Exception) {
+        null
+    } ?: uri.lastPathSegment.orEmpty()
+
     /** Decodes an image upright, as editable pixels, no bigger than [maxPx] on its longest side. */
     fun decodeUpright(context: Context, uri: Uri, maxPx: Int): Bitmap {
         val source = ImageDecoder.createSource(context.contentResolver, uri)

@@ -158,12 +158,12 @@ fun LaunchScreen(vm: EditorViewModel) {
                         Spacer(Modifier.width(28.dp))
                         // Scrolls if a short screen (like an unfolded Fold) can't fit it all
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                            NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream")) })
+                            NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream", "application/x-photoshop", "application/photoshop", "application/psd")) })
                         }
                     }
                 } else {
                     Column(card.fillMaxWidth()) {
-                        NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream")) })
+                        NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream", "application/x-photoshop", "application/photoshop", "application/psd")) })
                     }
                     Spacer(Modifier.height(14.dp))
                     Column(card.fillMaxWidth().height(520.dp)) { RecentPane(vm, Modifier.fillMaxSize()) }

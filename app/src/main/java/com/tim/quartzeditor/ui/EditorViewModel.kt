@@ -396,6 +396,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** One-line notes at the bottom of the screen. */
     var message by mutableStateOf<String?>(null)
+    /** After opening a Photoshop file: its name and what didn't come across exactly (shown once). */
+    var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
+    /** The picture's main colors (for the layer style color swatches), and what they were worked out from. */
+    var imagePalette by mutableStateOf<List<Int>>(emptyList())
+    internal var paletteFrom: Pair<Doc, Int>? = null
     var messageId by mutableIntStateOf(0)
         private set
 
