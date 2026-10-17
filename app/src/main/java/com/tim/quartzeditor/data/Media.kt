@@ -37,6 +37,10 @@ object Media {
             putStringArray(android.content.ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.Images.Media.DATE_ADDED))
             putInt(android.content.ContentResolver.QUERY_ARG_SORT_DIRECTION, android.content.ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
             putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
+            // Only pictures Android can show (not Photoshop files and the like)
+            val types = listOf("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/gif", "image/bmp", "image/avif", "image/x-ms-bmp")
+            putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.Images.Media.MIME_TYPE} IN (${types.joinToString { "?" }})")
+            putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, types.toTypedArray())
         }
         try {
             context.contentResolver.query(collection, projection, args, null)?.use { c ->

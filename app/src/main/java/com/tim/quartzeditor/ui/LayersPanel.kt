@@ -1,6 +1,15 @@
 package com.tim.quartzeditor.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.scrollBy
+import kotlin.math.abs
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -215,80 +224,157 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
 
         // Up to four rows while Color or Properties is open; it gives up rows before the buttons
         val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 4)
-        Column(
+        // Only the rows on screen are built (big files have hundreds of layers), and each picture
+        // keeps its own place in the list (coming back from a smart layer's tab, it's where it was)
+        val listKey = System.identityHashCode(d)
+        val listState = remember(listKey) {
+            val (index, offset) = vm.layerListPlace[listKey] ?: (0 to 0)
+            androidx.compose.foundation.lazy.LazyListState(index, offset)
+        }
+        androidx.compose.runtime.DisposableEffect(listKey) {
+            onDispose { vm.layerListPlace[listKey] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+        }
+        // Where the finger is while a row is dragged (list pixels), and where on the row it held it
+        var fingerY by remember { mutableFloatStateOf(0f) }
+        var grabY by remember { mutableFloatStateOf(0f) }
+        var listH by remember { mutableIntStateOf(0) }
+        val handlePx = with(density) { 48.dp.toPx() }
+        val edgePx = with(density) { 56.dp.toPx() }
+        // Dragging near the top or bottom scrolls the list (faster the closer to the edge)
+        androidx.compose.runtime.LaunchedEffect(dragId) {
+            if (dragId == null) return@LaunchedEffect
+            while (true) {
+                androidx.compose.runtime.withFrameNanos { }
+                val y = fingerY
+                val speed = when {
+                    y < edgePx -> -((edgePx - y) / edgePx).coerceIn(0f, 1.5f) * rowPx * 0.35f
+                    y > listH - edgePx -> ((y - (listH - edgePx)) / edgePx).coerceIn(0f, 1.5f) * rowPx * 0.35f
+                    else -> 0f
+                }
+                if (speed != 0f) {
+                    val moved = listState.scrollBy(speed)
+                    dragOffset += moved
+                }
+            }
+        }
+        fun drop() {
+            val steps = (dragOffset / rowPx).roundToInt()
+            val id = dragId
+            val doc = vm.doc
+            val dragged = id?.let { doc?.layer(it) }
+            val folder = dropFolderRef.value
+            dropFolderRef.value = null
+            if (doc != null && dragged != null && folder != null) {
+                vm.moveIntoFolder(dragged.id, folder)
+            } else if (doc != null && dragged != null && steps != 0) {
+                // Rows as they are now
+                val rows = ArrayList<Layer>()
+                fun add(parent: Long) {
+                    for (x in doc.children(parent).asReversed()) {
+                        rows.add(x)
+                        if (x.isGroup && !x.collapsed) add(x.id)
+                    }
+                }
+                add(0L)
+                val from = rows.indexOf(dragged)
+                val rest = rows.filter { it !== dragged && !doc.isInside(it, dragged) }
+                val inside = rows.size - 1 - rest.size
+                val target = (if (steps > 0) (from + steps - inside).coerceAtLeast(from) else from + steps).coerceIn(0, rest.size)
+                // The row that ends up just above it decides where it goes
+                vm.moveLayerUnder(dragged.id, if (target == 0) null else rest[target - 1].id)
+            }
+            dragId = null
+            dragOffset = 0f
+        }
+        Box(
             Modifier
                 .fillMaxWidth()
                 .then(listMod)
                 .clip(RoundedCornerShape(10.dp))
-                .verticalScroll(rememberScrollState())
+                .onSizeChanged { listH = it.height }
+                // Dragging a row by its handle (the right end): watched here, ahead of the list's own
+                // scrolling, so the drag carries on even when the row scrolls out of view
+                .pointerInput(listKey) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        if (down.position.x < size.width - handlePx) return@awaitEachGesture
+                        val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { down.position.y >= it.offset && down.position.y < it.offset + it.size }
+                            ?: return@awaitEachGesture
+                        val id = item.key as? Long ?: return@awaitEachGesture
+                        var started = false
+                        var lastY = down.position.y
+                        try {
+                            while (true) {
+                                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!c.pressed) break
+                                if (!started && abs(c.position.y - down.position.y) > viewConfiguration.touchSlop) {
+                                    started = true
+                                    dragId = id
+                                    dragOffset = 0f
+                                    grabY = down.position.y - item.offset
+                                    lastY = c.position.y
+                                }
+                                if (started) {
+                                    dragOffset += c.position.y - lastY
+                                    lastY = c.position.y
+                                    fingerY = c.position.y
+                                    c.consume()
+                                }
+                            }
+                            if (started) drop()
+                        } finally {
+                            if (started && dragId != null) {
+                                dragId = null
+                                dragOffset = 0f
+                            }
+                        }
+                    }
+                },
         ) {
-            shown.forEachIndexed { i, l ->
-                val isDragged = l.id == dragId
-                val shift = when {
-                    dragFrom < 0 || isDragged -> 0f
-                    dragFrom < dragTo && i in (dragFrom + 1)..dragTo -> -rowPx
-                    dragFrom > dragTo && i in dragTo until dragFrom -> rowPx
-                    else -> 0f
+            androidx.compose.foundation.lazy.LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+                items(shown.size, key = { shown[it].id }) { i ->
+                    val l = shown[i]
+                    val isDragged = l.id == dragId
+                    val shift = when {
+                        dragFrom < 0 || isDragged -> 0f
+                        dragFrom < dragTo && i in (dragFrom + 1)..dragTo -> -rowPx
+                        dragFrom > dragTo && i in dragTo until dragFrom -> rowPx
+                        else -> 0f
+                    }
+                    LayerRow(
+                        vm = vm,
+                        layer = l,
+                        selected = l.id == d.activeId,
+                        maskSelected = l.id == d.activeId && d.editMask,
+                        picked = picked.size > 1 && l.id in picked,
+                        dropTarget = l.id == intoFolder,
+                        onSavePreset = { presetFor = l },
+                        height = rowH,
+                        modifier = Modifier
+                            // The dragged row follows the finger above the list (drawn below); its place stays empty
+                            .graphicsLayer { alpha = if (isDragged) 0f else 1f }
+                            .offset { IntOffset(0, shift.roundToInt()) },
+                        onRename = { renaming = l },
+                        handle = Modifier,
+                    )
                 }
-                val y = if (isDragged) dragOffset else shift
+            }
+            // The row being dragged, under the finger
+            val dragged = shown.getOrNull(dragFrom)
+            if (dragged != null) {
                 LayerRow(
                     vm = vm,
-                    layer = l,
-                    selected = l.id == d.activeId,
-                    maskSelected = l.id == d.activeId && d.editMask,
-                    picked = picked.size > 1 && l.id in picked,
-                    dropTarget = l.id == intoFolder,
-                    onSavePreset = { presetFor = l },
+                    layer = dragged,
+                    selected = dragged.id == d.activeId,
+                    maskSelected = false,
                     height = rowH,
                     modifier = Modifier
-                        .zIndex(if (isDragged) 1f else 0f)
-                        .offset { IntOffset(0, y.roundToInt()) },
-                    onRename = { renaming = l },
-                    handle = Modifier.pointerInput(l.id) {
-                        detectDragGestures(
-                            onDragStart = {
-                                dragId = l.id
-                                dragOffset = 0f
-                            },
-                            onDragEnd = {
-                                val steps = (dragOffset / rowPx).roundToInt()
-                                val id = dragId
-                                val doc = vm.doc
-                                val dragged = id?.let { doc?.layer(it) }
-                                val folder = dropFolderRef.value
-                                dropFolderRef.value = null
-                                if (doc != null && dragged != null && folder != null) {
-                                    vm.moveIntoFolder(dragged.id, folder)
-                                } else if (doc != null && dragged != null && steps != 0) {
-                                    // Rows as they are now (this lambda may be older than the panel)
-                                    val rows = ArrayList<Layer>()
-                                    fun add(parent: Long) {
-                                        for (x in doc.children(parent).asReversed()) {
-                                            rows.add(x)
-                                            if (x.isGroup && !x.collapsed) add(x.id)
-                                        }
-                                    }
-                                    add(0L)
-                                    val from = rows.indexOf(dragged)
-                                    val rest = rows.filter { it !== dragged && !doc.isInside(it, dragged) }
-                                    val inside = rows.size - 1 - rest.size
-                                    val target = (if (steps > 0) (from + steps - inside).coerceAtLeast(from) else from + steps).coerceIn(0, rest.size)
-                                    // The row that ends up just above it decides where it goes
-                                    vm.moveLayerUnder(dragged.id, if (target == 0) null else rest[target - 1].id)
-                                }
-                                dragId = null
-                                dragOffset = 0f
-                            },
-                            onDragCancel = {
-                                dragId = null
-                                dragOffset = 0f
-                            },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                dragOffset += amount.y
-                            },
-                        )
-                    },
+                        .zIndex(2f)
+                        .offset { IntOffset(0, (fingerY - grabY).roundToInt()) }
+                        .graphicsLayer { shadowElevation = 12f },
+                    onRename = {},
+                    handle = Modifier,
                 )
             }
         }

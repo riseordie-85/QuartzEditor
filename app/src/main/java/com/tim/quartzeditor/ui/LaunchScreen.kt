@@ -108,6 +108,8 @@ private fun saveSizePresets(prefs: android.content.SharedPreferences, list: List
 fun LaunchScreen(vm: EditorViewModel) {
     var settingsOpen by remember { mutableStateOf(false) }
     if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
+    // Why the app closed last time, if it closed unexpectedly
+    LastExitDialog()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let { vm.openPicked(it) }
     }

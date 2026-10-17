@@ -400,6 +400,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
     /** The picture's main colors (for the layer style color swatches), and what they were worked out from. */
     var imagePalette by mutableStateOf<List<Int>>(emptyList())
+    /** Where each picture's Layers list was scrolled to (by picture), so coming back keeps the place. */
+    internal val layerListPlace = HashMap<Int, Pair<Int, Int>>()
     internal var paletteFrom: Pair<Int, Int>? = null
     var messageId by mutableIntStateOf(0)
         private set

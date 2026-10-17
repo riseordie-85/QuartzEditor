@@ -6,7 +6,7 @@ A Photoshop-light photo editor for Android 13+, built from Quartz Gallery's edit
 from the build). Background removal's model is fetched by Google Play services in its own process.
 
 ## Launch screen
-- **Recent Photos in Gallery** (newest first) or **Projects** (your saved work, with all layers). Tap to open.
+- **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files) or **Projects** (your saved work, with all layers). Tap to open.
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
   portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
@@ -28,6 +28,9 @@ from the build). Background removal's model is fetched by Google Play services i
   (adjustment layers aren't brought in yet; Inner Glow, Satin and Pattern Overlay effects; blend modes we
   don't have, shown as the nearest one).
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
+
+- If the app closed unexpectedly, the next launch says why (a crash, or Android closing it for memory),
+  with **Copy report** for sending the details.
 
 ## Workspace
 Tools on the left, the picture in the middle, panels on the right. On phones the panels slide in from the
@@ -203,7 +206,9 @@ Only **Color**, **Properties** and **Layers** live in the column.
   - Blend modes (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
   - Lock transparent pixels and lock the whole layer.
-  - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder. **Long-press** a layer
+  - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder (drag near the top or
+    bottom of the list and it scrolls; only the rows on screen are built, so hundreds of layers stay
+    quick, and each picture keeps its place in the list when you come back from a smart layer's tab). **Long-press** a layer
     for Rename, Duplicate, Merge down, Clip to layer below, and pages for **Layer style** (Copy / Paste,
     Save as preset, Apply / Clear) and **Convert** (smart layer, Edit contents, Rasterize).
   - **Pick several layers**: swipe right on a row (again to take it out). Move, Transform, Delete, put in a

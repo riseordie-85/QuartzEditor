@@ -177,6 +177,8 @@ object PsdImport {
             }
         }
 
+        /** Smart objects' contents already read, by their file's id. */
+        val contentsCache = HashMap<String, Doc>()
         var textAsPixels = 0
         var mixedText = 0
         val smartFromPixels = ArrayList<String>()
@@ -268,12 +270,15 @@ object PsdImport {
             fun quadFrom(v: Any?): FloatArray? = (v as? List<*>)?.mapNotNull { (it as? Number)?.toFloat() }?.takeIf { it.size == 8 }?.toFloatArray()
             val quad = quadFrom(so?.get("nonAffineTransform")) ?: quadFrom(so?.get("Trnf")) ?: pl.placedQuad?.map { it.toFloat() }?.toFloatArray()
             // Smart filters are in the pixels but not in the contents
-            val filtered = (so?.get("filterFX") as? Map<*, *>)?.let { fx -> fx["enab"] != false } ?: false
-            // A warp bends the contents past the plain corners: the pixels reach elsewhere
+            val filtered = (so?.get("filterFX") as? Map<*, *>)?.let { fx ->
+                fx["enab"] != false && (fx["filterFXList"] as? List<*>)?.isNotEmpty() == true
+            } ?: false
+            // A warp bends the contents past their plain corners: the pixels reach outside them
+            // (inside is fine: contents often have see-through space around them)
             val bent = quad != null && pl.width > 0 && run {
                 val xs = floatArrayOf(quad[0], quad[2], quad[4], quad[6])
                 val ys = floatArrayOf(quad[1], quad[3], quad[5], quad[7])
-                abs(xs.min() - pl.left) > 3 || abs(xs.max() - pl.right) > 3 || abs(ys.min() - pl.top) > 3 || abs(ys.max() - pl.bottom) > 3
+                pl.left < xs.min() - 3 || pl.right > xs.max() + 3 || pl.top < ys.min() - 3 || pl.bottom > ys.max() + 3
             }
             val linked = id?.let { key -> f.linked[key] ?: f.linked.entries.firstOrNull { it.key.trim('\u0000', ' ') == key }?.value }
             var why: String? = when {
@@ -287,8 +292,9 @@ object PsdImport {
                 // The contents' own width ÷ height, as Photoshop has it
                 val size = so?.get("Sz  ") as? Map<*, *>
                 val expect = (size?.get("Wdth") as? Number)?.toFloat()?.let { w -> (size["Hght"] as? Number)?.toFloat()?.takeIf { it > 0f }?.let { w / it } }
-                contents = try {
-                    embedded(linked, expect)
+                // The same smart object used more than once: read it once, each copy its own document
+                contents = contentsCache[linked.id]?.shallowCopy() ?: try {
+                    embedded(linked, expect)?.also { contentsCache[linked.id] = it }
                 } catch (e: OutOfMemoryError) {
                     null
                 } catch (e: Exception) {
