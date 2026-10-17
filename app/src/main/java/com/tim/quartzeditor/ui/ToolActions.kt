@@ -651,6 +651,13 @@ internal fun EditorViewModel.cropTo(r: Rect) {
             // Shapes reaching far past the old canvas: draw the rest
             if (clipped) redrawVectorNow(l)
         }
+        // Guides stay where they were on the picture (those cut off go)
+        val gx = d.guidesX.map { it - r.left }.filter { it in 0f..w.toFloat() }
+        val gy = d.guidesY.map { it - r.top }.filter { it in 0f..h.toFloat() }
+        d.guidesX.clear()
+        d.guidesX.addAll(gx)
+        d.guidesY.clear()
+        d.guidesY.addAll(gy)
         d.selection = null
     }
     fit()

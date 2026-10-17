@@ -1,0 +1,295 @@
+package com.tim.quartzeditor.ui
+
+import android.graphics.Paint
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
+import kotlin.math.roundToInt
+
+// Rulers along the top and left of the picture, in canvas pixels. Drag out of one to make a guide
+// (top ruler: a horizontal guide; left ruler: a vertical one); things snap to guides. With the
+// Move tool, drag a guide to move it, or drag it off the picture to remove it.
+
+val RULER = 20.dp
+
+@Composable
+fun Rulers(vm: EditorViewModel, modifier: Modifier = Modifier) {
+    if (!vm.showRulers || vm.doc == null) return
+    val density = LocalDensity.current
+    val thick = with(density) { RULER.toPx() }
+    Box(modifier.fillMaxSize()) {
+        // Top: horizontal guides come out of it
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(RULER)
+                .background(Q.toolbar.copy(alpha = 0.94f))
+                .pointerInput(Unit) { guideDrag(vm, vertical = false, baseX = 0f, baseY = 0f, thick = thick) },
+        ) { drawRuler(vm, horizontal = true, offsetPx = 0f, startPx = thick) }
+        // Left: vertical guides
+        Canvas(
+            Modifier
+                .padding(top = RULER)
+                .width(RULER)
+                .fillMaxHeight()
+                .background(Q.toolbar.copy(alpha = 0.94f))
+                .pointerInput(Unit) { guideDrag(vm, vertical = true, baseX = 0f, baseY = thick, thick = thick) },
+        ) { drawRuler(vm, horizontal = false, offsetPx = thick, startPx = 0f) }
+        // The corner
+        Box(Modifier.size(RULER).background(Q.toolbar))
+    }
+}
+
+/** Dragging out of a ruler: a new guide follows the finger and is placed where it's let go on the picture. */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.guideDrag(vm: EditorViewModel, vertical: Boolean, baseX: Float, baseY: Float, thick: Float) {
+    var last = Offset.Zero
+    fun canvasPos(p: Offset): Float = if (vertical) (p.x + baseX - vm.offsetX) / vm.scale else (p.y + baseY - vm.offsetY) / vm.scale
+    detectDragGestures(
+        onDragStart = { p ->
+            last = p
+            vm.guideDraft = vertical to canvasPos(p).roundToInt().toFloat()
+        },
+        onDragEnd = {
+            val d = vm.doc
+            val draft = vm.guideDraft
+            vm.guideDraft = null
+            // Let go back over the ruler: no guide
+            val overRuler = if (vertical) last.x + baseX < thick else last.y + baseY < thick
+            if (d != null && draft != null && !overRuler) vm.addGuide(draft.first, draft.second)
+        },
+        onDragCancel = { vm.guideDraft = null },
+    ) { change, _ ->
+        change.consume()
+        last = change.position
+        var v = canvasPos(change.position)
+        // Snaps to the canvas's edges and middle
+        val d = vm.doc
+        if (d != null && vm.snapOn) {
+            val size = if (vertical) d.width.toFloat() else d.height.toFloat()
+            val r = 10.dp.toPx() / vm.scale
+            for (t in listOf(0f, size / 2f, size)) if (kotlin.math.abs(v - t) <= r) v = t
+        }
+        vm.guideDraft = vertical to v.roundToInt().toFloat()
+    }
+}
+
+/** Tick marks and numbers (canvas pixels) along a ruler. */
+private fun DrawScope.drawRuler(vm: EditorViewModel, horizontal: Boolean, offsetPx: Float, startPx: Float) {
+    val s = vm.scale
+    if (s <= 0f) return
+    val origin = if (horizontal) vm.offsetX else vm.offsetY - offsetPx
+    val length = if (horizontal) size.width else size.height
+    // A labeled tick every 1, 2 or 5 × 10ⁿ canvas pixels, at least ~64 dp apart
+    val minGap = 64.dp.toPx() / s
+    val pow10 = 10.0.pow(floor(log10(minGap.toDouble()))).toFloat()
+    val step = listOf(1f, 2f, 5f, 10f).map { it * pow10 }.first { it >= minGap }
+    val minor = step / (if (step * s / 10f >= 5.dp.toPx()) 10f else if (step * s / 5f >= 5.dp.toPx()) 5f else 2f)
+    val color = Q.textDim
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Q.text.toArgb()
+        textSize = 9.sp.toPx()
+    }
+    val first = floor((startPx - origin) / s / minor).toLong()
+    val last = ceil((length - origin) / s / minor).toLong()
+    if (last - first > 4000) return
+    val thick = if (horizontal) size.height else size.width
+    for (i in first..last) {
+        val v = i * minor
+        val p = origin + v * s
+        if (p < startPx) continue
+        val major = kotlin.math.abs(v / step - (v / step).roundToInt()) < 1e-3f
+        val tick = if (major) thick * 0.6f else thick * 0.25f
+        if (horizontal) drawLine(color, Offset(p, thick - tick), Offset(p, thick), 1f)
+        else drawLine(color, Offset(thick - tick, p), Offset(thick, p), 1f)
+        if (major) {
+            val label = v.roundToInt().toString()
+            drawContext.canvas.nativeCanvas.apply {
+                if (horizontal) {
+                    drawText(label, p + 2.dp.toPx(), 9.sp.toPx(), text)
+                } else {
+                    save()
+                    rotate(-90f, 9.sp.toPx(), p - 2.dp.toPx())
+                    drawText(label, 9.sp.toPx(), p - 2.dp.toPx(), text)
+                    restore()
+                }
+            }
+        }
+    }
+    // Where the guide being dragged is
+    vm.guideDraft?.let { (vertical, at) ->
+        if (vertical == !horizontal) {
+            val p = origin + at * s
+            drawLine(androidx.compose.ui.graphics.Color(GUIDE_COLOR), if (horizontal) Offset(p, 0f) else Offset(0f, p), if (horizontal) Offset(p, thick) else Offset(thick, p), 2f)
+        }
+    }
+}
+
+/** Guides' color (Photoshop's cyan). */
+const val GUIDE_COLOR = 0xFF00E5FF
+
+/** Adds a guide (vertical at x, or horizontal at y), as one undo step. */
+fun EditorViewModel.addGuide(vertical: Boolean, at: Float) {
+    val d = doc ?: return
+    val size = if (vertical) d.width else d.height
+    if (at < 0f || at > size) return
+    stackEdit("New guide") {
+        if (vertical) d.guidesX.add(at) else d.guidesY.add(at)
+    }
+    if (!showGuides) {
+        showGuides = true
+        prefs.edit().putBoolean("guides", true).apply()
+    }
+}
+
+/** Moves guide [index] (or removes it when [to] is off the canvas). */
+fun EditorViewModel.moveGuide(vertical: Boolean, index: Int, to: Float) {
+    val d = doc ?: return
+    val list = if (vertical) d.guidesX else d.guidesY
+    if (index !in list.indices) return
+    val size = if (vertical) d.width else d.height
+    if (to < 0f || to > size) {
+        stackEdit("Remove guide") { list.removeAt(index) }
+        return
+    }
+    if (list[index] == to) return
+    stackEdit("Move guide") { list[index] = to }
+}
+
+fun EditorViewModel.clearGuides() {
+    val d = doc ?: return
+    if (d.guidesX.isEmpty() && d.guidesY.isEmpty()) return
+    stackEdit("Clear guides") {
+        d.guidesX.clear()
+        d.guidesY.clear()
+    }
+}
+
+fun EditorViewModel.toggleRulers() {
+    showRulers = !showRulers
+    prefs.edit().putBoolean("rulers", showRulers).apply()
+}
+
+fun EditorViewModel.toggleGuides() {
+    showGuides = !showGuides
+    prefs.edit().putBoolean("guides", showGuides).apply()
+}
+
+fun EditorViewModel.toggleGuidesLocked() {
+    guidesLocked = !guidesLocked
+    prefs.edit().putBoolean("guidesLocked", guidesLocked).apply()
+    toast(if (guidesLocked) "Guides locked" else "Guides unlocked")
+}
+
+/** Draws the guides (and one being dragged) over the canvas (screen space). */
+fun DrawScope.drawGuides(vm: EditorViewModel, s: Float, ox: Float, oy: Float, docW: Int, docH: Int, moving: Pair<Boolean, Int>?) {
+    val d = vm.doc ?: return
+    val c = androidx.compose.ui.graphics.Color(GUIDE_COLOR)
+    val w = 1.dp.toPx()
+    val left = ox
+    val top = oy
+    val right = ox + docW * s
+    val bottom = oy + docH * s
+    if (vm.showGuides) {
+        d.guidesX.forEachIndexed { i, x ->
+            if (moving?.first == true && moving.second == i) return@forEachIndexed
+            val p = floor(ox + x * s) + 0.5f
+            drawLine(c, Offset(p, top), Offset(p, bottom), w)
+        }
+        d.guidesY.forEachIndexed { i, y ->
+            if (moving?.first == false && moving.second == i) return@forEachIndexed
+            val p = floor(oy + y * s) + 0.5f
+            drawLine(c, Offset(left, p), Offset(right, p), w)
+        }
+    }
+    vm.guideDraft?.let { (vertical, at) ->
+        val p = floor((if (vertical) ox else oy) + at * s) + 0.5f
+        if (vertical) drawLine(c, Offset(p, 0f), Offset(p, size.height), w * 1.5f)
+        else drawLine(c, Offset(0f, p), Offset(size.width, p), w * 1.5f)
+        val label = "${at.roundToInt()} px"
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 12.sp.toPx()
+            setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+        }
+        drawContext.canvas.nativeCanvas.drawText(label, if (vertical) p + 6.dp.toPx() else 30.dp.toPx(), if (vertical) 40.dp.toPx() else p - 6.dp.toPx(), paint)
+    }
+}
+
+/** New guide at a typed position. */
+@Composable
+fun NewGuideDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
+    val d = vm.doc ?: return
+    var vertical by remember { mutableStateOf(true) }
+    var at by remember { mutableStateOf("${d.width / 2}") }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(max = 360.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Q.panel)
+                .padding(18.dp),
+        ) {
+            Text("New guide", color = Q.text, fontSize = 18.sp)
+            Spacer(Modifier.height(8.dp))
+            ChipRow(listOf("Vertical", "Horizontal"), if (vertical) 0 else 1) { i ->
+                vertical = i == 0
+                at = "${(if (vertical) d.width else d.height) / 2}"
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (vertical) "From the left" else "From the top", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                PanelField(at, onCommit = { at = it }, numeric = true, modifier = Modifier.width(90.dp))
+                Text(" px", color = Q.textDim, fontSize = 13.sp)
+            }
+            Text("Or a percent, like 50%", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(14.dp))
+            Row {
+                Spacer(Modifier.weight(1f))
+                SmallButton("Cancel") { onDismiss() }
+                Spacer(Modifier.width(8.dp))
+                SmallButton("Add", primary = true) {
+                    val size = if (vertical) d.width else d.height
+                    val t = at.trim()
+                    val v = if (t.endsWith("%")) t.dropLast(1).trim().toFloatOrNull()?.let { it / 100f * size } else t.toFloatOrNull()
+                    if (v != null && v.isFinite()) vm.addGuide(vertical, v.roundToInt().toFloat().coerceIn(0f, size.toFloat()))
+                    onDismiss()
+                }
+            }
+        }
+    }
+}

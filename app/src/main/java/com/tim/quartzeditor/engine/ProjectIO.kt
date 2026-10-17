@@ -154,6 +154,8 @@ object ProjectIO {
             .put("activeId", doc.activeId)
             .put("canvasColor", canvasColor)
             .put("layers", layers)
+            .put("guidesX", JSONArray().also { a -> doc.guidesX.forEach { a.put(it.toDouble()) } })
+            .put("guidesY", JSONArray().also { a -> doc.guidesY.forEach { a.put(it.toDouble()) } })
         zip.putNextEntry(ZipEntry("${prefix}doc.json"))
         zip.write(json.toString(1).toByteArray())
         zip.closeEntry()
@@ -254,6 +256,8 @@ object ProjectIO {
         }
         doc.reserveIds(maxId)
         doc.activeId = j.optLong("activeId", doc.layers.lastOrNull()?.id ?: -1L)
+        j.optJSONArray("guidesX")?.let { a -> for (i in 0 until a.length()) doc.guidesX.add(a.optDouble(i).toFloat()) }
+        j.optJSONArray("guidesY")?.let { a -> for (i in 0 until a.length()) doc.guidesY.add(a.optDouble(i).toFloat()) }
         return doc
     }
 

@@ -66,10 +66,22 @@ fun EditorViewModel.nearestGridLine(v: Float): Float {
 
 /** Snaps a canvas point to the grid's crossings (each axis on its own, within [radius]). */
 fun EditorViewModel.snapPoint(x: Float, y: Float, radius: Float): Pair<Float, Float> {
-    if (!snapsToGrid || radius <= 0f) return x to y
-    val gx = nearestGridLine(x)
-    val gy = nearestGridLine(y)
-    return (if (abs(gx - x) <= radius) gx else x) to (if (abs(gy - y) <= radius) gy else y)
+    if (radius <= 0f) return x to y
+    var rx = x
+    var ry = y
+    if (snapsToGrid) {
+        val gx = nearestGridLine(x)
+        val gy = nearestGridLine(y)
+        if (abs(gx - x) <= radius) rx = gx
+        if (abs(gy - y) <= radius) ry = gy
+    }
+    // Guides win over the grid
+    val d = doc
+    if (d != null && snapOn && showGuides) {
+        nearestGuide(d.guidesX, x, radius)?.let { rx = it }
+        nearestGuide(d.guidesY, y, radius)?.let { ry = it }
+    }
+    return rx to ry
 }
 
 /** Draws the grid over the canvas (screen space; [s] scale, ([ox], [oy]) where the canvas starts). */

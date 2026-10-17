@@ -16,8 +16,9 @@ fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Flo
         clearSnapGuides()
         return dx to dy
     }
-    fun axis(lo: Float, hi: Float, size: Float, delta: Float): Pair<Float, Float?> {
-        val canvasTargets = if (snapOn) listOf(0f, size / 2f, size) else emptyList()
+    fun axis(lo: Float, hi: Float, size: Float, delta: Float, guides: List<Float>): Pair<Float, Float?> {
+        // The canvas's edges and middle, and your guides
+        val canvasTargets = if (snapOn) listOf(0f, size / 2f, size) + (if (showGuides) guides else emptyList()) else emptyList()
         var best = 0f
         var bestD = radius
         var at: Float? = null
@@ -35,8 +36,8 @@ fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Flo
         }
         return (delta + best) to at
     }
-    val (sx, gx) = axis(content.left, content.right, d.width.toFloat(), dx)
-    val (sy, gy) = axis(content.top, content.bottom, d.height.toFloat(), dy)
+    val (sx, gx) = axis(content.left, content.right, d.width.toFloat(), dx, d.guidesX)
+    val (sy, gy) = axis(content.top, content.bottom, d.height.toFloat(), dy, d.guidesY)
     snapGuidesX = listOfNotNull(gx)
     snapGuidesY = listOfNotNull(gy)
     return sx to sy
@@ -45,4 +46,18 @@ fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Flo
 fun EditorViewModel.clearSnapGuides() {
     if (snapGuidesX.isNotEmpty()) snapGuidesX = emptyList()
     if (snapGuidesY.isNotEmpty()) snapGuidesY = emptyList()
+}
+
+/** The guide nearest [v] within [radius] (canvas pixels), or null. */
+internal fun nearestGuide(guides: List<Float>, v: Float, radius: Float): Float? {
+    var best: Float? = null
+    var bestD = radius
+    for (g in guides) {
+        val dd = abs(g - v)
+        if (dd <= bestD) {
+            bestD = dd
+            best = g
+        }
+    }
+    return best
 }

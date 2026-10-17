@@ -58,7 +58,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, GUIDE, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -110,6 +110,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     var canvasMenuAt by remember { mutableStateOf<Offset?>(null) }
     var loupe by remember { mutableStateOf<Pair<Offset, Int?>?>(null) }
     var cursor by remember { mutableStateOf<Offset?>(null) }
+    // A guide being moved with the Move tool: (vertical, which one)
+    var movingGuide by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
     val checker = remember { checkerShader(with(density) { 8.dp.toPx() }.roundToInt().coerceAtLeast(4)) }
 
     fun animateFit() {
@@ -209,6 +211,27 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             penHit?.let {
                                 vm.penEditBegin(it)
                                 mode = GestureMode.PEN_EDIT
+                            }
+                        }
+                        // Move tool on a guide: drag it (off the picture removes it)
+                        var guidePos = 0f
+                        if (tool == Tool.MOVE && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
+                            val d0 = vm.doc
+                            val r = 14.dp.toPx()
+                            var best = r
+                            if (d0 != null) {
+                                d0.guidesX.forEachIndexed { i, gx ->
+                                    val dd = abs(gx * vm.scale + vm.offsetX - start.x)
+                                    if (dd < best) { best = dd; movingGuide = true to i; guidePos = gx }
+                                }
+                                d0.guidesY.forEachIndexed { i, gy ->
+                                    val dd = abs(gy * vm.scale + vm.offsetY - start.y)
+                                    if (dd < best) { best = dd; movingGuide = false to i; guidePos = gy }
+                                }
+                            }
+                            movingGuide?.let { (v, _) ->
+                                mode = GestureMode.GUIDE
+                                vm.guideDraft = v to guidePos
                             }
                         }
                         // Lasso outline being drawn
@@ -315,6 +338,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     }
                                     GestureMode.WARP -> {
                                         vm.warpCancelGesture()
+                                        mode = GestureMode.NAV
+                                    }
+                                    GestureMode.GUIDE -> {
+                                        vm.guideDraft = null
+                                        movingGuide = null
                                         mode = GestureMode.NAV
                                     }
                                     else -> mode = GestureMode.NAV
@@ -528,6 +556,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.warpMove(cx, cy)
                                     }
                                 }
+                                GestureMode.GUIDE -> if (main != null) {
+                                    val g = movingGuide
+                                    if (g != null) {
+                                        val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        var v = if (g.first) cx else cy
+                                        val d0 = vm.doc
+                                        if (d0 != null && vm.snapOn) {
+                                            val size = if (g.first) d0.width.toFloat() else d0.height.toFloat()
+                                            val r = 10.dp.toPx() / vm.scale
+                                            for (t in listOf(0f, size / 2f, size)) if (abs(v - t) <= r) v = t
+                                        }
+                                        guidePos = v.roundToInt().toFloat()
+                                        vm.guideDraft = g.first to guidePos
+                                    }
+                                }
                                 GestureMode.BLOCKED, GestureMode.DONE -> Unit
                             }
                             ev.changes.forEach { it.consume() }
@@ -584,6 +627,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
                             GestureMode.GRADIENT -> vm.endGradient()
                             GestureMode.WARP -> vm.warpUp(warpMoved)
+                            GestureMode.GUIDE -> {
+                                val g = movingGuide
+                                vm.guideDraft = null
+                                movingGuide = null
+                                if (g != null) vm.moveGuide(g.first, g.second, guidePos)
+                            }
                             GestureMode.SHAPING -> vm.finishShape()
                             GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale) }
                             GestureMode.PEN_EDIT -> {
@@ -636,6 +685,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
             // Alignment grid
             drawGrid(vm, s, ox, oy, d.width, d.height)
+            // Guides
+            @Suppress("UNUSED_VARIABLE") val gv = d.guidesX.size + d.guidesY.size
+            drawGuides(vm, s, ox, oy, d.width, d.height, movingGuide)
 
             // Crop box: dim what's cut off, thirds, handles
             vm.cropBox?.let { b ->

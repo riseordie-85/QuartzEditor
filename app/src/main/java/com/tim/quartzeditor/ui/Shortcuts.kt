@@ -106,6 +106,9 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             KeyEvent.KEYCODE_0 -> fit()
             // Ctrl+' shows or hides the grid (like Photoshop)
             KeyEvent.KEYCODE_APOSTROPHE -> toggleGrid()
+            // Ctrl+R rulers, Ctrl+; guides (like Photoshop)
+            KeyEvent.KEYCODE_R -> toggleRulers()
+            KeyEvent.KEYCODE_SEMICOLON -> if (alt) toggleGuidesLocked() else toggleGuides()
             KeyEvent.KEYCODE_1 -> zoomTo(1f)
             KeyEvent.KEYCODE_DEL -> fillWithColor(background)
             else -> return false

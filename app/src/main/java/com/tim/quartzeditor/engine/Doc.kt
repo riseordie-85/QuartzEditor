@@ -153,6 +153,8 @@ data class DocSnap(
     val width: Int,
     val height: Int,
     val selection: Selection?,
+    val guidesX: List<Float> = emptyList(),
+    val guidesY: List<Float> = emptyList(),
 )
 
 /** An open image: a stack of layers on a canvas of [width] × [height] pixels. */
@@ -171,6 +173,10 @@ class Doc(width: Int, height: Int, name: String) {
 
     /** The selected area (null = nothing selected, so everything can be changed). */
     var selection by mutableStateOf<Selection?>(null)
+
+    /** Guides (canvas pixels): vertical ones at these x, horizontal ones at these y. */
+    val guidesX = mutableStateListOf<Float>()
+    val guidesY = mutableStateListOf<Float>()
 
     /** Bumped on every visible change, so the canvas redraws. */
     var renderVersion by mutableIntStateOf(0)
@@ -216,6 +222,8 @@ class Doc(width: Int, height: Int, name: String) {
         width,
         height,
         selection,
+        guidesX.toList(),
+        guidesY.toList(),
     )
 
     fun restore(s: DocSnap) {
@@ -236,6 +244,14 @@ class Doc(width: Int, height: Int, name: String) {
         width = s.width
         height = s.height
         selection = s.selection
+        if (guidesX.toList() != s.guidesX) {
+            guidesX.clear()
+            guidesX.addAll(s.guidesX)
+        }
+        if (guidesY.toList() != s.guidesY) {
+            guidesY.clear()
+            guidesY.addAll(s.guidesY)
+        }
         renderVersion++
     }
 
@@ -343,6 +359,8 @@ class Doc(width: Int, height: Int, name: String) {
         }
         d.activeId = activeId
         d.selection = selection
+        d.guidesX.addAll(guidesX)
+        d.guidesY.addAll(guidesY)
         d.projectId = projectId
         d.nextId = nextId
         return d

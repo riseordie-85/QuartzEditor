@@ -258,6 +258,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         internal set
 
     /** Snap lines shown while something snaps (canvas pixels): vertical at these x, horizontal at these y. */
+    /** Rulers along the top and left of the picture (drag a guide out of them). */
+    var showRulers by mutableStateOf(prefs.getBoolean("rulers", false))
+    var showGuides by mutableStateOf(prefs.getBoolean("guides", true))
+    /** Guides can't be dragged (so they aren't moved by accident). */
+    var guidesLocked by mutableStateOf(prefs.getBoolean("guidesLocked", false))
+    /** A guide being dragged out of a ruler: (vertical, canvas position). */
+    var guideDraft by mutableStateOf<Pair<Boolean, Float>?>(null)
+
     var snapGuidesX by mutableStateOf<List<Float>>(emptyList())
         internal set
     var snapGuidesY by mutableStateOf<List<Float>>(emptyList())

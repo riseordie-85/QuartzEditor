@@ -311,6 +311,20 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
             }
             d.width = newW
             d.height = newH
+            // Guides turn and flip with the picture
+            val gm = Matrix().also(build)
+            val nx = ArrayList<Float>()
+            val ny = ArrayList<Float>()
+            fun place(a: FloatArray) {
+                gm.mapPoints(a)
+                if (kotlin.math.abs(a[0] - a[2]) < 0.01f) nx.add(a[0]) else ny.add(a[1])
+            }
+            for (x in d.guidesX) place(floatArrayOf(x, 0f, x, 1f))
+            for (y in d.guidesY) place(floatArrayOf(0f, y, 1f, y))
+            d.guidesX.clear()
+            d.guidesX.addAll(nx)
+            d.guidesY.clear()
+            d.guidesY.addAll(ny)
         }
         fit()
     }

@@ -88,6 +88,7 @@ fun Workspace(vm: EditorViewModel) {
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }
     var gridOpen by remember { mutableStateOf(false) }
+    var guideOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
 
@@ -135,7 +136,7 @@ fun Workspace(vm: EditorViewModel) {
                 // Undo / redo / fit
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).padding(top = if (vm.showRulers) RULER else 0.dp),
                 ) {
                     val h = vm.history
                     @Suppress("UNUSED_VARIABLE") val v = h.version
@@ -146,7 +147,10 @@ fun Workspace(vm: EditorViewModel) {
                 }
 
                 // Menu
-                Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) {
+                // Rulers (under the buttons)
+                Rulers(vm)
+
+                Box(Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp)) {
                     var menu by remember { mutableStateOf(false) }
                     RoundButton(Icons.Outlined.Menu, "Menu") { menu = true }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -173,6 +177,25 @@ fun Workspace(vm: EditorViewModel) {
                             onClick = { menu = false; vm.toggleGrid() },
                         )
                         DropdownMenuItem(text = { Text("Grid settings…") }, onClick = { menu = false; gridOpen = true })
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Rulers") },
+                            trailingIcon = { if (vm.showRulers) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleRulers() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Show guides") },
+                            trailingIcon = { if (vm.showGuides) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleGuides() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Lock guides") },
+                            trailingIcon = { if (vm.guidesLocked) Icon(Icons.Outlined.Check, contentDescription = "On") },
+                            onClick = { menu = false; vm.toggleGuidesLocked() },
+                        )
+                        DropdownMenuItem(text = { Text("New guide…") }, onClick = { menu = false; guideOpen = true })
+                        DropdownMenuItem(text = { Text("Clear guides") }, onClick = { menu = false; vm.clearGuides() })
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Modifier button (Shift / Alt)") },
                             trailingIcon = { if (vm.showModifier) Icon(Icons.Outlined.Check, contentDescription = "On") },
@@ -216,7 +239,7 @@ fun Workspace(vm: EditorViewModel) {
                 ModifierButton(vm)
 
                 // Tabs, while a smart layer's contents are open
-                TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).widthIn(max = 420.dp))
+                TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp, top = if (vm.showRulers) RULER else 0.dp).widthIn(max = 420.dp))
 
                 // Panels folded away: the layers as a small stack at the edge
                 androidx.compose.animation.AnimatedVisibility(
@@ -331,6 +354,7 @@ fun Workspace(vm: EditorViewModel) {
 
     RasterizeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
+    if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
 
     if (discardOpen) {
         val saved = vm.doc?.projectId != null
