@@ -112,7 +112,7 @@ fun EditorViewModel.selectLayerAt(x: Float, y: Float) {
     val hit = d.layers.asReversed().firstOrNull {
         it.hasContent && d.effectivelyVisible(it) && DocRenderer.layerHitTest(it, x.toInt(), y.toInt()) &&
             // A clipped layer only shows where its base has pixels
-            (!it.props.clip || clipBaseOf(it)?.let { b -> DocRenderer.layerHitTest(b, x.toInt(), y.toInt()) } != false)
+            (!it.props.clip || clipBaseOf(it)?.let { b -> b.isGroup || DocRenderer.layerHitTest(b, x.toInt(), y.toInt()) } != false)
     }
     if (hit != null && hit.id != d.activeId) selectLayer(hit.id)
 }

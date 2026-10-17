@@ -157,6 +157,8 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             BlendMenu(
                 active?.props?.blend ?: Blend.NORMAL, Modifier.weight(1f),
                 passThrough = if (folder) active?.props?.passThrough == true else null,
+                // Adjustment layers use Android's own blend modes
+                exactOnly = active?.isAdjustment == true,
                 onPassThrough = { active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(passThrough = true) } } },
             ) { b ->
                 active?.let { l -> vm.setProps(l.id, "Blend mode") { it.copy(blend = b, passThrough = false) } }
@@ -653,7 +655,7 @@ private fun LayerRow(
         if (!layer.isGroup) Item(if (p.clip) "Release clipping mask" else "Clip to layer below") { vm.onLayer(layer.id) { toggleClip() } }
         Divider()
         Page("Layer style") {
-            Item("Copy layer style", enabled = layer.hasContent) { vm.copyLayerStyle(layer.id) }
+            Item("Copy layer style", enabled = layer.canHaveStyle) { vm.copyLayerStyle(layer.id) }
             Item(if (ids.size > 1) "Paste layer style (${ids.size} layers)" else "Paste layer style", enabled = vm.copiedStyle != null) { vm.pasteLayerStyle(ids) }
             Item("Save layer style as preset…", enabled = p.style.any) { onSavePreset() }
             Divider()
@@ -807,7 +809,7 @@ private fun LockToggle(icon: ImageVector, label: String, on: Boolean, onClick: (
  * other layers.
  */
 @Composable
-internal fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean? = null, onPassThrough: () -> Unit = {}, onPick: (Blend) -> Unit) {
+internal fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean? = null, onPassThrough: () -> Unit = {}, exactOnly: Boolean = false, onPick: (Blend) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         Row(
@@ -836,6 +838,7 @@ internal fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean?
             }
             var lastGroup = 0
             Blend.entries.forEach { b ->
+                if (exactOnly && !b.exact && b != current) return@forEach
                 if (b.group != lastGroup) {
                     HorizontalDivider()
                     lastGroup = b.group

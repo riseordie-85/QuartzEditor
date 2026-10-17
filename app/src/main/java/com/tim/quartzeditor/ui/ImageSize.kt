@@ -125,3 +125,35 @@ fun ImageSizeDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
         }
     }
 }
+
+/** "This Photoshop file is very big": shown before opening one over [BIG_PSD_MB]. */
+@Composable
+fun BigPsdDialog(vm: EditorViewModel) {
+    val (uri, bytes) = vm.bigPsdAsk ?: return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ramGb = remember {
+        val info = android.app.ActivityManager.MemoryInfo()
+        (ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.getMemoryInfo(info)
+        info.totalMem / (1024.0 * 1024 * 1024)
+    }
+    val size = if (bytes >= 1024L * 1024 * 1024) "%.1f GB".format(bytes / (1024.0 * 1024 * 1024)) else "${bytes / (1024 * 1024)} MB"
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { vm.bigPsdAsk = null },
+        title = { Text("A very big Photoshop file") },
+        text = {
+            Text(
+                "This file is $size. Files this big can take minutes to open, and may close the app on this device" +
+                    (if (ramGb > 0.5) " (it has about ${ramGb.roundToInt()} GB of memory)" else "") +
+                    ". Big pictures are shrunk to fit as they open.\n\nPhotoshop on a computer is the safer place for files like this.",
+                color = Q.textDim, fontSize = 14.sp,
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                vm.bigPsdAsk = null
+                vm.openPsd(uri, anyway = true)
+            }) { Text("Open anyway") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = { vm.bigPsdAsk = null }) { Text("Cancel") } },
+    )
+}

@@ -242,8 +242,8 @@ fun EditorViewModel.toggleClip() {
         // Clipped to the nearest unclipped layer below it in the same folder
         val sibs = d.children(l.props.parent)
         val below = sibs.subList(0, sibs.indexOf(l).coerceAtLeast(0)).lastOrNull { !it.props.clip }
-        if (below == null || !below.hasContent) {
-            toast(if (below == null) "There's no layer below to clip to" else "Clip to a pixel, shape or text layer")
+        if (below == null || !below.canBeClipBase) {
+            toast(if (below == null) "There's no layer below to clip to" else "Clip to a pixel, shape, text or smart layer, or a folder")
             return
         }
     }
@@ -257,7 +257,7 @@ fun EditorViewModel.clipBaseOf(l: Layer): Layer? {
     val sibs = d.children(l.props.parent)
     val i = sibs.indexOf(l)
     if (i <= 0) return null
-    return sibs.subList(0, i).lastOrNull { !it.props.clip }?.takeIf { it.hasContent }
+    return sibs.subList(0, i).lastOrNull { !it.props.clip }?.takeIf { it.canBeClipBase }
 }
 
 /** The layer directly below [l] in the same folder, if any. */

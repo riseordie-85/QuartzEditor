@@ -92,20 +92,48 @@ class TileGrid(val alphaOnly: Boolean) {
         // pictures with many layers stay smooth)
         val level = TileLod.level()
         var scaled: Paint? = null
-        val dst = if (level > 0) RectF() else null
+        // Tile edges are put on whole screen pixels: two neighboring tiles then meet exactly, with
+        // no half-covered pixel between them for the background to show through (whatever the
+        // zoom, and even where the graphics driver smooths edges on its own).
+        val snap = snapper(canvas)
+        val dst = RectF()
         for ((k, bmp) in tiles) {
             val x = dx + tx(k) * SIZE
             val y = dy + ty(k) * SIZE
             if (visible != null && (x > visible.right || y > visible.bottom || x + SIZE < visible.left || y + SIZE < visible.top)) continue
             val small = if (level > 0) TileLod.get(bmp, level) else null
-            if (small != null && dst != null) {
+            if (snap != null) snap.rect(x, y, dst) else dst.set(x, y, x + SIZE, y + SIZE)
+            if (small != null) {
                 val sp = scaled ?: (if (p.isFilterBitmap) p else Paint(p).apply { isFilterBitmap = true }).also { scaled = it }
-                dst.set(x, y, x + SIZE, y + SIZE)
                 canvas.drawBitmap(small, null, dst, sp)
-            } else {
+            } else if (snap == null) {
                 canvas.drawBitmap(bmp, x, y, p)
+            } else {
+                canvas.drawBitmap(bmp, null, dst, p)
             }
         }
+    }
+
+    /** Rounds tile corners to whole pixels of the screen (or bitmap) the canvas draws into. */
+    private class Snapper(val sx: Float, val tx: Float, val sy: Float, val ty: Float) {
+        private fun ex(v: Float) = (Math.round(v * sx + tx) - tx) / sx
+        private fun ey(v: Float) = (Math.round(v * sy + ty) - ty) / sy
+        fun rect(x: Float, y: Float, out: RectF) = out.set(ex(x), ey(y), ex(x + SIZE), ey(y + SIZE))
+    }
+
+    /** A [Snapper] for [canvas]'s current scale and offset, or null when it's turned (no straight pixel rows to snap to). */
+    @Suppress("DEPRECATION")
+    private fun snapper(canvas: Canvas): Snapper? {
+        val m = android.graphics.Matrix()
+        canvas.getMatrix(m)
+        val v = FloatArray(9)
+        m.getValues(v)
+        if (v[android.graphics.Matrix.MSKEW_X] != 0f || v[android.graphics.Matrix.MSKEW_Y] != 0f) return null
+        if (v[android.graphics.Matrix.MPERSP_0] != 0f || v[android.graphics.Matrix.MPERSP_1] != 0f) return null
+        val sx = v[android.graphics.Matrix.MSCALE_X]
+        val sy = v[android.graphics.Matrix.MSCALE_Y]
+        if (sx <= 0f || sy <= 0f) return null
+        return Snapper(sx, v[android.graphics.Matrix.MTRANS_X], sy, v[android.graphics.Matrix.MTRANS_Y])
     }
 
     /** Removes tiles that are completely see-through (keeps saved projects and memory small). */

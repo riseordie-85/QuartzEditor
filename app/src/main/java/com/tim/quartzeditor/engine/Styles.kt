@@ -88,6 +88,38 @@ data class GlowFx(
     val blend: Blend = Blend.NORMAL,
 )
 
+/**
+ * Inner Glow: light along the inside of the layer's edge, or from its middle outward ([center]).
+ * [size] in canvas pixels; [choke] 0..1 makes it stronger and harder-edged.
+ */
+data class InnerGlowFx(
+    val on: Boolean = false,
+    val color: Int = 0xFFFFFFBE.toInt(),
+    val opacity: Float = 0.75f,
+    val size: Float = 10f,
+    val choke: Float = 0f,
+    val center: Boolean = false,
+    val blend: Blend = Blend.SCREEN,
+)
+
+/**
+ * Satin: soft shading inside the layer, from two copies of its shape moved apart along [angle] by
+ * [distance] and blurred by [size] (like Photoshop's). [invert] swaps light and dark.
+ */
+data class SatinFx(
+    val on: Boolean = false,
+    val color: Int = Color.BLACK,
+    val opacity: Float = 0.5f,
+    val angle: Float = 19f,
+    val distance: Float = 11f,
+    val size: Float = 14f,
+    val invert: Boolean = true,
+    val blend: Blend = Blend.MULTIPLY,
+) {
+    val dx: Float get() = cos(angle * PI / 180.0).toFloat() * distance
+    val dy: Float get() = -sin(angle * PI / 180.0).toFloat() * distance
+}
+
 data class OverlayFx(
     val on: Boolean = false,
     val color: Int = 0xFFE53935.toInt(),
@@ -174,6 +206,8 @@ data class LayerStyle(
     val gradientFill: GradientFx = GradientFx(),
     val longShadow: LongShadowFx = LongShadowFx(),
     val patternOverlay: PatternFx = PatternFx(),
+    val innerGlow: InnerGlowFx = InnerGlowFx(),
+    val satin: SatinFx = SatinFx(),
 ) {
     /**
      * An effect behind the layer (drop shadow, outer glow, long shadow) has a blend mode of its own:
@@ -192,15 +226,19 @@ data class LayerStyle(
         bevel = bevel.copy(size = bevel.size * k, soften = bevel.soften * k),
         longShadow = longShadow.copy(length = longShadow.length * k),
         patternOverlay = patternOverlay.copy(scale = patternOverlay.scale * k),
+        innerGlow = innerGlow.copy(size = innerGlow.size * k),
+        satin = satin.copy(distance = satin.distance * k, size = satin.size * k),
     )
 
-    val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on || gradientFill.on || longShadow.on || patternOverlay.on
+    val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on || gradientFill.on || longShadow.on || patternOverlay.on ||
+        innerGlow.on || satin.on
 
     /**
      * Effects that need to be prepared in the background (everything but the color and pattern
      * overlays; the gradient fill needs to know where the layer's pixels are).
      */
-    val needsBuild: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || bevel.on || gradientFill.on || longShadow.on
+    val needsBuild: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || bevel.on || gradientFill.on || longShadow.on ||
+        innerGlow.on || satin.on
 
     /** How far the effects reach past the pixels (canvas px), in every direction (see [effectRegion] for the exact area). */
     val reach: Float
@@ -211,7 +249,10 @@ data class LayerStyle(
         get() = max(
             max(if (stroke.on && stroke.position != StrokePosition.INSIDE) stroke.size else 0f, if (outerGlow.on) outerGlow.size * 2f else 0f),
             max(
-                max(if (dropShadow.on) dropShadow.distance + dropShadow.size * 1.5f else 0f, if (innerShadow.on) innerShadow.size * 1.5f else 0f),
+                max(
+                    max(if (dropShadow.on) dropShadow.distance + dropShadow.size * 1.5f else 0f, if (innerShadow.on) innerShadow.size * 1.5f else 0f),
+                    max(if (innerGlow.on) innerGlow.size * 1.5f else 0f, if (satin.on) satin.distance + satin.size * 1.5f else 0f),
+                ),
                 if (bevel.on) (if (bevel.style.outside) bevel.size * 1.6f else bevel.size * 0.8f) + bevel.soften * 2f else 0f,
             ),
         )
@@ -251,6 +292,10 @@ data class LayerStyle(
             .put("scale", patternOverlay.scale.toDouble()).put("opacity", patternOverlay.opacity.toDouble()).put("blend", patternOverlay.blend.name))
         .put("longShadow", JSONObject().put("on", longShadow.on).put("color", longShadow.color).put("opacity", longShadow.opacity.toDouble())
             .put("angle", longShadow.angle.toDouble()).put("length", longShadow.length.toDouble()).put("fade", longShadow.fade).put("blend", longShadow.blend.name))
+        .put("innerGlow", JSONObject().put("on", innerGlow.on).put("color", innerGlow.color).put("opacity", innerGlow.opacity.toDouble()).put("size", innerGlow.size.toDouble())
+            .put("choke", innerGlow.choke.toDouble()).put("center", innerGlow.center).put("blend", innerGlow.blend.name))
+        .put("satin", JSONObject().put("on", satin.on).put("color", satin.color).put("opacity", satin.opacity.toDouble()).put("angle", satin.angle.toDouble())
+            .put("distance", satin.distance.toDouble()).put("size", satin.size.toDouble()).put("invert", satin.invert).put("blend", satin.blend.name))
 
     companion object {
         private fun gradientJson(g: GradientFx) = JSONObject().put("on", g.on)
@@ -328,6 +373,20 @@ data class LayerStyle(
                     lsh.optBoolean("on"), lsh.optInt("color", dl.color), lsh.f("opacity", dl.opacity),
                     lsh.f("angle", dl.angle), lsh.f("length", dl.length), lsh.optBoolean("fade", true), blendOf(lsh, dl.blend),
                 ),
+                innerGlow = o.optJSONObject("innerGlow")?.let { ig ->
+                    val di = d.innerGlow
+                    InnerGlowFx(
+                        ig.optBoolean("on"), ig.optInt("color", di.color), ig.f("opacity", di.opacity), ig.f("size", di.size),
+                        ig.f("choke", di.choke), ig.optBoolean("center"), blendOf(ig, di.blend),
+                    )
+                } ?: d.innerGlow,
+                satin = o.optJSONObject("satin")?.let { sa ->
+                    val ds = d.satin
+                    SatinFx(
+                        sa.optBoolean("on"), sa.optInt("color", ds.color), sa.f("opacity", ds.opacity), sa.f("angle", ds.angle),
+                        sa.f("distance", ds.distance), sa.f("size", ds.size), sa.optBoolean("invert", true), blendOf(sa, ds.blend),
+                    )
+                } ?: d.satin,
             )
         }
     }
@@ -356,6 +415,8 @@ class BuiltEffects(
     val longShadow: Bitmap? = null,
     /** Where the layer's visible pixels are (layer-local), for the gradient fill. */
     val content: RectF? = null,
+    val innerGlow: Bitmap? = null,
+    val satin: Bitmap? = null,
 )
 
 object Effects {
@@ -371,6 +432,8 @@ object Effects {
                 // Blend modes only change how the images are drawn
                 dropShadow = st.dropShadow.copy(blend = Blend.NORMAL), innerShadow = st.innerShadow.copy(blend = Blend.NORMAL),
                 outerGlow = st.outerGlow.copy(blend = Blend.NORMAL), longShadow = st.longShadow.copy(blend = Blend.NORMAL),
+                innerGlow = st.innerGlow.copy(color = Color.BLACK, opacity = 1f, blend = Blend.NORMAL),
+                satin = st.satin.copy(color = Color.BLACK, opacity = 1f, blend = Blend.NORMAL),
                 bevel = st.bevel.copy(highlightBlend = Blend.SCREEN, shadowBlend = Blend.MULTIPLY),
             )
         }, layer.props.maskDisabled,
@@ -386,7 +449,7 @@ object Effects {
         val content = grid.tileBounds() ?: return null
         val exact = if (style.gradientFill.on || (style.stroke.on && style.stroke.useGradient)) Transformer.contentBounds(tiles)?.let { RectF(it) } else null
         // Only the gradient fill: it just needs to know where the pixels are
-        if (!(style.stroke.on || style.dropShadow.on || style.innerShadow.on || style.outerGlow.on || style.bevel.on || style.longShadow.on)) {
+        if (!(style.stroke.on || style.dropShadow.on || style.innerShadow.on || style.outerGlow.on || style.bevel.on || style.longShadow.on || style.innerGlow.on || style.satin.on)) {
             return BuiltEffects(key, tilesId, RectF(content), 1f, null, null, null, null, content = exact ?: RectF(content))
         }
         val region = style.effectRegion(content)
@@ -483,6 +546,8 @@ object Effects {
         var bevelLight: Bitmap? = null
         var bevelShade: Bitmap? = null
         var long: Bitmap? = null
+        var innerGlow: Bitmap? = null
+        var satin: Bitmap? = null
         try {
             if (style.longShadow.on && style.longShadow.length > 0f) {
                 long = longShadow(shape, style.longShadow, s, w, h, region, exact ?: Transformer.contentBounds(tiles)?.let { RectF(it) })
@@ -531,6 +596,51 @@ object Effects {
                 Canvas(b).drawBitmap(shape, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
                 inner = b
             }
+            if (style.innerGlow.on) {
+                val ig = style.innerGlow
+                val r = ig.size / 2f * s
+                val effect = if (r >= 0.5f) RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP) else null
+                // From the edge: what's outside, blurred in. From the center: the shape itself, blurred (strongest in the middle).
+                val b = Gpu.renderOffscreen(w, h, effect) { c ->
+                    if (ig.center) {
+                        c.drawBitmap(shape, 0f, 0f, Paint().apply { isFilterBitmap = true })
+                    } else {
+                        c.drawColor(Color.WHITE)
+                        c.drawBitmap(shape, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+                    }
+                }
+                // Choke: stronger, with a harder edge. From the center the blurred shape is about
+                // half strength at the edge: stretched so the edge is clear and the middle full.
+                val k = ig.choke.coerceIn(0f, 1f)
+                val boost = if (ig.center) 2f * (1f + k * 2f) else 1.3f + k * 4f
+                val lift = if (ig.center) -255f * (boost / 2f) else 0f
+                val strong = Gpu.renderOffscreen(w, h) { c ->
+                    c.drawBitmap(b, 0f, 0f, Paint().apply {
+                        colorFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+                            0f, 0f, 0f, 0f, 255f,
+                            0f, 0f, 0f, 0f, 255f,
+                            0f, 0f, 0f, 0f, 255f,
+                            0f, 0f, 0f, boost, lift,
+                        )))
+                    })
+                    c.drawBitmap(shape, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
+                }
+                b.recycle()
+                innerGlow = toAlpha(strong)
+            }
+            if (style.satin.on) {
+                val sa = style.satin
+                val a = blurred(shape, sa.dx, sa.dy, sa.size / 2f)
+                val b = blurred(shape, -sa.dx, -sa.dy, sa.size / 2f)
+                val sh = RuntimeShader(SATIN_AGSL)
+                sh.setInputShader("a", BitmapShader(a, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+                sh.setInputShader("b", BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+                sh.setInputShader("shape", BitmapShader(shape, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+                sh.setFloatUniform("inv", if (sa.invert) 1f else 0f)
+                satin = toAlpha(Gpu.renderOffscreen(w, h) { c -> c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = sh }) })
+                a.recycle()
+                b.recycle()
+            }
             if (style.bevel.on && style.bevel.size > 0f) {
                 // If the GPU can't make it, the layer keeps its other effects
                 runCatching { bevel(shape, style.bevel, s, w, h) }.getOrNull()?.let { (lit, shade) ->
@@ -542,7 +652,7 @@ object Effects {
             shape.recycle()
             inverse?.recycle()
         }
-        return BuiltEffects(key, tilesId, RectF(region), s, drop, glow, stroke, inner, bevelLight, bevelShade, long, exact ?: RectF(content))
+        return BuiltEffects(key, tilesId, RectF(region), s, drop, glow, stroke, inner, bevelLight, bevelShade, long, exact ?: RectF(content), innerGlow, satin)
     }
 
     /**
@@ -632,6 +742,20 @@ object Effects {
             height.recycle()
         }
     }
+
+    /** Satin: where the two moved, blurred copies differ (or agree, inverted), inside the shape. */
+    private const val SATIN_AGSL = """
+uniform shader a;
+uniform shader b;
+uniform shader shape;
+uniform float inv;
+half4 main(float2 p) {
+    float d = abs(float(a.eval(p).a) - float(b.eval(p).a));
+    if (inv > 0.5) d = 1.0 - d;
+    float v = d * float(shape.eval(p).a);
+    return half4(half(v));
+}
+"""
 
     private const val BEVEL_AGSL = """
 uniform shader height;

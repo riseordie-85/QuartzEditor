@@ -45,7 +45,7 @@ import com.tim.quartzeditor.engine.StrokePosition
 import kotlin.math.roundToInt
 
 private enum class StyleFx(val label: String) {
-    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), PATTERN("Pattern Overlay"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
+    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), PATTERN("Pattern Overlay"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), INNER_GLOW("Inner Glow"), SATIN("Satin"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
 }
 
 /** Layer Style: switch effects on and off and tune them. They never change the layer's pixels. */
@@ -69,6 +69,8 @@ fun StylePanel(vm: EditorViewModel) {
             StyleFx.STROKE -> st.stroke.on
             StyleFx.DROP_SHADOW -> st.dropShadow.on
             StyleFx.INNER_SHADOW -> st.innerShadow.on
+            StyleFx.INNER_GLOW -> st.innerGlow.on
+            StyleFx.SATIN -> st.satin.on
             StyleFx.OUTER_GLOW -> st.outerGlow.on
             StyleFx.COLOR_OVERLAY -> st.colorOverlay.on
         }
@@ -118,6 +120,29 @@ fun StylePanel(vm: EditorViewModel) {
                         StyleFx.STROKE -> StrokeControls(vm, st)
                         StyleFx.DROP_SHADOW -> ShadowControls(vm, st.dropShadow, inner = false)
                         StyleFx.INNER_SHADOW -> ShadowControls(vm, st.innerShadow, inner = true)
+                        StyleFx.INNER_GLOW -> {
+                            val g = st.innerGlow
+                            fun LayerStyle.ig(change: com.tim.quartzeditor.engine.InnerGlowFx.() -> com.tim.quartzeditor.engine.InnerGlowFx): LayerStyle = copy(innerGlow = innerGlow.change().copy(on = true))
+                            StyleColor(vm, g.color, "Inner glow color") { c -> ig { copy(color = c) } }
+                            FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> ig { copy(opacity = v) } }
+                            FxSlider(vm, "Size", g.size, 1f..150f, "${g.size.roundToInt()} px") { v -> ig { copy(size = v.roundToInt().toFloat()) } }
+                            FxSlider(vm, "Choke", g.choke, 0f..1f, "${(g.choke * 100).roundToInt()}%") { v -> ig { copy(choke = v) } }
+                            Text("Source", color = Q.textDim, fontSize = 13.sp)
+                            Spacer(Modifier.height(4.dp))
+                            ChipRow(listOf("Edge", "Center"), if (g.center) 1 else 0) { i -> vm.setStyle("Inner glow source") { it.ig { copy(center = i == 1) } } }
+                            FxBlend(g.blend) { b -> vm.setStyle("Inner glow blend") { it.ig { copy(blend = b) } } }
+                        }
+                        StyleFx.SATIN -> {
+                            val sa = st.satin
+                            fun LayerStyle.sat(change: com.tim.quartzeditor.engine.SatinFx.() -> com.tim.quartzeditor.engine.SatinFx): LayerStyle = copy(satin = satin.change().copy(on = true))
+                            StyleColor(vm, sa.color, "Satin color") { c -> sat { copy(color = c) } }
+                            FxSlider(vm, "Opacity", sa.opacity, 0f..1f, "${(sa.opacity * 100).roundToInt()}%") { v -> sat { copy(opacity = v) } }
+                            FxSlider(vm, "Angle", sa.angle, -180f..180f, "${sa.angle.roundToInt()}°") { v -> sat { copy(angle = v.roundToInt().toFloat()) } }
+                            FxSlider(vm, "Distance", sa.distance, 1f..250f, "${sa.distance.roundToInt()} px") { v -> sat { copy(distance = v.roundToInt().toFloat()) } }
+                            FxSlider(vm, "Size", sa.size, 0f..250f, "${sa.size.roundToInt()} px") { v -> sat { copy(size = v.roundToInt().toFloat()) } }
+                            ToggleRow("Invert", sa.invert) { f -> vm.setStyle("Satin invert") { it.sat { copy(invert = f) } } }
+                            FxBlend(sa.blend) { b -> vm.setStyle("Satin blend") { it.sat { copy(blend = b) } } }
+                        }
                         StyleFx.OUTER_GLOW -> {
                             val g = st.outerGlow
                             StyleColor(vm, g.color, "Glow color") { c -> copy(outerGlow = outerGlow.copy(color = c, on = true)) }
@@ -150,6 +175,8 @@ private fun LayerStyle.toggle(kind: StyleFx, on: Boolean): LayerStyle = when (ki
     StyleFx.STROKE -> copy(stroke = stroke.copy(on = on))
     StyleFx.DROP_SHADOW -> copy(dropShadow = dropShadow.copy(on = on))
     StyleFx.INNER_SHADOW -> copy(innerShadow = innerShadow.copy(on = on))
+    StyleFx.INNER_GLOW -> copy(innerGlow = innerGlow.copy(on = on))
+    StyleFx.SATIN -> copy(satin = satin.copy(on = on))
     StyleFx.OUTER_GLOW -> copy(outerGlow = outerGlow.copy(on = on))
     StyleFx.COLOR_OVERLAY -> copy(colorOverlay = colorOverlay.copy(on = on))
 }
@@ -305,7 +332,8 @@ private fun ShadowControls(vm: EditorViewModel, sh: ShadowFx, inner: Boolean) {
 private fun FxBlend(current: com.tim.quartzeditor.engine.Blend, onPick: (com.tim.quartzeditor.engine.Blend) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
         Text("Blend mode", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(88.dp))
-        BlendMenu(current, Modifier.weight(1f), onPick = onPick)
+        // Effects are drawn by Android's own blend modes
+        BlendMenu(current, Modifier.weight(1f), exactOnly = true, onPick = onPick)
     }
 }
 

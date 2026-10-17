@@ -110,6 +110,7 @@ fun LaunchScreen(vm: EditorViewModel) {
     if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
     // Why the app closed last time, if it closed unexpectedly
     LastExitDialog()
+    BigPsdDialog(vm)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let { vm.openPicked(it) }
     }

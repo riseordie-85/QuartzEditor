@@ -79,8 +79,36 @@ fun EditorViewModel.openProjectFile(uri: Uri) {
     }
 }
 
-/** Opens a Photoshop file (.psd or .psb) as a new document with its layers. */
-fun EditorViewModel.openPsd(uri: Uri) {
+/** Photoshop files bigger than this (MB) are checked with you first: they may not open on a phone or tablet. */
+internal const val BIG_PSD_MB = 300
+
+/** The size of [uri]'s file in bytes, or -1 when it can't be told. Not on the main thread. */
+internal fun EditorViewModel.fileBytes(uri: Uri): Long {
+    try {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0).takeIf { it > 0 }?.let { return it }
+        }
+    } catch (_: Exception) {
+    }
+    return try {
+        ctx.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+    } catch (_: Exception) {
+        -1L
+    }
+}
+
+/**
+ * Opens a Photoshop file (.psd or .psb) as a new document with its layers. A very big file is
+ * checked with you first ([bigPsdAsk]); [anyway] opens it without asking.
+ */
+fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
+    if (!anyway) {
+        viewModelScope.launch {
+            val bytes = withContext(Dispatchers.IO) { fileBytes(uri) }
+            if (bytes > BIG_PSD_MB * 1024L * 1024L) bigPsdAsk = uri to bytes else openPsd(uri, anyway = true)
+        }
+        return
+    }
     runBusy("Opening Photoshop file…") {
         val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
         val result = withContext(Dispatchers.IO) {

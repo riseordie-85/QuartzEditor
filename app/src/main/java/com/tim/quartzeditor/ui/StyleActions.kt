@@ -1,6 +1,7 @@
 package com.tim.quartzeditor.ui
 
 import com.tim.quartzeditor.engine.BuiltEffects
+import com.tim.quartzeditor.engine.DocRenderer
 import com.tim.quartzeditor.engine.Effects
 import com.tim.quartzeditor.engine.Layer
 import com.tim.quartzeditor.engine.LayerStyle
@@ -19,19 +20,27 @@ internal suspend fun EditorViewModel.effectsLoop() {
         val d = doc ?: continue
         if (stroking || transform != null || busy != null) continue
         val todo = d.layers.firstOrNull {
-            it.hasContent && it.props.visible && it.props.style.needsBuild &&
-                Effects.keyOf(it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }
+            it.canHaveStyle && it.props.visible && it.props.style.needsBuild &&
+                effectsKey(d, it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }
         } ?: continue
-        val key = Effects.keyOf(todo)
-        val style = todo.props.style
-        val tilesId = System.identityHashCode(todo.tiles)
-        val tiles = HashMap(todo.tiles.tiles)
-        val mask = if (todo.maskActive) todo.mask?.let { HashMap(it.tiles) } else null
-        val built = withContext(Dispatchers.Default) {
-            try {
-                Effects.build(key, style, tiles, mask, SCREEN_FX_PX, tilesId)
-            } catch (e: Throwable) {
-                null
+        val key = effectsKey(d, todo)
+        val built = if (todo.isGroup) {
+            // A folder's effects are made from everything in it drawn together (from a copy: it may change meanwhile)
+            val copy = d.shallowCopy()
+            val group = copy.layer(todo.id) ?: continue
+            val fx = HashMap(effectsCache)
+            withContext(Dispatchers.Default) { DocRenderer.buildEffects(copy, group, SCREEN_FX_PX, key) { fx[it.id] } }
+        } else {
+            val style = todo.props.style
+            val tilesId = System.identityHashCode(todo.tiles)
+            val tiles = HashMap(todo.tiles.tiles)
+            val mask = if (todo.maskActive) todo.mask?.let { HashMap(it.tiles) } else null
+            withContext(Dispatchers.Default) {
+                try {
+                    Effects.build(key, style, tiles, mask, SCREEN_FX_PX, tilesId)
+                } catch (e: Throwable) {
+                    null
+                }
             }
         }
         if (doc !== d) continue
@@ -45,11 +54,31 @@ internal suspend fun EditorViewModel.effectsLoop() {
     }
 }
 
+/**
+ * What a layer's effects depend on. A folder's also depend on everything in it (and on their own
+ * effects, which are drawn into the folder's look).
+ */
+internal fun EditorViewModel.effectsKey(d: com.tim.quartzeditor.engine.Doc, l: Layer): Any {
+    if (!l.isGroup) return Effects.keyOf(l)
+    val inside = d.layers.slice(d.block(l)).filter { it !== l }.map {
+        listOf(it.id, it.props, System.identityHashCode(it.tiles), it.pixelVersion, it.x, it.y, System.identityHashCode(it.mask), System.identityHashCode(effectsCache[it.id]))
+    }
+    return listOf(Effects.keyOf(l), l.x, l.y, inside)
+}
+
 /** Full-size effect images for a background render (merge, flatten). */
 internal fun EditorViewModel.fullEffects(layers: List<Layer>): Map<Long, BuiltEffects> {
     val out = HashMap<Long, BuiltEffects>()
-    for (l in layers) {
+    val d = doc
+    // Bottom first, so a folder's layers have their effects before the folder's own are made
+    val order = if (d != null) layers.sortedBy { d.layers.indexOf(it).let { i -> if (i < 0) Int.MAX_VALUE else i } } else layers
+    for (l in order) {
         if (!l.props.style.needsBuild) continue
+        if (l.isGroup) {
+            if (d == null || d.layer(l.id) !== l) continue
+            DocRenderer.buildEffects(d, l, FULL_FX_PX) { out[it.id] }?.let { out[l.id] = it }
+            continue
+        }
         val mask = if (l.maskActive) l.mask?.tiles else null
         runCatching { Effects.build(Unit, l.props.style, l.tiles.tiles, mask, FULL_FX_PX) }.getOrNull()?.let { out[l.id] = it }
     }

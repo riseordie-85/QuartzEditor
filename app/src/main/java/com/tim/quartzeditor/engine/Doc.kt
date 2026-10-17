@@ -12,25 +12,43 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 
 /** Layer blend modes, in Photoshop's order. [group] starts a new section in the menu. */
-enum class Blend(val label: String, val mode: BlendMode, val group: Int) {
+/**
+ * Layer blend modes, in Photoshop's order. Most are drawn by Android itself ([mode]); the ones
+ * Android doesn't have ([custom] > 0) are mixed by [BlendShader]. Where those can't be used
+ * (effects, adjustment layers) [mode] is the nearest look.
+ */
+enum class Blend(val label: String, val mode: BlendMode, val group: Int, val custom: Int = 0) {
     NORMAL("Normal", BlendMode.SRC_OVER, 0),
+    DISSOLVE("Dissolve", BlendMode.SRC_OVER, 0, 1),
     DARKEN("Darken", BlendMode.DARKEN, 1),
     MULTIPLY("Multiply", BlendMode.MULTIPLY, 1),
     COLOR_BURN("Color Burn", BlendMode.COLOR_BURN, 1),
+    LINEAR_BURN("Linear Burn", BlendMode.MULTIPLY, 1, 2),
+    DARKER_COLOR("Darker Color", BlendMode.DARKEN, 1, 3),
     LIGHTEN("Lighten", BlendMode.LIGHTEN, 2),
     SCREEN("Screen", BlendMode.SCREEN, 2),
     COLOR_DODGE("Color Dodge", BlendMode.COLOR_DODGE, 2),
     LINEAR_DODGE("Linear Dodge (Add)", BlendMode.PLUS, 2),
+    LIGHTER_COLOR("Lighter Color", BlendMode.LIGHTEN, 2, 4),
     OVERLAY("Overlay", BlendMode.OVERLAY, 3),
     SOFT_LIGHT("Soft Light", BlendMode.SOFT_LIGHT, 3),
     HARD_LIGHT("Hard Light", BlendMode.HARD_LIGHT, 3),
+    VIVID_LIGHT("Vivid Light", BlendMode.HARD_LIGHT, 3, 5),
+    LINEAR_LIGHT("Linear Light", BlendMode.HARD_LIGHT, 3, 6),
+    PIN_LIGHT("Pin Light", BlendMode.HARD_LIGHT, 3, 7),
+    HARD_MIX("Hard Mix", BlendMode.HARD_LIGHT, 3, 8),
     DIFFERENCE("Difference", BlendMode.DIFFERENCE, 4),
     EXCLUSION("Exclusion", BlendMode.EXCLUSION, 4),
+    SUBTRACT("Subtract", BlendMode.DIFFERENCE, 4, 9),
+    DIVIDE("Divide", BlendMode.COLOR_DODGE, 4, 10),
     HUE("Hue", BlendMode.HUE, 5),
     SATURATION("Saturation", BlendMode.SATURATION, 5),
     COLOR("Color", BlendMode.COLOR, 5),
     LUMINOSITY("Luminosity", BlendMode.LUMINOSITY, 5),
     ;
+
+    /** Drawn by Android itself (usable anywhere, including effects). */
+    val exact: Boolean get() = custom == 0
 
     companion object {
         fun byName(n: String?): Blend = entries.firstOrNull { it.name == n } ?: NORMAL
@@ -112,6 +130,10 @@ class Layer(
     val needsRaster: Boolean get() = isVector || isSmart
     /** Has pixels of its own to draw (pixel, shape, text and smart layers). */
     val hasContent: Boolean get() = kind == LayerKind.PIXELS || isVector || kind == LayerKind.SMART
+    /** Layers can be clipped to it: anything with pixels, or a folder (clipped to everything in it). */
+    val canBeClipBase: Boolean get() = hasContent || isGroup
+    /** Can carry a layer style: anything with pixels, or a folder (styled as a whole). */
+    val canHaveStyle: Boolean get() = hasContent || isGroup
 
     /** Folder folded shut in the Layers panel (not part of undo). */
     var collapsed by mutableStateOf(false)

@@ -194,6 +194,17 @@ fun ShapeOptions(vm: EditorViewModel) {
                 onChange = { v -> set("Star points", live = true) { it.copy(points = v.roundToInt()) } }, onDone = { done("Star points") })
             PanelSlider("Depth", spec.depth, 0f..0.95f, if (spec.depth < 0.005f) "Polygon" else "${(spec.depth * 100).roundToInt()}%",
                 onChange = { v -> set("Star depth", live = true) { it.copy(depth = if (v < 0.02f) 0f else v) } }, onDone = { done("Star depth") })
+            if (spec.depth >= 0.005f) {
+                PanelSlider("Flatten points", spec.flat, 0f..1f,
+                    when {
+                        spec.flat < 0.005f -> "Sharp"
+                        spec.flat > 0.995f -> "Square (cog)"
+                        else -> "${(spec.flat * 100).roundToInt()}%"
+                    },
+                    onChange = { v -> set("Flatten points", live = true) { it.copy(flat = if (v < 0.02f) 0f else v) } }, onDone = { done("Flatten points") })
+                Text("Flat tips and valleys make cogs and gears: try 12 points, 25% depth.", color = Q.textDim, fontSize = 12.sp)
+                Spacer(Modifier.height(4.dp))
+            }
         }
         else -> Unit
     }

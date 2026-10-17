@@ -114,9 +114,9 @@ fun EditorViewModel.pasteLayerStyle(ids: Collection<Long>) {
 internal fun EditorViewModel.applyStyleTo(ids: Collection<Long>, label: String, s: LayerStyle) {
     val d = doc ?: return
     if (pendingFirst { applyStyleTo(ids, label, s) }) return
-    val targets = ids.mapNotNull { d.layer(it) }.filter { it.hasContent && !it.props.locked }
+    val targets = ids.mapNotNull { d.layer(it) }.filter { it.canHaveStyle && !it.props.locked }
     if (targets.isEmpty()) {
-        toast("Pick a pixel, shape or text layer")
+        toast("Pick a pixel, shape or text layer, or a folder")
         return
     }
     stackEdit(label) { for (l in targets) l.props = l.props.copy(style = s) }

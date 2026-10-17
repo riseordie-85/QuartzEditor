@@ -111,6 +111,11 @@ data class ShapeSpec(
     val points: Int = 5,
     /** How deep the star's valleys go: 0 = a plain polygon, 0.95 = very spiky. */
     val depth: Float = 0.5f,
+    /**
+     * How flat the star's tips and valleys are: 0 = sharp points, 1 = square teeth (a cog).
+     * In between, the teeth taper like a gear's.
+     */
+    val flat: Float = 0f,
     /** Polygon sides. */
     val sides: Int = 6,
     /** Arrow head: length as a multiple of the arrow's height, and its width (1 = the full height). */
@@ -138,6 +143,7 @@ data class ShapeSpec(
         .put("radius", radius.toDouble())
         .put("points", points)
         .put("depth", depth.toDouble())
+        .put("flat", flat.toDouble())
         .put("sides", sides)
         .put("headLength", headLength.toDouble())
         .put("headWidth", headWidth.toDouble())
@@ -164,6 +170,7 @@ data class ShapeSpec(
                 radius = o.optDouble("radius", 0.0).toFloat(),
                 points = o.optInt("points", 5),
                 depth = o.optDouble("depth", 0.5).toFloat(),
+                flat = o.optDouble("flat", 0.0).toFloat(),
                 sides = o.optInt("sides", 6),
                 headLength = o.optDouble("headLength", 1.0).toFloat(),
                 headWidth = o.optDouble("headWidth", 1.0).toFloat(),
@@ -190,7 +197,7 @@ data class ShapeSpec(
                 if (r > 0f) addRoundRect(0f, 0f, s.w, s.h, r, r, Path.Direction.CW) else addRect(0f, 0f, s.w, s.h, Path.Direction.CW)
             }
             ShapeKind.ELLIPSE -> Path().apply { addOval(0f, 0f, s.w, s.h, Path.Direction.CW) }
-            ShapeKind.STAR -> starPath(s.w, s.h, s.points, s.depth)
+            ShapeKind.STAR -> starPath(s.w, s.h, s.points, s.depth, s.flat)
             ShapeKind.PATH -> penPath(s.path, s.closed)
             ShapeKind.POLYGON -> starPath(s.w, s.h, s.sides, 0f)
             ShapeKind.TRIANGLE -> Path().apply {
@@ -223,12 +230,32 @@ data class ShapeSpec(
             }
         }
 
-        fun starPath(w: Float, h: Float, points: Int, depth: Float): Path {
+        fun starPath(w: Float, h: Float, points: Int, depth: Float, flat: Float = 0f): Path {
             val n = points.coerceIn(3, 100)
             val d = depth.coerceIn(0f, 0.95f)
             val cx = w / 2f
             val cy = h / 2f
             val p = Path()
+            val f = flat.coerceIn(0f, 1f)
+            if (f > 0.005f && d >= 0.005f) {
+                // Flattened: each tip and each valley is a short arc-like edge instead of a point.
+                // At 1 the edges reach halfway to the next corner, so the sides of a tooth run
+                // straight out from the middle (square teeth).
+                val half = 180.0 / n
+                val spread = f * half / 2.0
+                for (i in 0 until n * 2) {
+                    val r = if (i % 2 == 0) 1f else 1f - d
+                    val mid = -90.0 + i * half
+                    for (a in doubleArrayOf(mid - spread, mid + spread)) {
+                        val rad = Math.toRadians(a)
+                        val x = cx + (cos(rad) * r).toFloat() * w / 2f
+                        val y = cy + (sin(rad) * r).toFloat() * h / 2f
+                        if (i == 0 && a < mid) p.moveTo(x, y) else p.lineTo(x, y)
+                    }
+                }
+                p.close()
+                return p
+            }
             // A polygon only has the outer corners
             val step = if (d < 0.005f) 2 else 1
             val count = n * 2

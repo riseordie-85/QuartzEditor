@@ -148,7 +148,7 @@ object DocRenderer {
                 if (base.props.visible && l.props.visible) clips.getOrPut(base.id) { mutableListOf() }.add(l)
                 continue
             }
-            base = if (!l.props.clip && l.hasContent) l else null
+            base = if (!l.props.clip && l.canBeClipBase) l else null
             if (l.props.visible) shown.add(l)
         }
         return shown to clips
@@ -202,7 +202,7 @@ object DocRenderer {
             shown = list.filter { it.props.visible }
             ctx = ctx0
         }
-        val adjusts = shown.any { it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f }
+        val adjusts = shown.any { (it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f) || customBlend(it, ctx) }
         if (!adjusts) {
             for (l in shown) drawNode(canvas, l, ctx)
             return
@@ -212,6 +212,13 @@ object DocRenderer {
     }
 
     /**
+     * Drawn on its own and then mixed with what's below by [BlendShader] (a blend mode Android
+     * doesn't have). A clipping group's base is mixed as the whole group, by the list around it.
+     */
+    private fun customBlend(l: Layer, ctx: Ctx): Boolean =
+        l.props.blend.custom != 0 && !l.isAdjustment && l !== ctx.clipBase && !(l.isGroup && l.props.passThrough) && l.props.opacity > 0f
+
+    /**
      * [clipGroups], with Pass Through folders opened up: their layers are drawn in among the layers
      * around them, so their blend modes and adjustment layers reach the layers below the folder
      * (like Photoshop). A folder with less than full opacity or a mask is still drawn as one picture.
@@ -219,7 +226,7 @@ object DocRenderer {
     private fun passThrough(list: List<Layer>, ctx: Ctx): Pair<List<Layer>, Map<Long, List<Layer>>> {
         val (shown, clips) = clipGroups(list)
         val doc = ctx.doc ?: return shown to clips
-        fun opens(l: Layer) = l.isGroup && l.props.passThrough && !l.maskActive &&
+        fun opens(l: Layer) = l.isGroup && l.props.passThrough && !l.maskActive && !l.props.style.any &&
             l.props.opacity * l.props.fill >= 0.999f && clips[l.id].isNullOrEmpty() && ctx.preview?.of(l.id) == null
         if (shown.none { opens(it) }) return shown to clips
         val out = ArrayList<Layer>(shown.size + 8)
@@ -236,19 +243,16 @@ object DocRenderer {
         return out to all
     }
 
-    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx) {
+    /** [forceNormal]: blended Normally whatever its blend mode (it's mixed in by [BlendShader] afterwards). */
+    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, forceNormal: Boolean = false) {
         val base = ctx.clipBase
         if (base != null && l !== base && !l.isAdjustment) {
             // A clipped layer: drawn on its own, then cut to its base's pixels, then blended on
             // (its own blend mode applies here, when the cut result goes onto the group)
-            canvas.saveLayer(ctx.bounds, Paint().apply { blendMode = l.props.blend.mode })
+            canvas.saveLayer(ctx.bounds, Paint().apply { blendMode = if (forceNormal) Blend.NORMAL.mode else l.props.blend.mode })
             drawNode(canvas, l, ctx.with(clips = emptyMap(), clipBase = null), blendNormal = true, fullOpacity = false)
             canvas.saveLayer(ctx.bounds, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
-            val bp = ctx.preview?.of(base.id)
-            drawContent(
-                canvas, ctx.docW, ctx.docH, base, ctx.bounds, ctx.tilePaint, ctx.stroke?.takeIf { it.layer === base }, bp, ctx.smooth,
-                base.x + (bp?.dragX ?: 0f), base.y + (bp?.dragY ?: 0f),
-            )
+            drawClipShape(canvas, base, ctx)
             canvas.restore()
             canvas.restore()
             return
@@ -260,7 +264,7 @@ object DocRenderer {
             if (p.opacity <= 0f) return
             canvas.saveLayer(ctx.bounds, Paint().apply {
                 alpha = (p.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-                blendMode = p.blend.mode
+                blendMode = if (forceNormal) Blend.NORMAL.mode else p.blend.mode
             })
             drawList(canvas, listOf(l) + members, ctx.with(clips = emptyMap(), clipBase = l), regroup = false)
             canvas.restore()
@@ -268,14 +272,30 @@ object DocRenderer {
         }
         // A clipping group's base: its opacity and blend mode are applied around the whole group
         val asBase = base === l
-        drawNode(canvas, l, ctx, blendNormal = asBase, fullOpacity = asBase)
+        drawNode(canvas, l, ctx, blendNormal = asBase || forceNormal, fullOpacity = asBase)
+    }
+
+    /**
+     * What layers clipped to [base] are cut to: its own pixels (and mask), or for a folder,
+     * everything in it.
+     */
+    private fun drawClipShape(canvas: Canvas, base: Layer, ctx: Ctx) {
+        val bp = ctx.preview?.of(base.id)
+        if (base.isGroup) {
+            drawNode(canvas, base, ctx.with(clips = emptyMap(), clipBase = null), blendNormal = true, fullOpacity = true, styled = false)
+            return
+        }
+        drawContent(
+            canvas, ctx.docW, ctx.docH, base, ctx.bounds, ctx.tilePaint, ctx.stroke?.takeIf { it.layer === base }, bp, ctx.smooth,
+            base.x + (bp?.dragX ?: 0f), base.y + (bp?.dragY ?: 0f),
+        )
     }
 
     /**
      * [blendNormal]: blended Normally (its blend mode is applied around it instead);
      * [fullOpacity]: its opacity likewise.
      */
-    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean) {
+    private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean, styled: Boolean = true) {
         when (l.kind) {
             LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT, LayerKind.SMART -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
@@ -285,9 +305,13 @@ object DocRenderer {
             LayerKind.GROUP -> {
                 val p = l.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
                 val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
-                if (alpha <= 0f) return
                 val dragX = ctx.preview?.of(l.id)?.dragX ?: 0f
                 val dragY = ctx.preview?.of(l.id)?.dragY ?: 0f
+                if (styled && p.style.any && p.opacity > 0f) {
+                    drawStyledGroup(canvas, l, ctx, blendNormal = blendNormal || p.passThrough, fullOpacity = fullOpacity, dragX = dragX, dragY = dragY)
+                    return
+                }
+                if (alpha <= 0f) return
                 // A folder is drawn as one picture, then blended (its layers' blend modes stay inside it).
                 // Pass Through folders only get here with less than full opacity or a mask: blended Normally.
                 canvas.saveLayer(ctx.bounds, Paint().apply {
@@ -303,6 +327,46 @@ object DocRenderer {
             }
             LayerKind.ADJUSTMENT -> Unit // drawn by drawList
         }
+    }
+
+    /**
+     * A folder with a layer style: everything in it is drawn together (through its mask), then
+     * styled like a layer's pixels. On screen what's in it is recorded once and replayed for each
+     * effect that needs its shape.
+     */
+    private fun drawStyledGroup(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean, dragX: Float, dragY: Float) {
+        val kids = ctx.doc?.children(l.id) ?: emptyList()
+        val inner = ctx.with(clips = emptyMap(), clipBase = null)
+        fun drawKids(c: Canvas) {
+            c.save()
+            c.translate(dragX, dragY)
+            drawList(c, kids, inner)
+            c.restore()
+            drawMask(c, l, ctx, l.x + dragX, l.y + dragY)
+        }
+        var node: RenderNode? = null
+        val content: (Canvas) -> Unit = content@{ c ->
+            if (!c.isHardwareAccelerated) {
+                drawKids(c)
+                return@content
+            }
+            val b = ctx.bounds
+            val n = node ?: RenderNode("folder").also { rn ->
+                val left = kotlin.math.floor(b.left).toInt()
+                val top = kotlin.math.floor(b.top).toInt()
+                rn.setPosition(left, top, kotlin.math.ceil(b.right).toInt().coerceAtLeast(left + 1), kotlin.math.ceil(b.bottom).toInt().coerceAtLeast(top + 1))
+                val rc = rn.beginRecording()
+                rc.translate(-left.toFloat(), -top.toFloat())
+                drawKids(rc)
+                rn.endRecording()
+                node = rn
+            }
+            c.drawRenderNode(n)
+        }
+        drawLayer(
+            canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint, null, ctx.preview?.of(l.id), ctx.smooth, ctx.effects,
+            blendNormal = blendNormal, fullOpacity = fullOpacity, content = content, offset = l.x + dragX to l.y + dragY,
+        )
     }
 
     /** Cuts a layer's (or folder's) mask out of what's in the current saveLayer. */
@@ -344,7 +408,33 @@ object DocRenderer {
         var below = node("below")
         var rec = below.beginRecording(w, h)
         rec.concat(view)
+        // Screen pixel → canvas pixel (for Dissolve's pattern)
+        val toDoc = FloatArray(9).also { v -> Matrix().also { inv -> view.invert(inv) }.getValues(v) }
         for (l in list) {
+            if (customBlend(l, ctx)) {
+                // What's below on the left, the layer alone on the right, mixed by the blend shader
+                below.endRecording()
+                val pair = RenderNode("pair").apply { setPosition(0, 0, 2 * w, h) }
+                val pc = pair.beginRecording(2 * w, h)
+                pc.drawRenderNode(below)
+                pc.save()
+                pc.translate(w.toFloat(), 0f)
+                pc.clipRect(0, 0, w, h)
+                pc.concat(view)
+                drawNode(pc, l, ctx, forceNormal = true)
+                pc.restore()
+                pair.endRecording()
+                pair.setRenderEffect(BlendShader.pairEffect(
+                    l.props.blend, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
+                ))
+                val next = node("next")
+                val nr = next.beginRecording(w, h)
+                nr.drawRenderNode(pair)
+                nr.concat(view)
+                below = next
+                rec = nr
+                continue
+            }
             val fx = l.props.adjust
             if (!(l.isAdjustment && fx != null)) {
                 drawNode(rec, l, ctx)
@@ -465,6 +555,20 @@ object DocRenderer {
         }
         prepare(pc)
         for (l in list) {
+            if (customBlend(l, ctx)) {
+                // The layer drawn alone the same size, then the two mixed by the blend shader
+                val alone = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                val ac = Canvas(alone)
+                prepare(ac)
+                drawNode(ac, l, ctx, forceNormal = true)
+                val mixed = BlendShader.mix(pic, alone, l.props.blend, area.width() / pw.toFloat(), area.height() / ph.toFloat(), area.left.toFloat(), area.top.toFloat())
+                alone.recycle()
+                pic.recycle()
+                pic = mixed
+                pc = Canvas(pic)
+                prepare(pc)
+                continue
+            }
             val fx = l.props.adjust
             if (!(l.isAdjustment && fx != null)) {
                 drawNode(pc, l, ctx)
@@ -514,14 +618,21 @@ object DocRenderer {
         effects: ((Layer) -> BuiltEffects?)?,
         blendNormal: Boolean = false,
         fullOpacity: Boolean = false,
+        /** Draws the pixels being styled instead of the layer's own (a folder's contents). */
+        content: ((Canvas) -> Unit)? = null,
+        /** Where the effects sit, when [content] is given. */
+        offset: Pair<Float, Float>? = null,
     ) {
         val p = layer.props.let { if (blendNormal) it.copy(blend = Blend.NORMAL) else it }.let { if (fullOpacity) it.copy(opacity = 1f) else it }
-        val transforming = preview?.transform != null || preview?.mesh != null
+        val transforming = content == null && (preview?.transform != null || preview?.mesh != null)
         val style = p.style
         val built = if (style.needsBuild && !transforming) effects?.invoke(layer) else null
         val overlay = style.colorOverlay.takeIf { it.on && !transforming }
-        val dx = layer.x + (preview?.dragX ?: 0f)
-        val dy = layer.y + (preview?.dragY ?: 0f)
+        val dx = offset?.first ?: (layer.x + (preview?.dragX ?: 0f))
+        val dy = offset?.second ?: (layer.y + (preview?.dragY ?: 0f))
+        fun drawContent(canvas: Canvas, docW: Float, docH: Float, layer: Layer, bounds: RectF, tilePaint: Paint, stroke: StrokeSession?, preview: LayerPreview?, smooth: Boolean, dx: Float, dy: Float) {
+            if (content != null) content(canvas) else this.drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+        }
 
         val pattern = style.patternOverlay.takeIf { it.on && !transforming && it.opacity > 0f }
         if (built == null && overlay == null && pattern == null && !(style.gradientFill.on && !transforming)) {
@@ -529,7 +640,7 @@ object DocRenderer {
             val alpha = (p.opacity * p.fill).coerceIn(0f, 1f)
             if (alpha <= 0f) return
             val mask = if (layer.maskActive && !transforming) layer.mask else null
-            val plain = p.blend == Blend.NORMAL && alpha >= 1f && mask == null && stroke == null && preview?.fx == null && preview?.gradient == null && !transforming
+            val plain = content == null && p.blend == Blend.NORMAL && alpha >= 1f && mask == null && stroke == null && preview?.fx == null && preview?.gradient == null && !transforming
             if (plain) {
                 layer.tiles.drawTo(canvas, dx, dy, tilePaint, RectF(bounds))
                 return
@@ -603,6 +714,12 @@ object DocRenderer {
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
             })
             canvas.restore()
+        }
+        if (built != null && style.satin.on) {
+            Effects.drawImage(canvas, built, built.satin, dx, dy, style.satin.color, style.satin.opacity, style.satin.blend.mode)
+        }
+        if (built != null && style.innerGlow.on) {
+            Effects.drawImage(canvas, built, built.innerGlow, dx, dy, style.innerGlow.color, style.innerGlow.opacity, style.innerGlow.blend.mode)
         }
         if (built != null && style.innerShadow.on) {
             // Already limited to the layer's shape
@@ -845,12 +962,49 @@ object DocRenderer {
      */
     fun buildAllEffects(doc: Doc, maxSide: Int, only: Collection<Layer> = doc.layers): Map<Long, BuiltEffects> {
         val out = HashMap<Long, BuiltEffects>()
-        for (l in only) {
-            if (!l.hasContent || !l.props.visible || !l.props.style.needsBuild) continue
-            val mask = if (l.maskActive) l.mask?.tiles else null
-            // A layer whose effects can't be made is drawn without them (never blocks saving or export)
-            runCatching { Effects.build(Unit, l.props.style, l.tiles.tiles, mask, maxSide) }.getOrNull()?.let { out[l.id] = it }
+        // Bottom first, so a folder's layers have their effects before the folder is drawn for its own
+        val order = if (only === doc.layers) doc.layers else doc.layers.filter { it in only }
+        for (l in order) {
+            if (!l.canHaveStyle || !l.props.visible || !l.props.style.needsBuild) continue
+            out.putAll(listOfNotNull(buildEffects(doc, l, maxSide) { out[it.id] }?.let { l.id to it }))
         }
         return out
+    }
+
+    /**
+     * [l]'s effect images at most [maxSide] across, or null when there are none (or they can't be
+     * made: the layer is then drawn without them). A folder's are made from everything in it drawn
+     * together ([effects]: its layers' own effects).
+     */
+    fun buildEffects(doc: Doc, l: Layer, maxSide: Int, key: Any = Unit, effects: ((Layer) -> BuiltEffects?)? = null): BuiltEffects? {
+        val mask = if (l.maskActive) l.mask?.tiles else null
+        return runCatching {
+            val tiles = if (l.isGroup) groupTiles(doc, l, effects) else l.tiles.tiles
+            Effects.build(key, l.props.style, tiles, mask, maxSide, System.identityHashCode(l.tiles))
+        }.getOrNull()
+    }
+
+    /**
+     * A folder's layers drawn together (without the folder's own mask, opacity or effects), as
+     * tiles at the folder's position: what its effects are made from.
+     */
+    fun groupTiles(doc: Doc, group: Layer, effects: ((Layer) -> BuiltEffects?)?): Map<Long, Bitmap> {
+        val inside = doc.layers.slice(doc.block(group)).filter { it !== group && it.props.visible }
+        var region: android.graphics.Rect? = null
+        for (l in inside) {
+            val b = l.bounds() ?: continue
+            if (l.props.style.any) {
+                val r = kotlin.math.ceil(l.props.style.reach).toInt() + 2
+                b.inset(-r, -r)
+            }
+            if (region == null) region = android.graphics.Rect(b) else region.union(b)
+        }
+        // Adjustment layers only change what's there; nothing reaches further than the canvas and as much again around it
+        val r = region ?: return emptyMap()
+        if (!r.intersect(-doc.width, -doc.height, 2 * doc.width, 2 * doc.height)) return emptyMap()
+        val bmp = renderLayers(doc.children(group.id), r, doc.width, doc.height, effects, doc)
+        val grid = TileGrid.fromBitmap(bmp, r.left - group.x, r.top - group.y, alphaOnly = false)
+        bmp.recycle()
+        return grid.tiles
     }
 }

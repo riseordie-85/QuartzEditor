@@ -369,6 +369,7 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
     if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
+    BigPsdDialog(vm)
     if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
         editGuidesOpen = false
         guideOpen = true
