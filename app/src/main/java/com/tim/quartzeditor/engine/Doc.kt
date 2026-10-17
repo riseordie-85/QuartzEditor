@@ -355,7 +355,7 @@ class Doc(width: Int, height: Int, name: String) {
             val m = l.mask?.let { src -> TileGrid(alphaOnly = true).also { it.tiles.putAll(src.tiles) } }
             // A smart layer's contents are copied the same way (they may be edited meanwhile)
             val props = l.props.smart?.let { sp -> l.props.copy(smart = SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf())) } ?: l.props
-            d.layers.add(Layer(l.id, props, t, l.x, l.y, m, l.kind))
+            d.layers.add(Layer(l.id, props, t, l.x, l.y, m, l.kind).also { it.collapsed = l.collapsed })
         }
         d.activeId = activeId
         d.selection = selection

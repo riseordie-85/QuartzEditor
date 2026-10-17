@@ -26,6 +26,7 @@ import com.tim.quartzeditor.EditorApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 // When the app closed unexpectedly last time: why (Android keeps the reason; a crash also leaves
 // its details), shown once on the launch screen, with a button to copy it for a bug report.
@@ -42,22 +43,31 @@ private fun lastExit(context: Context): String? {
     } ?: return null
     if (info.timestamp <= seen) return null
     prefs.edit().putLong("seenExit", info.timestamp).apply()
+    // Only when it was on screen: Android also clears apps from memory in the background, and
+    // Android Studio stops them when it installs a new build
+    val onScreen = info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
     val why = when (info.reason) {
         ApplicationExitInfo.REASON_CRASH -> "It crashed."
         ApplicationExitInfo.REASON_CRASH_NATIVE -> "It crashed (in Android's graphics or image code)."
-        ApplicationExitInfo.REASON_LOW_MEMORY -> "Android closed it because the phone ran low on memory."
         ApplicationExitInfo.REASON_ANR -> "It stopped responding and Android closed it."
-        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "Android closed it for using too much of the phone."
-        ApplicationExitInfo.REASON_SIGNALED -> "Android stopped it (often for memory)."
+        ApplicationExitInfo.REASON_LOW_MEMORY -> if (onScreen) "Android closed it because the phone ran low on memory." else return null
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> if (onScreen) "Android closed it for using too much of the phone." else return null
+        ApplicationExitInfo.REASON_SIGNALED -> if (onScreen) "Android stopped it (often for memory)." else return null
         else -> return null
     }
     val crash = File(context.filesDir, EditorApp.CRASH_FILE)
-    val details = if (crash.exists()) {
+    var details = info.description.orEmpty()
+    if (crash.exists()) {
         val text = crash.readText()
         crash.delete()
-        text.lineSequence().drop(1).take(40).joinToString("\n")
-    } else {
-        info.description.orEmpty()
+        // Only this closing's own crash (written moments before it)
+        val at = text.lineSequence().firstOrNull()?.toLongOrNull() ?: 0L
+        if (abs(info.timestamp - at) < 60_000) {
+            val lines = text.lines().drop(1)
+            // The top of the trace, and every "Caused by" (the real reason is often there)
+            val causes = lines.withIndex().filter { it.value.trimStart().startsWith("Caused by") }.flatMap { (i, _) -> lines.subList(i, minOf(lines.size, i + 6)) }
+            details = (lines.take(30) + listOf("") + causes).joinToString("\n").trim()
+        }
     }
     val mem = "Memory: ${info.pss / 1024} MB in use when it closed"
     return "$why\n$mem\n\n$details".trim()

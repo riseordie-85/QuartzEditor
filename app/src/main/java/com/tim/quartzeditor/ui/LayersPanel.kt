@@ -226,25 +226,31 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 4)
         // Only the rows on screen are built (big files have hundreds of layers), and each picture
         // keeps its own place in the list (coming back from a smart layer's tab, it's where it was)
-        val listKey = System.identityHashCode(d)
+        val listKey = d
         val listState = remember(listKey) {
-            val (index, offset) = vm.layerListPlace[listKey] ?: (0 to 0)
+            val (index, offset) = vm.layerListPlace[d] ?: (0 to 0)
             androidx.compose.foundation.lazy.LazyListState(index, offset)
         }
         androidx.compose.runtime.DisposableEffect(listKey) {
-            onDispose { vm.layerListPlace[listKey] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            onDispose { vm.layerListPlace[d] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
         }
         // Where the finger is while a row is dragged (list pixels), and where on the row it held it
         var fingerY by remember { mutableFloatStateOf(0f) }
         var grabY by remember { mutableFloatStateOf(0f) }
         var listH by remember { mutableIntStateOf(0) }
+        // Scrolling at the edges starts only once the finger has moved there (not just from picking up the top row)
+        var edgeArmed by remember { mutableStateOf(false) }
+        var startY by remember { mutableFloatStateOf(0f) }
         val handlePx = with(density) { 48.dp.toPx() }
-        val edgePx = with(density) { 56.dp.toPx() }
+        val edgePx = minOf(with(density) { 40.dp.toPx() }, listH / 4f)
         // Dragging near the top or bottom scrolls the list (faster the closer to the edge)
         androidx.compose.runtime.LaunchedEffect(dragId) {
             if (dragId == null) return@LaunchedEffect
-            while (true) {
+            while (dragId != null) {
                 androidx.compose.runtime.withFrameNanos { }
+                if (dragId == null) break
+                if (!edgeArmed && abs(fingerY - startY) > rowPx / 2f) edgeArmed = true
+                if (!edgeArmed) continue
                 val y = fingerY
                 val speed = when {
                     y < edgePx -> -((edgePx - y) / edgePx).coerceIn(0f, 1.5f) * rowPx * 0.35f
@@ -258,6 +264,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             }
         }
         fun drop() {
+            // Keep the list where it is: it would otherwise follow the moved row
+            val keepIndex = listState.firstVisibleItemIndex
+            val keepOffset = listState.firstVisibleItemScrollOffset
             val steps = (dragOffset / rowPx).roundToInt()
             val id = dragId
             val doc = vm.doc
@@ -285,6 +294,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             }
             dragId = null
             dragOffset = 0f
+            listState.requestScrollToItem(keepIndex, keepOffset)
         }
         Box(
             Modifier
@@ -302,18 +312,30 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                             ?: return@awaitEachGesture
                         val id = item.key as? Long ?: return@awaitEachGesture
                         var started = false
+                        var cancelled = false
                         var lastY = down.position.y
                         try {
                             while (true) {
                                 val ev = awaitPointerEvent(PointerEventPass.Initial)
-                                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!c.pressed) break
-                                if (!started && abs(c.position.y - down.position.y) > viewConfiguration.touchSlop) {
+                                val c = ev.changes.firstOrNull { it.id == down.id }
+                                if (c == null) {
+                                    cancelled = true
+                                    break
+                                }
+                                if (!c.pressed) {
+                                    // A touch Android called off arrives already used: not a drop
+                                    cancelled = c.isConsumed
+                                    break
+                                }
+                                if (!started && abs(c.position.y - down.position.y) >= viewConfiguration.touchSlop) {
                                     started = true
                                     dragId = id
+                                    // From where it was picked up, so the row and the drop agree
                                     dragOffset = 0f
+                                    lastY = down.position.y
                                     grabY = down.position.y - item.offset
-                                    lastY = c.position.y
+                                    startY = c.position.y
+                                    edgeArmed = false
                                 }
                                 if (started) {
                                     dragOffset += c.position.y - lastY
@@ -322,7 +344,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                                     c.consume()
                                 }
                             }
-                            if (started) drop()
+                            if (started && !cancelled) drop()
                         } finally {
                             if (started && dragId != null) {
                                 dragId = null

@@ -218,6 +218,35 @@ object PsdImport {
 
         // ------------------------------------------------------------ text and smart objects
 
+        /**
+         * Whether a smart object's warp bends it: a named warp with any bend, or a custom one whose
+         * mesh isn't the plain even grid Photoshop keeps for unwarped smart objects.
+         */
+        fun warped(w: Map<*, *>?): Boolean {
+            w ?: return false
+            fun n(v: Any?): Double = (v as? Number)?.toDouble() ?: (v as? PsdUnit)?.value ?: 0.0
+            return when ((w["warpStyle"] as? PsdEnum)?.value) {
+                null, "warpNone" -> false
+                "warpCustom" -> {
+                    val b = w["bounds"] as? Map<*, *> ?: return false
+                    val left = n(b["Left"]); val top = n(b["Top "]); val right = n(b["Rght"]); val bottom = n(b["Btom"])
+                    val mesh = (w["customEnvelopeWarp"] as? Map<*, *>)?.get("meshPoints") as? Map<*, *> ?: return false
+                    val hs = (mesh["Hrzn"] as? List<*>)?.map { n(it) } ?: return false
+                    val vs = (mesh["Vrtc"] as? List<*>)?.map { n(it) } ?: return false
+                    val u = ((w["uOrder"] as? Number)?.toInt() ?: 4).coerceAtLeast(2)
+                    val v = ((w["vOrder"] as? Number)?.toInt() ?: 4).coerceAtLeast(2)
+                    if (hs.size != u * v || vs.size != u * v) return true
+                    val tol = maxOf(1.0, (right - left) * 0.002)
+                    (0 until u * v).any { i ->
+                        val ex = left + (i % u) * (right - left) / (u - 1)
+                        val ey = top + (i / u) * (bottom - top) / (v - 1)
+                        abs(hs[i] - ex) > tol || abs(vs[i] - ey) > tol
+                    }
+                }
+                else -> abs(n(w["warpValue"])) > 0.01 || abs(n(w["warpPerspective"])) > 0.01 || abs(n(w["warpPerspectiveOther"])) > 0.01
+            }
+        }
+
         /** A Photoshop text layer as ours, or null to keep it as pixels (warped, empty). */
         fun textProps(pl: PsdLayer, t: PsdText, props: LayerProps): LayerProps? {
             if (t.warped || t.text.isBlank()) {
@@ -275,11 +304,12 @@ object PsdImport {
             } ?: false
             // A warp bends the contents past their plain corners: the pixels reach outside them
             // (inside is fine: contents often have see-through space around them)
-            val bent = quad != null && pl.width > 0 && run {
+            val outside = quad != null && pl.width > 0 && run {
                 val xs = floatArrayOf(quad[0], quad[2], quad[4], quad[6])
                 val ys = floatArrayOf(quad[1], quad[3], quad[5], quad[7])
                 pl.left < xs.min() - 3 || pl.right > xs.max() + 3 || pl.top < ys.min() - 3 || pl.bottom > ys.max() + 3
             }
+            val bent = outside || warped(so?.get("warp") as? Map<*, *>)
             val linked = id?.let { key -> f.linked[key] ?: f.linked.entries.firstOrNull { it.key.trim('\u0000', ' ') == key }?.value }
             var why: String? = when {
                 filtered -> "smart filters"
