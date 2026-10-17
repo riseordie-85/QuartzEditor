@@ -1,3 +1,9 @@
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -86,7 +92,7 @@ val downloadAiModels by tasks.registering {
     doLast {
         dir.mkdirs()
         fun sha(f: File): String {
-            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val md = MessageDigest.getInstance("SHA-256")
             f.inputStream().use { input ->
                 val buf = ByteArray(1 shl 16)
                 while (true) {
@@ -104,18 +110,18 @@ val downloadAiModels by tasks.registering {
             val tmp = File(tmpDir, m.name + ".part")
             try {
                 logger.lifecycle("Downloading AI model ${m.name}…")
-                var url = java.net.URL(m.url)
-                lateinit var conn: java.net.HttpURLConnection
+                var url = URL(m.url)
+                lateinit var conn: HttpURLConnection
                 var hops = 0
                 // Follow the download's redirects (Hugging Face sends you on to its file servers)
                 while (true) {
-                    conn = url.openConnection() as java.net.HttpURLConnection
+                    conn = url.openConnection() as HttpURLConnection
                     conn.instanceFollowRedirects = false
                     conn.connectTimeout = 30_000
                     conn.readTimeout = 120_000
                     val code = conn.responseCode
                     if (code in 300..399 && hops++ < 8) {
-                        url = java.net.URL(url, conn.getHeaderField("Location"))
+                        url = URL(url, conn.getHeaderField("Location"))
                         conn.disconnect()
                         continue
                     }
@@ -128,7 +134,7 @@ val downloadAiModels by tasks.registering {
                     tmp.delete()
                     throw GradleException("checksum didn't match ($got)")
                 }
-                java.nio.file.Files.move(tmp.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
             } catch (e: Exception) {
                 tmp.delete()
                 logger.warn("Couldn't download AI model ${m.name}: ${e.message}. The app builds without it (Select Object / AI Remove will say so).")
