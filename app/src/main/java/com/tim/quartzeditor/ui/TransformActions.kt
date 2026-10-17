@@ -168,7 +168,7 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
     val t = transform ?: return
     if (busy != null) return
     // Text is redrawn in its own font: wait for it if it's still loading
-    val fonts = t.parts.filter { it.layer.props.text?.psdFont == null }.mapNotNull { it.layer.props.text?.fontKey }.filter { !fontReady(it) }
+    val fonts = t.parts.filter { it.layer.props.text?.psdFont == null }.flatMap { it.layer.props.text?.fonts.orEmpty() }.distinct().filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
         withFonts(fonts) { applyTransform(onDone) }
         return
@@ -276,7 +276,7 @@ internal fun EditorViewModel.canvasTransform(
     val d = doc ?: return
     if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }) return
     // (Text from Photoshop that's still its own pixels turns as pixels: no font needed)
-    val fonts = d.layers.filter { it.props.text?.psdFont == null }.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
+    val fonts = d.layers.filter { it.props.text?.psdFont == null }.flatMap { it.props.text?.fonts.orEmpty() }.distinct().filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
         withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }
         return

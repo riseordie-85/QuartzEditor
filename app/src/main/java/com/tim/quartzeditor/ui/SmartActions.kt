@@ -141,10 +141,14 @@ fun EditorViewModel.convertToSmart() {
         // Copies of the layers, moved so the box's corner is the contents' corner
         val ids = HashMap<Long, Long>()
         for (l in block) ids[l.id] = contents.newId()
+        // Smart layers going inside get contents of their own (links only reach within one picture),
+        // still shared among the ones going in together
+        val inner = java.util.IdentityHashMap<Doc, Doc>()
         for (l in block) {
             val parent = ids[l.props.parent] ?: 0L
+            val smart = l.props.smart?.let { sp -> SmartSpec(inner.getOrPut(sp.contents) { sp.contents.shallowCopy() }, sp.quad.copyOf()) }
             val copy = Layer(
-                ids.getValue(l.id), l.props.copy(parent = parent, locked = false),
+                ids.getValue(l.id), l.props.copy(parent = parent, locked = false, smart = smart),
                 TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }, l.x - box.left, l.y - box.top,
                 l.mask?.let { m -> TileGrid(alphaOnly = true).also { it.tiles.putAll(m.tiles) } }, l.kind,
             )
@@ -359,17 +363,20 @@ internal fun EditorViewModel.saveCopy(): SaveCopy? {
             p = p.parent
         }
     }
-    val redraw = stale.sortedByDescending { depth(it) }.mapNotNull { t ->
-        val l = t.parent?.doc?.layer(t.layerId) ?: return@mapNotNull null
-        val sp = l.props.smart?.takeIf { it.contents === t.doc } ?: return@mapNotNull null
-        val quad = t.baseline?.let { placedAfterResize(sp.quad, it, t.doc) } ?: sp.quad
-        val path = ArrayList<Long>()
-        var p: EditorTab? = t
+    val redraw = stale.sortedByDescending { depth(it) }.flatMap { t ->
+        // Where the tab's document sits: the layer ids of the tabs it's inside
+        val outer = ArrayList<Long>()
+        var p: EditorTab? = t.parent
         while (p?.parent != null) {
-            path.add(0, p.layerId)
+            outer.add(0, p.layerId)
             p = p.parent
         }
-        path to quad
+        // Every layer showing these contents (linked copies too), each where it is
+        t.parent?.doc?.layers.orEmpty().filter { it.props.smart?.contents === t.doc }.map { l ->
+            val sp = l.props.smart!!
+            val quad = t.baseline?.let { placedAfterResize(sp.quad, it, t.doc) } ?: sp.quad
+            (outer + l.id) to quad
+        }
     }
     return SaveCopy(copy, redraw)
 }

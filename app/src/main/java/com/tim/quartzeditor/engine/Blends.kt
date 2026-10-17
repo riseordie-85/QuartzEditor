@@ -79,8 +79,13 @@ half4 main(float2 p) {
      * [width] pixels are the layer: the left half becomes the two mixed (the right half is cleared).
      * Canvas pixel = node pixel × ([sx], [sy]) + ([tx], [ty]).
      */
-    fun pairEffect(blend: Blend, width: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
-        val sh = RuntimeShader(PAIR)
+    /** On screen: one shader per layer, kept (compiling one every frame would stutter). Main thread only. */
+    private val screen = HashMap<Long, RuntimeShader>()
+
+    /** [layerId]: whose shader to reuse (each layer keeps its own, since several can be on screen at once). */
+    fun pairEffect(layerId: Long, blend: Blend, width: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
+        if (screen.size > 64) screen.clear()
+        val sh = screen.getOrPut(layerId) { RuntimeShader(PAIR) }
         sh.setFloatUniform("mode", blend.custom.toFloat())
         sh.setFloatUniform("docMap", sx, sy, tx, ty)
         sh.setFloatUniform("shift", width.toFloat())

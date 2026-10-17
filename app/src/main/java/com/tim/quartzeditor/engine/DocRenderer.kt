@@ -351,6 +351,25 @@ object DocRenderer {
                 return@content
             }
             val b = ctx.bounds
+            val v = ctx.view
+            if (v != null && ctx.viewW > 0 && ctx.viewH > 0) {
+                // Recorded in screen pixels (so tile edges still land on whole screen pixels), then
+                // drawn back through the inverse of the view
+                val n = node ?: RenderNode("folder").also { rn ->
+                    rn.setPosition(0, 0, ctx.viewW, ctx.viewH)
+                    val rc = rn.beginRecording()
+                    rc.concat(v)
+                    drawKids(rc)
+                    rn.endRecording()
+                    node = rn
+                }
+                val inverse = Matrix().also { v.invert(it) }
+                c.save()
+                c.concat(inverse)
+                c.drawRenderNode(n)
+                c.restore()
+                return@content
+            }
             val n = node ?: RenderNode("folder").also { rn ->
                 val left = kotlin.math.floor(b.left).toInt()
                 val top = kotlin.math.floor(b.top).toInt()
@@ -425,7 +444,7 @@ object DocRenderer {
                 pc.restore()
                 pair.endRecording()
                 pair.setRenderEffect(BlendShader.pairEffect(
-                    l.props.blend, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
+                    l.id, l.props.blend, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
                 ))
                 val next = node("next")
                 val nr = next.beginRecording(w, h)
@@ -1006,9 +1025,10 @@ object DocRenderer {
             }
             if (region == null) region = android.graphics.Rect(b) else region.union(b)
         }
-        // Adjustment layers only change what's there; nothing reaches further than the canvas and as much again around it
+        // Only what can show: the canvas, and as far around it as the folder's own effects reach
         val r = region ?: return emptyMap()
-        if (!r.intersect(-doc.width, -doc.height, 2 * doc.width, 2 * doc.height)) return emptyMap()
+        val reach = kotlin.math.ceil(group.props.style.reach).toInt() + 4
+        if (!r.intersect(-reach, -reach, doc.width + reach, doc.height + reach)) return emptyMap()
         val bmp = renderLayers(doc.children(group.id), r, doc.width, doc.height, effects, doc)
         val grid = TileGrid.fromBitmap(bmp, r.left - group.x, r.top - group.y, alphaOnly = false)
         bmp.recycle()

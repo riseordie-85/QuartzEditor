@@ -317,7 +317,9 @@ object PsdReader {
             planes.add(plane)
         }
         val px = IntArray(w * h)
-        fun ch(i: Int): ByteArray? = planes.getOrNull(i)
+        // The written planes in order: the colors, then transparency when there's one more
+        val written = planes.filterNotNull()
+        fun ch(i: Int): ByteArray? = written.getOrNull(i)
         when (p.mode) {
             1 -> { // grayscale
                 val g = ch(0) ?: throw PsdException("Bad pattern")

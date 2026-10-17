@@ -81,12 +81,15 @@ fun EditorViewModel.pickLibraryShape(s: LibraryShape) {
  */
 internal fun withLibraryShape(spec: ShapeSpec, s: LibraryShape, keepBox: Boolean): ShapeSpec {
     val sh = s.shape
-    val w = if (spec.w > 0f) spec.w else sh.w
-    val h = if (keepBox && spec.h > 0f) spec.h else w * sh.h / sh.w.coerceAtLeast(0.001f)
+    val w = if (keepBox || spec.w > 0f) spec.w else sh.w
+    val h = if (keepBox) spec.h else w * sh.h / sh.w.coerceAtLeast(0.001f)
     var out = spec.copy(kind = ShapeKind.CUSTOM, parts = sh.parts, viewW = sh.w, viewH = sh.h, evenOdd = sh.evenOdd, shapeName = s.name, w = w, h = h)
-    // Drawn as lines in its file: an outline, not a fill
-    if (sh.strokeWidth > 0f && out.stroke == null) {
-        out = out.copy(stroke = spec.fill ?: android.graphics.Color.BLACK, fill = null, strokeWidth = (sh.strokeWidth * w / sh.w.coerceAtLeast(0.001f)).coerceAtLeast(1f))
+    // Drawn as lines in its file: an outline (down the middle of its lines), not a fill
+    if (sh.strokeWidth > 0f) {
+        out = out.copy(
+            stroke = spec.stroke ?: spec.fill ?: android.graphics.Color.BLACK, fill = null,
+            strokeWidth = (sh.strokeWidth * w / sh.w.coerceAtLeast(0.001f)).coerceAtLeast(1f), strokeAlign = com.tim.quartzeditor.engine.StrokeAlign.CENTER,
+        )
     }
     return out
 }

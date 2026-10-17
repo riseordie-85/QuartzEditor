@@ -62,11 +62,16 @@ internal suspend fun EditorViewModel.effectsLoop() {
  */
 internal fun EditorViewModel.effectsKey(d: com.tim.quartzeditor.engine.Doc, l: Layer): Any {
     if (!l.isGroup) return Effects.keyOf(l)
+    // Worked out once per change to the picture (it looks at everything in the folder)
+    groupKeys[l]?.let { (doc, v, k) -> if (doc === d && v == d.renderVersion) return k }
     val inside = d.layers.slice(d.block(l)).filter { it !== l }.map {
         listOf(it.id, it.props, System.identityHashCode(it.tiles), it.pixelVersion, it.x, it.y, System.identityHashCode(it.mask), System.identityHashCode(effectsCache[it.id]))
     }
-    return listOf(Effects.keyOf(l), l.x, l.y, inside)
+    return listOf(Effects.keyOf(l), l.x, l.y, inside).also { groupKeys[l] = Triple(d, d.renderVersion, it) }
 }
+
+/** Folders' effect keys, by the picture's version they were worked out for. */
+private val groupKeys = java.util.WeakHashMap<Layer, Triple<com.tim.quartzeditor.engine.Doc, Int, Any>>()
 
 /** Full-size effect images for a background render (merge, flatten). */
 internal fun EditorViewModel.fullEffects(layers: List<Layer>): Map<Long, BuiltEffects> {

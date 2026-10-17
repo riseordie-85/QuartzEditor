@@ -385,7 +385,8 @@ data class ShapeSpec(
                 else p.cubicTo(a.x + a.hx, a.y + a.hy, b.x + b.ix, b.y + b.iy, b.x, b.y)
             }
             for (i in 1 until pts.size) seg(pts[i - 1], pts[i])
-            if (closed && pts.size > 2) {
+            // Two points can close too (a curve there and a curve back: an ellipse or a leaf)
+            if (closed && pts.size >= 2) {
                 seg(pts.last(), pts[0])
                 p.close()
             }
@@ -459,10 +460,13 @@ data class TextRun(
                     r.start == p -> p
                     else -> newEnd
                 }
+                // Typed text takes the style before it only when nothing was replaced, or when this
+                // run held the replaced text's first character
+                val replaced = oldEnd > p
                 val e = when {
                     r.end < p -> r.end
-                    r.end == p -> if (r.start < p) newEnd else p
-                    r.end < oldEnd -> newEnd
+                    r.end == p -> if (r.start < p && !replaced) newEnd else p
+                    r.end < oldEnd -> if (r.start <= p) newEnd else p
                     else -> r.end + delta
                 }
                 if (e > s) r.copy(start = s, end = e) else null
@@ -641,7 +645,7 @@ object VectorArt {
                 val b = r.end.coerceIn(a, text.length)
                 if (b <= a) continue
                 val flags = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                r.size?.let { sp.setSpan(android.text.style.AbsoluteSizeSpan(it.coerceIn(1f, 4000f).roundToInt()), a, b, flags) }
+                r.size?.let { sp.setSpan(android.text.style.RelativeSizeSpan(it.coerceIn(1f, 4000f) / size), a, b, flags) }
                 r.color?.let { sp.setSpan(android.text.style.ForegroundColorSpan(it), a, b, flags) }
                 r.fontKey?.let { sp.setSpan(android.text.style.TypefaceSpan(Fonts.resolve(it)), a, b, flags) }
                 if (r.fauxBold != null || r.fauxItalic != null || r.underline != null) sp.setSpan(RunLook(r.fauxBold, r.fauxItalic, r.underline), a, b, flags)
@@ -701,7 +705,8 @@ object VectorArt {
             c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = s.fill!! })
         }
         if (s.hasStroke) {
-            val closed = s.kind != ShapeKind.PATH || s.closed
+            // Open lines (a pen line, or the lines of a custom shape) have no inside: outlined down the middle
+            val closed = if (s.kind == ShapeKind.CUSTOM) s.parts.all { it.closed } else s.kind != ShapeKind.PATH || s.closed
             val align = if (closed) s.strokeAlign else StrokeAlign.CENTER
             val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE
