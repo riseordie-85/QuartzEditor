@@ -128,8 +128,7 @@ val downloadAiModels by tasks.registering {
                     tmp.delete()
                     throw GradleException("checksum didn't match ($got)")
                 }
-                if (target.exists()) target.delete()
-                tmp.renameTo(target)
+                java.nio.file.Files.move(tmp.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             } catch (e: Exception) {
                 tmp.delete()
                 logger.warn("Couldn't download AI model ${m.name}: ${e.message}. The app builds without it (Select Object / AI Remove will say so).")

@@ -178,8 +178,11 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             when {
                                 right -> IntOffset((x + bPx + 10.dp.toPx()).roundToInt(), (y + bPx / 2f - 14.dp.toPx()).roundToInt())
                                 left -> IntOffset((x - 210.dp.toPx()).roundToInt(), (y + bPx / 2f - 14.dp.toPx()).roundToInt())
-                                // No room either side: above it
-                                else -> IntOffset(0, (y - 64.dp.toPx()).roundToInt().coerceAtLeast(0))
+                                // No room either side: above it (or below, near the top)
+                                else -> IntOffset(
+                                    x.coerceAtMost((wPx - bubbleW).roundToInt().coerceAtLeast(0)),
+                                    if (y >= 64.dp.toPx()) (y - 64.dp.toPx()).roundToInt() else (y + bPx + 26.dp.toPx()).roundToInt(),
+                                )
                             }
                         }
                         .widthIn(max = 200.dp)

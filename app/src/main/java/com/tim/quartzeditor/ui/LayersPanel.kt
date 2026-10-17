@@ -496,9 +496,12 @@ private fun LayerRow(
                     fun item(label: String, enabled: Boolean = true, action: EditorViewModel.() -> Unit) = @Composable {
                         DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
                             maskMenu = false
-                            // On this layer, still working on its mask
-                            vm.selectLayer(layer.id, mask = true)
-                            vm.action()
+                            // On this layer, still working on its mask (after anything pending is applied)
+                            val run = {
+                                vm.selectLayer(layer.id, mask = true)
+                                vm.action()
+                            }
+                            if (!vm.pendingFirst(run)) run()
                         })
                     }
                     DropdownMenuItem(text = { Text("Mask as selection") }, onClick = {

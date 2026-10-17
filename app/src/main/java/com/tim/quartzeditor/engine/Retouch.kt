@@ -360,41 +360,54 @@ object Heal {
         val hh = y1 - y0 + 1
         // A band of known pixels around the hole: what the patch has to match
         val band = max(3, (max(hw, hh) * 0.12f).roundToInt()).coerceAtMost(12)
-        val ring = dilate(inHole, w, h, band).let { d -> BooleanArray(n) { d[it] && !inHole[it] } }
-        val area = dilate(inHole, w, h, band)
-        // Premultiplied channels
-        val p = Array(4) { FloatArray(n) }
-        for (i in 0 until n) {
-            val c = img[i]
+        // The work happens in the box around the hole and its band (the rest of the area is only
+        // looked at, as the place to copy from)
+        val bx0 = max(0, x0 - band - 1)
+        val by0 = max(0, y0 - band - 1)
+        val bx1 = min(w - 1, x1 + band + 1)
+        val by1 = min(h - 1, y1 + band + 1)
+        val bw = bx1 - bx0 + 1
+        val bh = by1 - by0 + 1
+        val bn = bw * bh
+        fun full(i: Int): Int = (by0 + i / bw) * w + (bx0 + i % bw)
+        val holeB = BooleanArray(bn) { inHole[full(it)] }
+        val areaB = dilate(holeB, bw, bh, band)
+        val areaIdx = (0 until bn).filter { areaB[it] }.toIntArray()
+        val ringIdx = (0 until bn).filter { areaB[it] && !holeB[it] }.toIntArray()
+        // Premultiplied channel k (0 = alpha) of a picture pixel
+        fun pm(c: Int, k: Int): Float {
             val a = (c ushr 24) / 255f
-            p[0][i] = a
-            p[1][i] = ((c shr 16) and 0xFF) / 255f * a
-            p[2][i] = ((c shr 8) and 0xFF) / 255f * a
-            p[3][i] = (c and 0xFF) / 255f * a
+            return when (k) {
+                0 -> a
+                1 -> ((c shr 16) and 0xFF) / 255f * a
+                2 -> ((c shr 8) and 0xFF) / 255f * a
+                else -> (c and 0xFF) / 255f * a
+            }
         }
-        val areaIdx = (0 until n).filter { area[it] }.toIntArray()
-        val ringIdx = (0 until n).filter { ring[it] }.toIntArray()
         // Look around the hole for the place whose surroundings match best
         val span = max(hw, hh)
         var best: Pair<Int, Int>? = null
         var bestScore = Float.MAX_VALUE
         fun score(dx: Int, dy: Int): Float {
-            var s = 0f
             for (i in areaIdx) {
-                val x = i % w + dx
-                val y = i / w + dy
+                val fi = full(i)
+                val x = fi % w + dx
+                val y = fi / w + dy
                 if (x !in 0 until w || y !in 0 until h) return Float.MAX_VALUE
                 if (inHole[y * w + x]) return Float.MAX_VALUE
             }
+            var sc = 0f
             for (i in ringIdx) {
-                val j = (i / w + dy) * w + (i % w + dx)
+                val fi = full(i)
+                val a = img[fi]
+                val b = img[fi + dy * w + dx]
                 for (k in 0 until 4) {
-                    val e = p[k][i] - p[k][j]
-                    s += e * e
+                    val e = pm(a, k) - pm(b, k)
+                    sc += e * e
                 }
             }
             // A slight preference for nearby places
-            return s / ringIdx.size.coerceAtLeast(1) * (1f + 0.05f * hypot(dx.toFloat(), dy.toFloat()) / span)
+            return sc / ringIdx.size.coerceAtLeast(1) * (1f + 0.05f * hypot(dx.toFloat(), dy.toFloat()) / span)
         }
         for (f in floatArrayOf(1.1f, 1.4f, 1.8f, 2.4f, 3.2f)) {
             val rr = span * f + band
@@ -420,44 +433,40 @@ object Heal {
             }
         }
         val result = img.copyOf()
-        val (dx, dy) = best ?: return membraneFill(img, p, inHole, w, h)
-        // Copy the texture, then even out the difference at the edge across the hole
-        val diff = Array(4) { FloatArray(n) }
-        val known = BooleanArray(n)
-        for (i in ringIdx) {
-            val j = (i / w + dy) * w + (i % w + dx)
-            for (k in 0 until 4) diff[k][i] = p[k][i] - p[k][j]
-            known[i] = true
+        val found = best
+        val known = BooleanArray(bn)
+        val values = Array(4) { FloatArray(bn) }
+        if (found != null) {
+            // Copy the texture, then even out the difference at the edge across the hole
+            val (dx, dy) = found
+            for (i in ringIdx) {
+                val fi = full(i)
+                for (k in 0 until 4) values[k][i] = pm(img[fi], k) - pm(img[fi + dy * w + dx], k)
+                known[i] = true
+            }
+        } else {
+            // No good place to copy from: a smooth fill from the edges
+            for (i in 0 until bn) if (!holeB[i]) {
+                for (k in 0 until 4) values[k][i] = pm(img[full(i)], k)
+                known[i] = true
+            }
         }
-        val smooth = Array(4) { k -> pushPull(diff[k], known, area, w, h) }
-        for (i in 0 until n) {
-            if (!inHole[i]) continue
-            val j = (i / w + dy) * w + (i % w + dx)
-            val a = (p[0][j] + smooth[0][i]).coerceIn(0f, 1f)
+        val where = if (found != null) areaB else BooleanArray(bn) { true }
+        val smooth = Array(4) { k -> pushPull(values[k], known, where, bw, bh) }
+        for (i in 0 until bn) {
+            if (!holeB[i]) continue
+            val fi = full(i)
+            val src = if (found != null) img[fi + found.second * w + found.first] else 0
+            val base = FloatArray(4) { k -> if (found != null) pm(src, k) else 0f }
+            val a = (base[0] + smooth[0][i]).coerceIn(0f, 1f)
             if (a <= 0.0001f) {
-                result[i] = 0
+                result[fi] = 0
                 continue
             }
-            fun c(k: Int): Int = (((p[k][j] + smooth[k][i]) / a).coerceIn(0f, 1f) * 255f).roundToInt()
-            result[i] = ((a * 255f).roundToInt() shl 24) or (c(1) shl 16) or (c(2) shl 8) or c(3)
+            fun c(k: Int): Int = (((base[k] + smooth[k][i]) / a).coerceIn(0f, 1f) * 255f).roundToInt()
+            result[fi] = ((a * 255f).roundToInt() shl 24) or (c(1) shl 16) or (c(2) shl 8) or c(3)
         }
         return result
-    }
-
-    /** No good place to copy from: a smooth fill from the edges. */
-    private fun membraneFill(img: IntArray, p: Array<FloatArray>, hole: BooleanArray, w: Int, h: Int): IntArray {
-        val n = w * h
-        val known = BooleanArray(n) { !hole[it] }
-        val all = BooleanArray(n) { true }
-        val f = Array(4) { k -> pushPull(p[k], known, all, w, h) }
-        val out = img.copyOf()
-        for (i in 0 until n) if (hole[i]) {
-            val a = f[0][i].coerceIn(0f, 1f)
-            if (a <= 0.0001f) { out[i] = 0; continue }
-            fun c(k: Int): Int = ((f[k][i] / a).coerceIn(0f, 1f) * 255f).roundToInt()
-            out[i] = ((a * 255f).roundToInt() shl 24) or (c(1) shl 16) or (c(2) shl 8) or c(3)
-        }
-        return out
     }
 
     /**

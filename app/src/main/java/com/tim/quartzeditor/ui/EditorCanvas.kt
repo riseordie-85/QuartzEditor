@@ -260,9 +260,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 mode = if (vm.strokeBlockReason() == null && vm.beginStroke(bx, by)) GestureMode.STROKE else GestureMode.BLOCKED
                                 if (mode == GestureMode.STROKE) {
                                     cursor = start
-                                    strokeOx = bx
-                                    strokeOy = by
                                     if (join != null) vm.strokeTo(cx, cy)
+                                    // A drag after the tap stays straight from where the finger is
+                                    strokeOx = cx
+                                    strokeOy = cy
                                 }
                             }
                             Tool.EYEDROPPER -> if (vm.isOnCanvas(start.x, start.y)) {

@@ -440,6 +440,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         cloneSource = null
         cloneOffset = null
         cloneFlat = null
+        pickingCloneSource = false
         propsBefore = null
         multiSelected = emptySet()
         resetVectorState()
@@ -477,6 +478,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         cloneSource = null
         cloneOffset = null
         cloneFlat = null
+        pickingCloneSource = false
         propsBefore = null
         multiSelected = emptySet()
         resetVectorState()

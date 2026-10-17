@@ -277,7 +277,9 @@ fun NewGuideDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (vertical) "From the left" else "From the top", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                PanelField(initial, onCommit = { at = it }, numeric = false, modifier = Modifier.width(90.dp), onType = { at = it })
+                androidx.compose.runtime.key(vertical) {
+                    PanelField(initial, onCommit = { at = it }, numeric = false, modifier = Modifier.width(90.dp), onType = { at = it })
+                }
                 Text(" px", color = Q.textDim, fontSize = 13.sp)
             }
             Text("Or a percent, like 50%", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
