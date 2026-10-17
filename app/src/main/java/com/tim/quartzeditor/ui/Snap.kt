@@ -36,9 +36,23 @@ fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Flo
         }
         return (delta + best) to at
     }
-    // An axis held still with Shift doesn't snap
-    val (sx, gx) = if (lockedAxis == 1) dx to null else axis(content.left, content.right, d.width.toFloat(), dx, d.guidesX)
-    val (sy, gy) = if (lockedAxis == 2) dy to null else axis(content.top, content.bottom, d.height.toFloat(), dy, d.guidesY)
+    // Shift: straight along one way, where only the middle snaps to the canvas's middle
+    fun middleOnly(lo: Float, hi: Float, size: Float, delta: Float): Pair<Float, Float?> {
+        if (!snapOn) return delta to null
+        val diff = size / 2f - ((lo + hi) / 2f + delta)
+        return if (abs(diff) <= radius) (delta + diff) to size / 2f else delta to null
+    }
+    // The axis held still with Shift doesn't snap at all
+    val (sx, gx) = when (lockedAxis) {
+        1 -> dx to null
+        2 -> middleOnly(content.left, content.right, d.width.toFloat(), dx)
+        else -> axis(content.left, content.right, d.width.toFloat(), dx, d.guidesX)
+    }
+    val (sy, gy) = when (lockedAxis) {
+        2 -> dy to null
+        1 -> middleOnly(content.top, content.bottom, d.height.toFloat(), dy)
+        else -> axis(content.top, content.bottom, d.height.toFloat(), dy, d.guidesY)
+    }
     snapGuidesX = listOfNotNull(gx)
     snapGuidesY = listOfNotNull(gy)
     return sx to sy

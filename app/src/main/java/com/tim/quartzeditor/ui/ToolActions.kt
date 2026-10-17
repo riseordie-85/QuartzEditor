@@ -486,21 +486,7 @@ fun EditorViewModel.maskFromSelection() {
         return
     }
     runBusy("Making mask…") {
-        val mask = withContext(Dispatchers.Default) {
-            val g = TileGrid(alphaOnly = true)
-            val local = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat()).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
-            // Everywhere the layer has pixels too, so moving it later doesn't uncover unmasked parts
-            l.tiles.tileBounds()?.let { local.union(RectF(it)) }
-            for (k in g.keysIn(local)) {
-                val t = TileGrid.newTile(alphaOnly = true)
-                val c = Canvas(t)
-                c.drawColor(Color.BLACK)
-                c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
-                sel.mask().drawTo(c, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
-                g.tiles[k] = t
-            }
-            g
-        }
+        val mask = withContext(Dispatchers.Default) { selectionMask(sel, l, d) }
         stackEdit("Mask from selection") {
             l.mask = mask
             l.props = l.props.copy(maskDisabled = false)
@@ -515,7 +501,92 @@ fun EditorViewModel.maskFromSelection() {
 fun EditorViewModel.beginCrop() {
     val d = doc ?: return
     cropBox = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat())
+    if (cropPerspective) {
+        // Start a little inside the edges, so the corners are easy to grab
+        val ix = d.width * 0.1f
+        val iy = d.height * 0.1f
+        setCropQuad(listOf(
+            android.graphics.PointF(ix, iy), android.graphics.PointF(d.width - ix, iy),
+            android.graphics.PointF(d.width - ix, d.height - iy), android.graphics.PointF(ix, d.height - iy),
+        ))
+        return
+    }
+    cropQuad = null
     if (cropRatio != CropRatio.FREE) applyCropRatio(cropRatio)
+}
+
+/** Crop or Perspective crop, from the toolbar. */
+fun EditorViewModel.chooseCrop(perspective: Boolean) {
+    if (cropPerspective != perspective) {
+        cropPerspective = perspective
+        prefs.edit().putBoolean("cropPersp", perspective).apply()
+        // Already cropping: start again the other way
+        if (tool == Tool.CROP && cropBox != null) {
+            beginCrop()
+            return
+        }
+    }
+    onToolButton(Tool.CROP)
+}
+
+/** Sets the perspective crop's corners and keeps [cropBox] at their bounds. */
+private fun EditorViewModel.setCropQuad(q: List<android.graphics.PointF>) {
+    cropQuad = q
+    cropBox = RectF(q.minOf { it.x }, q.minOf { it.y }, q.maxOf { it.x }, q.maxOf { it.y })
+}
+
+/**
+ * Drags the perspective crop. [handle]: 0..3 a corner (TL, TR, BR, BL), 4..7 an edge (top, right,
+ * bottom, left: both its corners move), -1 all of it. [start] is the corners when the drag began.
+ */
+fun EditorViewModel.dragCropQuad(start: List<android.graphics.PointF>, handle: Int, dx: Float, dy: Float) {
+    val moved = start.mapIndexed { i, p ->
+        val moves = when (handle) {
+            -1 -> true
+            in 0..3 -> i == handle
+            else -> i == handle - 4 || i == (handle - 4 + 1) % 4
+        }
+        if (moves) android.graphics.PointF(p.x + dx, p.y + dy) else android.graphics.PointF(p.x, p.y)
+    }
+    setCropQuad(moved)
+}
+
+/** True when the four corners make a shape that can be straightened (no crossing, no dents). */
+internal fun quadIsConvex(q: List<android.graphics.PointF>): Boolean {
+    var sign = 0
+    for (i in 0 until 4) {
+        val a = q[i]
+        val b = q[(i + 1) % 4]
+        val c = q[(i + 2) % 4]
+        val cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+        if (kotlin.math.abs(cross) < 1e-3f) return false
+        val sg = if (cross > 0) 1 else -1
+        if (sign == 0) sign = sg else if (sg != sign) return false
+    }
+    return true
+}
+
+/** Straightens what's inside the four corners into a new, rectangular canvas. */
+private fun EditorViewModel.applyPerspectiveCrop(q: List<android.graphics.PointF>) {
+    if (!quadIsConvex(q)) {
+        toast("The corners cross over. Drag them back into a four-sided shape")
+        return
+    }
+    // The new size: the average length of opposite sides
+    val (w, h) = quadOutputSize(q)
+    val poly = android.graphics.Matrix()
+    val ok = poly.setPolyToPoly(
+        floatArrayOf(q[0].x, q[0].y, q[1].x, q[1].y, q[2].x, q[2].y, q[3].x, q[3].y), 0,
+        floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4,
+    )
+    if (!ok) {
+        toast("Couldn't straighten that shape")
+        return
+    }
+    cropBox = null
+    cropQuad = null
+    tool = Tool.MOVE
+    canvasTransform("Perspective crop", w, h, perspective = true) { m -> m.postConcat(poly) }
 }
 
 /** The canvas's width ÷ height for "Original". */
@@ -616,6 +687,7 @@ fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float, ke
 fun EditorViewModel.cancelCrop() {
     if (cropBox == null) return
     cropBox = null
+    cropQuad = null
     tool = Tool.MOVE
 }
 
@@ -623,8 +695,14 @@ fun EditorViewModel.cancelCrop() {
 fun EditorViewModel.applyCrop(onDone: () -> Unit = {}) {
     val d = doc ?: return
     val box = cropBox ?: return
+    cropQuad?.let {
+        applyPerspectiveCrop(it)
+        onDone()
+        return
+    }
     val r = Rect(box.left.roundToInt(), box.top.roundToInt(), box.right.roundToInt(), box.bottom.roundToInt())
     cropBox = null
+    cropQuad = null
     tool = Tool.MOVE
     if (r.left == 0 && r.top == 0 && r.width() == d.width && r.height() == d.height) {
         onDone()
@@ -673,4 +751,23 @@ fun EditorViewModel.cropToSelection() {
     val b = s.pixelBounds()
     if (!b.intersect(0, 0, d.width, d.height)) return
     cropTo(b)
+}
+
+/**
+ * A mask for [l] that shows what [sel] selects and hides the rest. Covers the canvas and wherever
+ * the layer has pixels, so moving it later doesn't uncover unmasked parts. (Runs in the background.)
+ */
+internal fun selectionMask(sel: com.tim.quartzeditor.engine.Selection, l: com.tim.quartzeditor.engine.Layer, d: Doc): TileGrid {
+    val g = TileGrid(alphaOnly = true)
+    val local = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat()).apply { offset(-l.x.toFloat(), -l.y.toFloat()) }
+    l.tiles.tileBounds()?.let { local.union(RectF(it)) }
+    for (k in g.keysIn(local)) {
+        val t = TileGrid.newTile(alphaOnly = true)
+        val c = Canvas(t)
+        c.drawColor(Color.BLACK)
+        c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
+        sel.mask().drawTo(c, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+        g.tiles[k] = t
+    }
+    return g
 }

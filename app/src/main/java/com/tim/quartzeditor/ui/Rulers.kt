@@ -1,6 +1,14 @@
 package com.tim.quartzeditor.ui
 
 import android.graphics.Paint
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.viewModelScope
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -43,7 +51,8 @@ import kotlin.math.roundToInt
 
 // Rulers along the top and left of the picture, in canvas pixels. Drag out of one to make a guide
 // (top ruler: a horizontal guide; left ruler: a vertical one); things snap to guides. With the
-// Move tool, drag a guide to move it, or drag it off the picture to remove it.
+// Move or Pan tool, drag a guide to move it, or drag it off the picture to remove it; Edit guides
+// lists them with typed positions.
 
 val RULER = 20.dp
 
@@ -82,6 +91,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.guideDra
     detectDragGestures(
         onDragStart = { p ->
             last = p
+            vm.prepareGuideSnap()
             vm.guideDraft = vertical to canvasPos(p).roundToInt().toFloat()
         },
         onDragEnd = {
@@ -96,15 +106,9 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.guideDra
     ) { change, _ ->
         change.consume()
         last = change.position
-        var v = canvasPos(change.position)
-        // Snaps to the canvas's edges and middle
-        val d = vm.doc
-        if (d != null && vm.snapOn) {
-            val size = if (vertical) d.width.toFloat() else d.height.toFloat()
-            val r = 10.dp.toPx() / vm.scale
-            for (t in listOf(0f, size / 2f, size)) if (kotlin.math.abs(v - t) <= r) v = t
-        }
-        vm.guideDraft = vertical to v.roundToInt().toFloat()
+        // Snaps to the canvas's and the active layer's edges and middle
+        val v = vm.snapGuide(vertical, canvasPos(change.position), 10.dp.toPx() / vm.scale)
+        vm.guideDraft = vertical to v
     }
 }
 
@@ -162,6 +166,43 @@ private fun DrawScope.drawRuler(vm: EditorViewModel, horizontal: Boolean, offset
 /** Guides' color (Photoshop's cyan). */
 const val GUIDE_COLOR = 0xFF00E5FF
 
+/** Works out (in the background) the active layer's box, for a guide being dragged to snap to. */
+fun EditorViewModel.prepareGuideSnap() {
+    guideSnapBox = null
+    val l = doc?.active?.takeIf { it.hasContent && it.props.visible } ?: return
+    val tiles = HashMap(l.tiles.tiles)
+    val x = l.x
+    val y = l.y
+    viewModelScope.launch {
+        val b = withContext(Dispatchers.Default) { com.tim.quartzeditor.engine.Transformer.contentBounds(tiles) }
+        guideSnapBox = b?.let { android.graphics.RectF(it).apply { offset(x.toFloat(), y.toFloat()) } }
+    }
+}
+
+/**
+ * Where a guide dragged to [v] (canvas pixels) goes: onto the canvas's edges or middle, or the
+ * active layer's, when within [radius]; otherwise the nearest whole pixel. Snapping off: no snapping.
+ */
+fun EditorViewModel.snapGuide(vertical: Boolean, v: Float, radius: Float): Float {
+    val d = doc ?: return v.roundToInt().toFloat()
+    if (!snapOn) return v.roundToInt().toFloat()
+    val size = if (vertical) d.width.toFloat() else d.height.toFloat()
+    val targets = arrayListOf(0f, size / 2f, size)
+    guideSnapBox?.let { b ->
+        if (vertical) targets.addAll(listOf(b.left, b.centerX(), b.right)) else targets.addAll(listOf(b.top, b.centerY(), b.bottom))
+    }
+    var best = v.roundToInt().toFloat()
+    var bestD = radius
+    for (t in targets) {
+        val dd = kotlin.math.abs(v - t)
+        if (dd <= bestD) {
+            bestD = dd
+            best = t
+        }
+    }
+    return best
+}
+
 /** Adds a guide (vertical at x, or horizontal at y), as one undo step. */
 fun EditorViewModel.addGuide(vertical: Boolean, at: Float) {
     val d = doc ?: return
@@ -174,6 +215,31 @@ fun EditorViewModel.addGuide(vertical: Boolean, at: Float) {
         showGuides = true
         prefs.edit().putBoolean("guides", true).apply()
     }
+    // The first few times: how to change it later
+    val told = prefs.getInt("guideHint", 0)
+    if (told < 3) {
+        prefs.edit().putInt("guideHint", told + 1).apply()
+        toast(if (guidesLocked) "Guides are locked (unlock them in Menu › View › Rulers and guides)" else "Move or Pan tool: drag a guide to move it, or off the picture to remove it. Menu › View › Rulers and guides › Edit guides to type positions")
+    }
+}
+
+/** Sets guide [index] to [to] exactly (from Edit guides), as one undo step. */
+fun EditorViewModel.setGuide(vertical: Boolean, index: Int, to: Float) {
+    val d = doc ?: return
+    val list = if (vertical) d.guidesX else d.guidesY
+    if (index !in list.indices) return
+    val size = if (vertical) d.width else d.height
+    val v = to.coerceIn(0f, size.toFloat())
+    if (list[index] == v) return
+    stackEdit("Move guide") { list[index] = v }
+}
+
+/** Removes guide [index], as one undo step. */
+fun EditorViewModel.removeGuide(vertical: Boolean, index: Int) {
+    val d = doc ?: return
+    val list = if (vertical) d.guidesX else d.guidesY
+    if (index !in list.indices) return
+    stackEdit("Remove guide") { list.removeAt(index) }
 }
 
 /** Moves guide [index] (or removes it when [to] is off the canvas). */
@@ -295,6 +361,57 @@ fun NewGuideDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                     if (v != null && v.isFinite()) vm.addGuide(vertical, v.roundToInt().toFloat().coerceIn(0f, size.toFloat()))
                     onDismiss()
                 }
+            }
+        }
+    }
+}
+
+/** Every guide with its position: type a new one, or remove it. */
+@Composable
+fun EditGuidesDialog(vm: EditorViewModel, onDismiss: () -> Unit, onNew: () -> Unit) {
+    val d = vm.doc ?: return
+    @Suppress("UNUSED_VARIABLE") val v = vm.history.version
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(max = 380.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Q.panel)
+                .padding(18.dp),
+        ) {
+            Text("Guides", color = Q.text, fontSize = 18.sp)
+            if (vm.guidesLocked) Text("Locked: they can't be dragged on the picture (typing here still works).", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                if (d.guidesX.isEmpty() && d.guidesY.isEmpty()) {
+                    Text("No guides yet. Drag one out of a ruler, or tap New guide.", color = Q.textDim, fontSize = 13.sp)
+                }
+                for (vertical in listOf(true, false)) {
+                    val list = if (vertical) d.guidesX else d.guidesY
+                    list.forEachIndexed { i, at ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
+                            Text(if (vertical) "Vertical, from the left" else "Horizontal, from the top", color = Q.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            // A new box when the guide changes (moved, undone, removed above it)
+                            androidx.compose.runtime.key(vertical, i, at) {
+                                PanelField("${at.roundToInt()}", onCommit = { t ->
+                                    t.trim().toFloatOrNull()?.takeIf { it.isFinite() }?.let { vm.setGuide(vertical, i, it.roundToInt().toFloat()) }
+                                }, modifier = Modifier.width(80.dp))
+                            }
+                            Text(" px", color = Q.textDim, fontSize = 13.sp)
+                            androidx.compose.material3.IconButton(onClick = { vm.removeGuide(vertical, i) }) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.Delete, contentDescription = "Remove guide", tint = Q.textDim)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SmallButton("Clear all") { vm.clearGuides() }
+                Spacer(Modifier.weight(1f))
+                SmallButton("New guide") { onNew() }
+                Spacer(Modifier.width(8.dp))
+                SmallButton("Done", primary = true) { onDismiss() }
             }
         }
     }

@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.PointF
+import android.graphics.RectF
 import android.graphics.Rect
 import com.tim.quartzeditor.engine.CloneSource
 import com.tim.quartzeditor.engine.DocRenderer
@@ -29,9 +30,9 @@ import kotlin.math.roundToInt
 
 fun EditorViewModel.chooseRetouch(k: RetouchKind) {
     retouchKind = k
-    prefs.edit().putString("retouchKind", k.name).apply()
+    prefs.edit().putString("retouchKind", k.name).putString(if (k.heals) "lastHeal" else "lastTone", k.name).apply()
     if (tool != Tool.RETOUCH) onToolButton(Tool.RETOUCH)
-    if (k == RetouchKind.CLONE && cloneSource == null) toast("Tap Pick source, then tap where to copy from (or hold ⇧ out to Alt and tap)")
+    if (k == RetouchKind.CLONE && cloneSource == null) toast("Hold ⇧ and tap where to copy from (or tap Pick source)")
 }
 
 /** Sets where the Clone Stamp copies from. */
@@ -60,6 +61,21 @@ fun EditorViewModel.setCloneSource(x: Float, y: Float) {
 /** Biggest retouch brush (they work dab by dab as you paint). */
 private const val MAX_RETOUCH = 300f
 
+/** The biggest area Spot Healing works on (across, canvas pixels); bigger is for AI Remove. */
+internal const val SPOT_HEAL_MAX = 250
+
+/** Spot healing: says (once a stroke) when it's grown past what it can heal. */
+internal fun EditorViewModel.checkHealReach(x: Float, y: Float) {
+    val r = healReach ?: return
+    r.union(x, y)
+    if (healWarned) return
+    val span = max(r.width(), r.height()) + retouchBrush.size.coerceAtMost(MAX_RETOUCH)
+    if (span > SPOT_HEAL_MAX) {
+        healWarned = true
+        toast("Past $SPOT_HEAL_MAX px: too big for spot healing. Lift and use smaller strokes, or AI Remove")
+    }
+}
+
 /** Starts a retouch stroke at canvas point ([x], [y]). False when it can't. */
 internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
     val d = doc ?: return false
@@ -84,10 +100,12 @@ internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
             val s = StrokeSession(layer, StrokeTarget.PIXELS, false, 0xFFFF2DAA.toInt(), background, 0.45f, com.tim.quartzeditor.engine.BrushTip.ROUND, b.size, b.softness, d.selection)
             s.addPoint(x, y)
             stroke = s
+            healReach = if (k == RetouchKind.SPOT_HEAL) RectF(x, y, x, y) else null
+            healWarned = false
         }
         RetouchKind.CLONE -> {
             val src = cloneSource ?: run {
-                toast("Pick where to copy from first: tap Pick source (or hold ⇧ out to Alt and tap)")
+                toast("Pick where to copy from first: hold ⇧ and tap there (or tap Pick source)")
                 return false
             }
             val off = (if (cloneAligned) cloneOffset else null) ?: PointF(src.x - x, src.y - y)
@@ -211,7 +229,7 @@ private fun EditorViewModel.healArea(
             if (x1 < x0) return@withContext null
             val hole = Rect(bounds.left + x0, bounds.top + y0, bounds.left + x1 + 1, bounds.top + y1 + 1)
             val span = max(hole.width(), hole.height())
-            if (!ai && span > 250) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
+            if (!ai && span > SPOT_HEAL_MAX) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
             // Room around it: to find a matching patch (healing) or to see what's there (AI)
             val margin = if (ai) max(96, (span * 0.6f).roundToInt()) else (span * 3.4f + 24f).roundToInt()
             val region = Rect(hole).apply { inset(-margin, -margin) }

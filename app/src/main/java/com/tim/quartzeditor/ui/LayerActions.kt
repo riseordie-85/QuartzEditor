@@ -101,22 +101,37 @@ fun EditorViewModel.addAdjustmentLayer(kind: com.tim.quartzeditor.engine.FxKind 
         com.tim.quartzeditor.engine.FxKind.GRADIENT_MAP -> "Gradient Map" to FxParams(kind = kind, gradientMap = com.tim.quartzeditor.engine.GradientMap(listOf(foreground or 0xFF000000.toInt(), background or 0xFF000000.toInt())))
         com.tim.quartzeditor.engine.FxKind.VIBRANCE -> "Vibrance" to FxParams(kind = kind)
     }
-    stackEdit("New $name layer") {
-        val (at, parent) = insertPoint(d)
-        val l = Layer(
-            d.newId(),
-            LayerProps(d.uniqueName(name), parent = parent, adjust = fx),
-            TileGrid(alphaOnly = false),
-            mask = TileGrid(alphaOnly = true),
-            kind = LayerKind.ADJUSTMENT,
-        )
-        d.layers.add(at, l)
-        d.joinClipGroup(l)
-        d.activeId = l.id
-        d.editMask = true
+    fun make(mask: TileGrid?) {
+        stackEdit("New $name layer") {
+            val (at, parent) = insertPoint(d)
+            val l = Layer(
+                d.newId(),
+                LayerProps(d.uniqueName(name), parent = parent, adjust = fx),
+                TileGrid(alphaOnly = false),
+                mask = mask ?: TileGrid(alphaOnly = true),
+                kind = LayerKind.ADJUSTMENT,
+            )
+            d.layers.add(at, l)
+            d.joinClipGroup(l)
+            d.activeId = l.id
+            d.editMask = true
+            // Like Photoshop: the selection becomes the new layer's mask
+            if (mask != null) d.selection = null
+        }
+        openPopup(PopupKind.forKind(kind))
+        toast(if (mask != null) "Changes what was selected (its mask). Paint the mask to change where" else "Changes everything below it. Paint its mask to limit where")
     }
-    openPopup(PopupKind.forKind(kind))
-    toast("Changes everything below it. Paint its mask to limit where")
+    val sel = d.selection
+    if (sel == null) {
+        make(null)
+        return
+    }
+    // With a selection: the mask shows only what's selected
+    val probe = Layer(-1L, LayerProps(name), TileGrid(alphaOnly = false), kind = LayerKind.ADJUSTMENT)
+    runBusy("Making mask…") {
+        val mask = withContext(Dispatchers.Default) { selectionMask(sel, probe, d) }
+        if (doc === d) make(mask)
+    }
 }
 
 fun EditorViewModel.deleteLayer() {

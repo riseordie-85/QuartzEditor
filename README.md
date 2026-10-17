@@ -19,30 +19,41 @@ right (the arrow button at the bottom right); on tablets and the unfolded Fold t
 and the same button hides them.
 
 ### Toolbar
-Buttons with a dot in the corner hold more than one tool: **long-press** for the list (Move/Pan, the
-selection tools, the shapes, pen drawing/point editing).
+Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape, Text, Brush/Eraser,
+Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
+the list; the button shows the one you used last.
+- **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
+  saving), **Image** (Rotate, Flip, Flatten), **View** (Snap, Checkerboard, Modifier button, **Grid** and
+  **Rulers and guides** pages), and Settings. Tap a page to open it; ← goes back.
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view). While moving
   (and moving a Transform box), the layer's edges and middle **snap** to the canvas's edges and middle,
-  with a pink line showing where. Menu → "Snap to center and edges" turns it off.
+  with a pink line showing where. Hold ⇧ to move straight across (or up and down): then only the layer's
+  middle snaps, to the canvas's middle. Menu → View → "Snap to center, edges and guides" turns it off.
 - **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand →
   **Object (AI)**: tap an object, or drag a box around it, and the on-device Segment Anything model
   (MobileSAM) outlines it (the first time on a picture it takes a moment to look; after that it's quick).
-  **Expand / Shrink** (Properties, or −10…+10 in the bar's ⋮) grows or shrinks the selection by pixels. Drag
+  **Expand / Shrink** (Properties, or −10…+10 in the bar's ⋮ → Modify edge) grows or shrinks the selection by pixels. Drag
   to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
   corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
   layers". **Select subject** / **Select background** / **Invert** (Properties, ⋮ on the bar, or hold
   the Select tool) find the subject on the
   device: a first look at the whole picture, a second, closer look at the area around the subject, then
   the edge is snapped to the picture's own edges (hair and fine outlines follow what's really there). Remove
-  background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ for
-  Feather, Copy or Cut to a new layer, Delete selected pixels, Fill, Mask from selection, Crop to selection.
+  background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ with
+  pages for Modify edge (Feather, Expand / Shrink), Select (subject, background), New layer (Copy or Cut),
+  Fill and remove (Fill, Delete selected pixels, AI Remove selected), then Mask from selection, Define
+  pattern and Crop to selection.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
-- **Crop** — drag the corners, edges or the box; pick a shape (Free, Original, 1:1, 4:3, 3:4, 16:9, 9:16).
-  Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
+- **Crop** (hold the Transform button) — drag the corners, edges or the box; pick a shape (Free, Original,
+  1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
+- **Perspective crop** (hold the Transform button) — drag the four corners onto the corners of something
+  slanted (a sign, a window, a screen, a photo of a flyer); the grid follows. Apply straightens it into a flat,
+  square-on picture (its size is the average of opposite sides). Shapes and text stay editable; guides and
+  the selection are cleared.
 - **Transform** — a box around the selected layer: drag inside to move, corners to scale (proportions
-  locked unless you unlink them), edges to stretch, outside the box or the top handle to rotate (snaps to
-  straight angles). The bar on the picture has flip, rotate 90°, **Skew** (slide a side or corner along
+  locked unless you unlink them; ⇧ always keeps them), edges to stretch, outside the box or the top handle
+  to rotate (snaps to straight angles; ⇧ in 15° steps). The bar on the picture has flip, rotate 90°, **Skew** (slide a side or corner along
   itself), **Perspective** (drag a corner; the other end of that side moves the opposite way), **Distort**
   (corners anywhere) and Apply. With several layers picked, they transform together.
 - **Warp / Puppet Warp / Liquify** — hold the Transform button to pick one (it works on the selected pixel
@@ -91,15 +102,19 @@ selection tools, the shapes, pen drawing/point editing).
   own .ttf/.otf), size, color, alignment, faux bold/italic, underline, ALL CAPS, letter and line spacing,
   and Arc.
   Outline, shadow and glow come from Layer Style (fx).
-- **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
+- **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one).
+- **Brush** and **Eraser** (one button; hold for the other) — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
-- **Retouch** (hold for the list; Size, Softness and Strength in the brush column):
-  - **Spot healing** — paint over a spot; when you lift your finger it's filled with texture from the
-    best-matching place nearby and its color and light are evened out to blend in.
+- **Healing** (Spot healing, AI Remove, Clone stamp) and **Toning** (Blur, Sharpen, Smudge, Dodge, Burn)
+  are two buttons (hold for the list; Size, Softness and Strength in the brush column):
+  - **Spot healing** — paint over a spot (up to about 250 px across; a message says when a stroke grows past
+    that); when you lift your finger it's filled with texture from the best-matching place nearby and its
+    color and light are evened out to blend in.
   - **AI Remove** — paint over something (include its shadow); the on-device MI-GAN model fills in what
     would be behind it. Also Select ⋮ → AI Remove selected.
-  - **Clone stamp** — Pick source (or Alt + tap) then paint; Aligned keeps the source moving with each
-    new stroke. A crosshair shows where it copies from.
+  - **Clone stamp** — hold ⇧ and tap where to copy from (or Pick source), then paint; slide out to Alt for
+    a straight line. Aligned keeps the source moving with each new stroke. A crosshair shows where it copies
+    from.
   - **Dodge / Burn** (Shadows / Midtones / Highlights), **Smudge**, **Blur**, **Sharpen**.
   - "Look at all layers" (healing, AI Remove, clone): read the picture as you see it and paint onto the
     layer you're on — an empty layer keeps the photo untouched.
@@ -112,14 +127,17 @@ selection tools, the shapes, pen drawing/point editing).
 - **Modifier button** (the floating ⇧; drag its grip to move it; ☰ → Modifier button turns it off): hold it
   for **Shift**, slide out past its edge for **Alt**, double-tap to keep Shift on. A keyboard's Shift and
   Alt do the same. Brushes: straight lines at 0°/45°/90° (tap: a line from the last stroke). Shapes and
-  rectangle/ellipse selections: square or circle (Alt: from the middle). Transform: proportions the
-  other way, rotation in 15° steps (Alt: resize from the middle). Move: straight across or up and down
-  (Alt: move a copy). Lasso, wand, Object: add (Alt: take away). Gradient: 45° steps. Crop: keep the shape
-  (Alt: from the middle). Clone stamp: Alt + tap sets the source.
-- **Rulers and guides** (☰ → Rulers, Ctrl+R): drag out of the top ruler for a horizontal guide, the left
-  one for a vertical guide; with Move, drag a guide to move it, or off the picture to remove it. ☰ has
-  Show guides (Ctrl+;), Lock guides, New guide… (exact pixels or a percent) and Clear guides. Things snap
-  to guides when snapping is on; guides save with the project and follow crop, rotate and flip.
+  rectangle/ellipse selections: square or circle (Alt: from the middle). Transform: keep proportions,
+  rotation in 15° steps (Alt: resize from the middle). Move: straight across or up and down, snapping only
+  middle to middle (Alt: move a copy). Lasso, wand, Object: add (Alt: take away). Gradient: 45° steps.
+  Crop: keep the shape (Alt: from the middle). Clone stamp: ⇧ + tap sets the source, Alt draws straight.
+- **Rulers and guides** (☰ → View → Rulers and guides, Ctrl+R): drag out of the top ruler for a horizontal
+  guide, the left one for a vertical guide. While dragging, a guide snaps to the canvas's edges and middle
+  and to the selected layer's edges and middle. With **Move or Pan**, drag a guide to move it, or off the
+  picture to remove it. The same page has Show guides (Ctrl+;), Lock guides, New guide… (exact pixels or
+  a percent), **Edit guides…** (every guide with its position: type a new one or remove it) and Clear
+  guides. Things snap to guides when snapping is on; guides save with the project and follow crop, rotate
+  and flip.
 - **History** (the page button next to undo/redo): every step, oldest first; tap one to go back (or
   forward) to it.
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
@@ -128,8 +146,7 @@ selection tools, the shapes, pen drawing/point editing).
   grid — moving layers and Transform boxes, shape corners and pen points snap to its lines while it's shown.
 - **Long press beside the picture** to change the workspace color. Menu → "Checkerboard for see-through"
   switches the transparency checkerboard off (see-through areas show white).
-- Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Rename image, Export
-  image (with a file name), Save project file, Place image as layer, Flatten and **Settings**.
+- Undo, redo, history and fit buttons at the top right; the ☰ menu is at the top of the toolbar.
 - **Sliders** have their number in a box beside them: tap it and type an exact value (90°, 50%, 12 px).
 - **Panels hidden** (the arrow at the bottom right, or Tab): the layers show as a short column at the right
   edge, like Photoshop on phones: three at a time, scroll for the rest. Tap one to pick it, hold one to hide
@@ -161,8 +178,8 @@ Only **Color**, **Properties** and **Layers** live in the column.
     Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
   - Lock transparent pixels and lock the whole layer.
   - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder. **Long-press** a layer
-    for Rename, Copy / Paste layer style, Save layer style as preset, Apply / Clear style, Merge down,
-    Duplicate, Clip to layer below, Convert to smart layer, Edit contents (smart layers) and Rasterize.
+    for Rename, Duplicate, Merge down, Clip to layer below, and pages for **Layer style** (Copy / Paste,
+    Save as preset, Apply / Clear) and **Convert** (smart layer, Edit contents, Rasterize).
   - **Pick several layers**: swipe right on a row (again to take it out). Move, Transform, Delete, put in a
     folder (Ctrl+G, or the folder button), merge (Ctrl+E) and pasting styles work on all of them. Tap any layer (or "n picked ✕")
     to go back to one.
@@ -177,13 +194,17 @@ Only **Color**, **Properties** and **Layers** live in the column.
     only changes one layer. Clipped layers show an arrow; stack several on one base. The base's opacity
     and blend mode apply to the whole group. Merge down a clipped layer to bake it in.
   - **Adjustment layers**: change everything below them without touching pixels; paint their mask to limit
-    them. Tap one's icon to edit it.
+    them. With a selection, the new layer's mask shows only what's selected (like Photoshop). Tap one's icon
+    to edit it.
   - **Shape and text layers** stay editable: change them in Properties, scale, rotate or distort them with
     Transform (they stay sharp), add masks and layer styles. Painting, fills, filters and adjustments ask to
     **rasterize** them first (turn them into pixels); ⋮ → Rasterize layer does it any time. Text layers
     show a T; tap it on the selected layer to edit the text.
-  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (a new adjustment layer, or the same
-    windows on the layer itself), new folder, new layer, delete, and ⋮ for everything else.
+  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (two pages: New adjustment layer, or On
+    this layer, then the window for the one you pick), new folder, new layer, delete, and ⋮ (Duplicate,
+    Merge, Folder, Clip, Rename, and pages for Fill and clear, Mask and background, Convert). Adjusting On
+    this layer with a selection only changes inside it (a blur doesn't spread past its edge); the window
+    says so.
   - **Hold a mask's thumbnail** for: Mask as selection, Replace with selection, Invert, Enable/Disable,
     Clear, Apply and Delete.
 

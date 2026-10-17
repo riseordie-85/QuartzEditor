@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.AutoFixNormal
@@ -193,18 +195,24 @@ fun ToolOptions(vm: EditorViewModel) {
         }
         Tool.CROP -> {
             val b = vm.cropBox
+            val q = vm.cropQuad
             Title("Crop")
-            ChipRow(CropRatio.entries.map { it.label }, vm.cropRatio.ordinal) { i -> vm.applyCropRatio(CropRatio.entries[i]) }
+            ChipRow(listOf("Crop", "Perspective"), if (vm.cropPerspective) 1 else 0) { i -> vm.chooseCrop(perspective = i == 1) }
+            if (!vm.cropPerspective) ChipRow(CropRatio.entries.map { it.label }, vm.cropRatio.ordinal) { i -> vm.applyCropRatio(CropRatio.entries[i]) }
             if (b != null) {
                 Spacer(Modifier.height(6.dp))
-                Text("${b.width().roundToInt()} × ${b.height().roundToInt()} px", color = Q.text, fontSize = 13.sp)
+                val (cw, ch) = if (q != null) quadOutputSize(q) else b.width().roundToInt() to b.height().roundToInt()
+                Text("$cw × $ch px", color = Q.text, fontSize = 13.sp)
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SmallButton("Cancel") { vm.cancelCrop() }
                     SmallButton("Apply", primary = true) { vm.applyCrop() }
                 }
             }
-            Text("Drag the box past the edges to add space. Cropped-off pixels are kept on their layers.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+            Text(
+                if (vm.cropPerspective) "Drag each corner onto a corner of something slanted (a sign, a window, a screen). Apply straightens it into a flat, square-on picture."
+                else "Drag the box past the edges to add space. Cropped-off pixels are kept on their layers.",
+                color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
             Spacer(Modifier.height(10.dp))
         }
         else -> Unit
@@ -309,39 +317,52 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Box {
             var menu by remember { mutableStateOf(false) }
             BarIcon(Icons.Outlined.MoreVert, "More") { menu = true }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                Text("Feather (soft edge)", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(0, 2, 5, 10, 25, 50).forEach { f ->
-                        SmallButton("$f", primary = (d.selection?.feather?.roundToInt() ?: -1) == f) {
-                            menu = false
-                            vm.featherSelection(f.toFloat())
+            PagedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                Page("Modify edge") {
+                    Label("Feather (soft edge)")
+                    Custom {
+                        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(0, 2, 5, 10, 25, 50).forEach { f ->
+                                SmallButton("$f", primary = (d.selection?.feather?.roundToInt() ?: -1) == f) {
+                                    menu = false
+                                    vm.featherSelection(f.toFloat())
+                                }
+                            }
                         }
                     }
-                }
-                Text("Expand / shrink (pixels)", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(-10, -5, -2, 2, 5, 10).forEach { g ->
-                        SmallButton(if (g > 0) "+$g" else "$g") {
-                            menu = false
-                            vm.growSelection(g.toFloat())
+                    Label("Expand / shrink (pixels)")
+                    Custom {
+                        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(-10, -5, -2, 2, 5, 10).forEach { g ->
+                                SmallButton(if (g > 0) "+$g" else "$g") {
+                                    menu = false
+                                    vm.growSelection(g.toFloat())
+                                }
+                            }
                         }
+                        Spacer(Modifier.height(6.dp))
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                HorizontalDivider()
-                DropdownMenuItem(text = { Text("Select subject") }, onClick = { menu = false; vm.selectSubject(background = false) })
-                DropdownMenuItem(text = { Text("Select background") }, onClick = { menu = false; vm.selectSubject(background = true) })
-                HorizontalDivider()
-                DropdownMenuItem(text = { Text("Copy to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) }, onClick = { menu = false; vm.selectionToLayer(cut = false) })
-                DropdownMenuItem(text = { Text("Cut to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCut, null) }, onClick = { menu = false; vm.selectionToLayer(cut = true) })
-                DropdownMenuItem(text = { Text("Delete selected pixels") }, onClick = { menu = false; vm.clearSelected() })
-                DropdownMenuItem(text = { Text("AI Remove selected") }, leadingIcon = { Icon(Icons.Outlined.AutoFixNormal, null) }, onClick = { menu = false; vm.removeSelected() })
-                DropdownMenuItem(text = { Text("Fill with foreground color") }, onClick = { menu = false; vm.fillWithColor(vm.foreground) })
-                DropdownMenuItem(text = { Text("Fill with pattern") }, onClick = { menu = false; vm.fillWithPattern() })
-                DropdownMenuItem(text = { Text("Define pattern from selection") }, onClick = { menu = false; vm.definePattern() })
-                DropdownMenuItem(text = { Text("Mask from selection") }, onClick = { menu = false; vm.maskFromSelection() })
-                DropdownMenuItem(text = { Text("Crop to selection") }, onClick = { menu = false; vm.cropToSelection() })
+                Page("Select") {
+                    Item("Select subject", Icons.Outlined.PersonOutline) { vm.selectSubject(background = false) }
+                    Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
+                }
+                Divider()
+                Page("New layer") {
+                    Item("Copy to new layer", Icons.Outlined.ContentCopy) { vm.selectionToLayer(cut = false) }
+                    Item("Cut to new layer", Icons.Outlined.ContentCut) { vm.selectionToLayer(cut = true) }
+                }
+                Page("Fill and remove") {
+                    Item("Fill with foreground color") { vm.fillWithColor(vm.foreground) }
+                    Item("Fill with pattern") { vm.fillWithPattern() }
+                    Divider()
+                    Item("Delete selected pixels") { vm.clearSelected() }
+                    Item("AI Remove selected", Icons.Outlined.AutoFixNormal) { vm.removeSelected() }
+                }
+                Divider()
+                Item("Mask from selection") { vm.maskFromSelection() }
+                Item("Define pattern from selection") { vm.definePattern() }
+                Item("Crop to selection") { vm.cropToSelection() }
             }
         }
     }
@@ -353,8 +374,11 @@ fun CropBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val b = vm.cropBox ?: return
     Bar(modifier) {
         BarIcon(Icons.Outlined.Close, "Cancel crop") { vm.cancelCrop() }
-        CropRatio.entries.forEach { r -> BarChip(r.label, vm.cropRatio == r) { vm.applyCropRatio(r) } }
-        Text("${b.width().roundToInt()}×${b.height().roundToInt()}", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 6.dp))
+        val q = vm.cropQuad
+        if (q != null) BarChip("Perspective", true) { vm.chooseCrop(perspective = false) }
+        else CropRatio.entries.forEach { r -> BarChip(r.label, vm.cropRatio == r) { vm.applyCropRatio(r) } }
+        val (cw, ch) = if (q != null) quadOutputSize(q) else b.width().roundToInt() to b.height().roundToInt()
+        Text("$cw×$ch", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 6.dp))
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -395,12 +419,18 @@ private fun GrowRow(vm: EditorViewModel) {
 private fun RetouchOptions(vm: EditorViewModel) {
     val k = vm.retouchKind
     Title(k.label)
-    ChipRow(com.tim.quartzeditor.engine.RetouchKind.entries.map { it.label }, k.ordinal) { i -> vm.chooseRetouch(com.tim.quartzeditor.engine.RetouchKind.entries[i]) }
+    // Only this toolbar button's tools: healing, or toning
+    val group = if (k.heals) com.tim.quartzeditor.engine.RetouchKind.entries.filter { it.heals }
+    else listOf(
+        com.tim.quartzeditor.engine.RetouchKind.BLUR, com.tim.quartzeditor.engine.RetouchKind.SHARPEN, com.tim.quartzeditor.engine.RetouchKind.SMUDGE,
+        com.tim.quartzeditor.engine.RetouchKind.DODGE, com.tim.quartzeditor.engine.RetouchKind.BURN,
+    )
+    ChipRow(group.map { it.label }, group.indexOf(k)) { i -> vm.chooseRetouch(group[i]) }
     Spacer(Modifier.height(6.dp))
     val help = when (k) {
-        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> "Paint over a spot, scratch or small thing; it's healed with texture from around it when you lift your finger. For big things, AI Remove does better."
+        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> "Paint over a spot, scratch or small thing (up to about 250 px across); it's healed with texture from around it when you lift your finger. For bigger things, AI Remove does better."
         com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> "Paint over something to remove (a person, a sign, a cone, wires): the AI fills in what would be behind it, on your device. Include its shadow. It looks at the picture as you see it, so it can work on an empty layer above the photo."
-        com.tim.quartzeditor.engine.RetouchKind.CLONE -> "Pick where to copy from, then paint. Strength sets how strongly it covers."
+        com.tim.quartzeditor.engine.RetouchKind.CLONE -> "Hold ⇧ and tap where to copy from (or tap Pick source), then paint. Slide out to Alt for a straight line. Strength sets how strongly it covers."
         com.tim.quartzeditor.engine.RetouchKind.DODGE -> "Lightens where you paint."
         com.tim.quartzeditor.engine.RetouchKind.BURN -> "Darkens where you paint."
         com.tim.quartzeditor.engine.RetouchKind.SMUDGE -> "Drags the colors along with your finger. Strength sets how far."
@@ -444,4 +474,12 @@ private fun SampleAllRow(vm: EditorViewModel) {
         vm.cloneFlat = null
         vm.prefs.edit().putBoolean("retouchAll", it).apply()
     }
+}
+
+/** The size a perspective crop comes out at: the average length of opposite sides. */
+internal fun quadOutputSize(q: List<android.graphics.PointF>): Pair<Int, Int> {
+    fun len(a: android.graphics.PointF, b: android.graphics.PointF) = kotlin.math.hypot(b.x - a.x, b.y - a.y)
+    val w = ((len(q[0], q[1]) + len(q[3], q[2])) / 2f).roundToInt().coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    val h = ((len(q[0], q[3]) + len(q[1], q[2])) / 2f).roundToInt().coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    return w to h
 }

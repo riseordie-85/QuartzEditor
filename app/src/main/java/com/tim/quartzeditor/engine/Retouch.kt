@@ -23,6 +23,9 @@ enum class RetouchKind(val label: String) {
     /** Painted where to work, then done all at once when the finger lifts. */
     val paintsArea: Boolean get() = this == SPOT_HEAL || this == AI_REMOVE
 
+    /** On the healing button (the others are on the toning button). */
+    val heals: Boolean get() = this == SPOT_HEAL || this == AI_REMOVE || this == CLONE
+
     companion object {
         fun byName(n: String?): RetouchKind = entries.firstOrNull { it.name == n } ?: SPOT_HEAL
     }

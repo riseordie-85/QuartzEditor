@@ -36,6 +36,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Redo
@@ -89,6 +93,7 @@ fun Workspace(vm: EditorViewModel) {
     var discardOpen by remember { mutableStateOf(false) }
     var gridOpen by remember { mutableStateOf(false) }
     var guideOpen by remember { mutableStateOf(false) }
+    var editGuidesOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
 
@@ -128,6 +133,72 @@ fun Workspace(vm: EditorViewModel) {
                     vm.toggleSection(PanelSection.COLOR, open = true)
                     panelsOpen = true
                 },
+                menu = { size ->
+                    // The app menu, at the top of the tools: short pages instead of one long list
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .padding(vertical = 3.dp)
+                                .size(size)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (menu) Q.text.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { menu = true },
+                        ) {
+                            Icon(Icons.Outlined.Menu, contentDescription = "Menu", tint = Q.text, modifier = Modifier.size(size * 0.55f))
+                        }
+                        PagedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }, offset = androidx.compose.ui.unit.DpOffset(size + 8.dp, -size)) {
+                            Item("Home (saves to Projects)", Icons.Outlined.Home) { vm.closeDocument() }
+                            Divider()
+                            Page("File", Icons.Outlined.Description) {
+                                Item("Rename image…") { renameOpen = true }
+                                Item("Export image…") { exportOpen = true }
+                                Item("Save project file…") { saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}") }
+                                Item("Place image as layer…") { requestPlace() }
+                                Divider()
+                                Item("Close without saving…") { discardOpen = true }
+                            }
+                            Page("Image", Icons.Outlined.Image) {
+                                Item("Rotate 90° right") { vm.rotateImage(clockwise = true) }
+                                Item("Rotate 90° left") { vm.rotateImage(clockwise = false) }
+                                Item("Flip horizontally") { vm.flipImage(horizontal = true) }
+                                Item("Flip vertically") { vm.flipImage(horizontal = false) }
+                                Divider()
+                                Item("Flatten image") { vm.flattenImage() }
+                            }
+                            Page("View", Icons.Outlined.Visibility) {
+                                Item("Snap to center, edges and guides", checked = vm.snapOn) { vm.toggleSnap() }
+                                Item("Checkerboard for see-through", checked = vm.showChecker) { vm.toggleChecker() }
+                                Item("Modifier button (Shift / Alt)", checked = vm.showModifier) {
+                                    vm.showModifier = !vm.showModifier
+                                    vm.prefs.edit().putBoolean("showModifier", vm.showModifier).apply()
+                                    if (!vm.showModifier) {
+                                        vm.modShift = false
+                                        vm.modAlt = false
+                                        vm.modLocked = false
+                                    }
+                                }
+                                Divider()
+                                Page("Grid") {
+                                    Item("Show grid", checked = vm.showGrid) { vm.toggleGrid() }
+                                    Item("Grid settings…") { gridOpen = true }
+                                }
+                                Page("Rulers and guides") {
+                                    Item("Rulers", checked = vm.showRulers) { vm.toggleRulers() }
+                                    Item("Show guides", checked = vm.showGuides) { vm.toggleGuides() }
+                                    Item("Lock guides", checked = vm.guidesLocked) { vm.toggleGuidesLocked() }
+                                    Divider()
+                                    Item("New guide…") { guideOpen = true }
+                                    Item("Edit guides…") { editGuidesOpen = true }
+                                    Item("Clear guides") { vm.clearGuides() }
+                                }
+                            }
+                            Divider()
+                            Item("Settings…", Icons.Outlined.Settings) { settingsOpen = true }
+                        }
+                    }
+                },
             )
             Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
             Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -146,86 +217,8 @@ fun Workspace(vm: EditorViewModel) {
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen (or pinch in quickly)") { vm.fit() }
                 }
 
-                // Menu
                 // Rulers (under the buttons)
                 Rulers(vm)
-
-                Box(Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp)) {
-                    var menu by remember { mutableStateOf(false) }
-                    RoundButton(Icons.Outlined.Menu, "Menu") { menu = true }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Home (saves to Projects)") }, onClick = { menu = false; vm.closeDocument() })
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Rename image…") }, onClick = { menu = false; renameOpen = true })
-                        DropdownMenuItem(text = { Text("Export image…") }, onClick = { menu = false; exportOpen = true })
-                        DropdownMenuItem(text = { Text("Save project file…") }, onClick = {
-                            menu = false
-                            saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}")
-                        })
-                        DropdownMenuItem(text = { Text("Place image as layer…") }, onClick = { menu = false; requestPlace() })
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Flatten image") }, onClick = { menu = false; vm.flattenImage() })
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Snap to center and edges") },
-                            trailingIcon = { if (vm.snapOn) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleSnap() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Show grid") },
-                            trailingIcon = { if (vm.showGrid) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleGrid() },
-                        )
-                        DropdownMenuItem(text = { Text("Grid settings…") }, onClick = { menu = false; gridOpen = true })
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Rulers") },
-                            trailingIcon = { if (vm.showRulers) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleRulers() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Show guides") },
-                            trailingIcon = { if (vm.showGuides) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleGuides() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Lock guides") },
-                            trailingIcon = { if (vm.guidesLocked) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleGuidesLocked() },
-                        )
-                        DropdownMenuItem(text = { Text("New guide…") }, onClick = { menu = false; guideOpen = true })
-                        DropdownMenuItem(text = { Text("Clear guides") }, onClick = { menu = false; vm.clearGuides() })
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Modifier button (Shift / Alt)") },
-                            trailingIcon = { if (vm.showModifier) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = {
-                                menu = false
-                                vm.showModifier = !vm.showModifier
-                                vm.prefs.edit().putBoolean("showModifier", vm.showModifier).apply()
-                                if (!vm.showModifier) {
-                                    vm.modShift = false
-                                    vm.modAlt = false
-                                    vm.modLocked = false
-                                }
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Checkerboard for see-through") },
-                            trailingIcon = { if (vm.showChecker) Icon(Icons.Outlined.Check, contentDescription = "On") },
-                            onClick = { menu = false; vm.toggleChecker() },
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Rotate image 90° right") }, onClick = { menu = false; vm.rotateImage(clockwise = true) })
-                        DropdownMenuItem(text = { Text("Rotate image 90° left") }, onClick = { menu = false; vm.rotateImage(clockwise = false) })
-                        DropdownMenuItem(text = { Text("Flip image horizontally") }, onClick = { menu = false; vm.flipImage(horizontal = true) })
-                        DropdownMenuItem(text = { Text("Flip image vertically") }, onClick = { menu = false; vm.flipImage(horizontal = false) })
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Settings…") }, onClick = { menu = false; settingsOpen = true })
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("Close without saving…") }, onClick = { menu = false; discardOpen = true })
-                    }
-                }
 
                 // Transforming: cancel / flip / rotate / distort / apply
                 TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
@@ -355,6 +348,10 @@ fun Workspace(vm: EditorViewModel) {
     RasterizeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
     if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
+    if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
+        editGuidesOpen = false
+        guideOpen = true
+    })
 
     if (discardOpen) {
         val saved = vm.doc?.projectId != null

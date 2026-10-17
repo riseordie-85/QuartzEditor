@@ -110,7 +110,7 @@ import kotlin.math.sin
  * [onColorTap] opens the Color panel for the swatch you tapped.
  */
 @Composable
-fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier) {
+fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier, menu: @Composable (Dp) -> Unit = {}) {
     val buttonSize = if (compact) 40.dp else 46.dp
     val showBrush = (vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden
     Row(
@@ -119,7 +119,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
             .clip(RoundedCornerShape(26.dp))
             .background(Q.toolbar)
     ) {
-        ToolColumn(vm, compact, buttonSize, onColorTap)
+        ToolColumn(vm, compact, buttonSize, onColorTap, menu)
         AnimatedVisibility(showBrush, enter = expandHorizontally(), exit = shrinkHorizontally()) {
             Row {
                 Box(Modifier.width(1.dp).fillMaxHeight().padding(vertical = 18.dp).background(Q.text.copy(alpha = 0.12f)))
@@ -130,11 +130,11 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
 }
 
 @Composable
-private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onColorTap: () -> Unit) {
+private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onColorTap: () -> Unit, menu: @Composable (Dp) -> Unit) {
     BoxWithConstraints(Modifier.width(if (compact) 52.dp else 62.dp).fillMaxHeight()) {
         // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space) and the two
         // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
-        val fitted = (maxHeight - 124.dp) / 14.8f
+        val fitted = (maxHeight - 124.dp) / 13.8f
         val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
         val swatchSize = buttonSize * 0.9f
         val tight = fitted < MIN_TOOL_BUTTON
@@ -146,6 +146,9 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                 .padding(vertical = 10.dp),
         ) {
             val t = vm.tool
+            // 1. The menu
+            menu(buttonSize)
+            // 2. Move / Pan
             val moveIcon = if (t == Tool.PAN) Icons.Outlined.PanTool else QIcons.Move
             ToolButton(
                 moveIcon, if (t == Tool.PAN) "Pan (tap again to move layers)" else "Move layer (tap again to pan)", t == Tool.MOVE || t == Tool.PAN, buttonSize,
@@ -154,6 +157,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                     ToolOption(Icons.Outlined.PanTool, "Pan", t == Tool.PAN) { vm.chooseMove(pan = true) },
                 ),
             ) { vm.onToolButton(Tool.MOVE) }
+            // 3. Select
             ToolButton(
                 selectIcon(vm.selectShape), "Select: ${vm.selectShape.label} (tap again for the next shape, hold for all)", t == Tool.SELECT, buttonSize,
                 options = SelectShape.entries.map { s -> ToolOption(selectIcon(s), s.label, t == Tool.SELECT && vm.selectShape == s) { vm.chooseSelectShape(s) } } +
@@ -163,30 +167,80 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                         ToolOption(Icons.Outlined.InvertColors, "Invert selection", false) { vm.invertSelection() },
                     ),
             ) { vm.onToolButton(Tool.SELECT) }
-            ToolButton(Icons.Outlined.Crop, "Crop", t == Tool.CROP, buttonSize) { vm.onToolButton(Tool.CROP) }
+            // 4. Transform, the warps, Crop
             ToolButton(
-                if (t == Tool.WARP) warpIcon(vm.warpKind) else QIcons.Transform,
-                if (t == Tool.WARP) "${vm.warpKind.label} (hold for Transform and the others)" else "Transform (hold for Warp, Puppet Warp, Liquify)",
-                t == Tool.TRANSFORM || t == Tool.WARP, buttonSize,
+                when (t) {
+                    Tool.WARP -> warpIcon(vm.warpKind)
+                    Tool.CROP -> if (vm.cropPerspective) QIcons.PerspectiveCrop else Icons.Outlined.Crop
+                    else -> QIcons.Transform
+                },
+                when (t) {
+                    Tool.WARP -> "${vm.warpKind.label} (hold for Transform, Crop and the others)"
+                    Tool.CROP -> "${if (vm.cropPerspective) "Perspective crop" else "Crop"} (hold for Transform and the others)"
+                    else -> "Transform (hold for Warp, Puppet Warp, Liquify, Crop)"
+                },
+                t == Tool.TRANSFORM || t == Tool.WARP || t == Tool.CROP, buttonSize,
                 options = listOf(ToolOption(QIcons.Transform, "Transform", t == Tool.TRANSFORM) { vm.onToolButton(Tool.TRANSFORM) }) +
                     com.tim.quartzeditor.engine.WarpKind.entries.map { k ->
                         ToolOption(warpIcon(k), k.label, t == Tool.WARP && vm.warpKind == k) { vm.chooseWarp(k) }
-                    },
-            ) { if (t == Tool.WARP) vm.beginWarp() else vm.onToolButton(Tool.TRANSFORM) }
-            ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
+                    } +
+                    listOf(
+                        ToolOption(Icons.Outlined.Crop, "Crop", t == Tool.CROP && !vm.cropPerspective, divider = true) { vm.chooseCrop(perspective = false) },
+                        ToolOption(QIcons.PerspectiveCrop, "Perspective crop", t == Tool.CROP && vm.cropPerspective) { vm.chooseCrop(perspective = true) },
+                    ),
+            ) {
+                when (t) {
+                    Tool.WARP -> vm.beginWarp()
+                    Tool.CROP -> Unit
+                    else -> vm.onToolButton(Tool.TRANSFORM)
+                }
+            }
+            // 5. Healing: Spot healing, AI Remove, Clone stamp
+            val healing = t == Tool.RETOUCH && vm.retouchKind.heals
+            val healShown = if (healing) vm.retouchKind else com.tim.quartzeditor.engine.RetouchKind.byName(vm.prefs.getString("lastHeal", null)).takeIf { it.heals } ?: com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL
             ToolButton(
-                if (vm.bucketPattern) Icons.Outlined.Texture else Icons.Outlined.FormatColorFill,
-                if (vm.bucketPattern) "Pattern fill (tap again for the paint bucket)" else "Paint bucket (tap again for pattern fill)", t == Tool.BUCKET, buttonSize,
+                retouchIcon(healShown), "${healShown.label} (hold for Spot healing, AI Remove, Clone stamp)", healing, buttonSize,
+                options = com.tim.quartzeditor.engine.RetouchKind.entries.filter { it.heals }.map { k ->
+                    ToolOption(retouchIcon(k), k.label, healing && vm.retouchKind == k) { vm.chooseRetouch(k) }
+                },
+            ) { vm.retouchButton(heal = true) }
+            // 6. Gradient, Paint bucket, Pattern fill
+            val fillIcon = when {
+                t == Tool.BUCKET && vm.bucketPattern -> Icons.Outlined.Texture
+                t == Tool.BUCKET -> Icons.Outlined.FormatColorFill
+                else -> Icons.Outlined.Gradient
+            }
+            ToolButton(
+                fillIcon, "Gradient, paint bucket, pattern fill (tap again for the next, hold for all)", t == Tool.GRADIENT || t == Tool.BUCKET, buttonSize,
                 options = listOf(
-                    ToolOption(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET && !vm.bucketPattern) { vm.chooseBucket(pattern = false) },
-                    ToolOption(Icons.Outlined.Texture, "Pattern fill", t == Tool.BUCKET && vm.bucketPattern) { vm.chooseBucket(pattern = true) },
+                    ToolOption(Icons.Outlined.Gradient, "Gradient", t == Tool.GRADIENT) {
+                        vm.onToolButton(Tool.GRADIENT)
+                        vm.prefs.edit().putString("lastFill", "GRADIENT").apply()
+                    },
+                    ToolOption(Icons.Outlined.FormatColorFill, "Paint bucket", t == Tool.BUCKET && !vm.bucketPattern) {
+                        vm.chooseBucket(pattern = false)
+                        vm.prefs.edit().putString("lastFill", "BUCKET").apply()
+                    },
+                    ToolOption(Icons.Outlined.Texture, "Pattern fill", t == Tool.BUCKET && vm.bucketPattern) {
+                        vm.chooseBucket(pattern = true)
+                        vm.prefs.edit().putString("lastFill", "PATTERN").apply()
+                    },
                 ),
-            ) { vm.onToolButton(Tool.BUCKET) }
-            ToolButton(Icons.Outlined.Gradient, "Gradient", t == Tool.GRADIENT, buttonSize) { vm.onToolButton(Tool.GRADIENT) }
+            ) { vm.fillButton() }
+            // 7. Toning: Blur, Sharpen, Smudge, Dodge, Burn
+            val toning = t == Tool.RETOUCH && !vm.retouchKind.heals
+            val toneShown = if (toning) vm.retouchKind else com.tim.quartzeditor.engine.RetouchKind.byName(vm.prefs.getString("lastTone", null)).takeIf { !it.heals } ?: com.tim.quartzeditor.engine.RetouchKind.BLUR
+            val toneOrder = listOf(
+                com.tim.quartzeditor.engine.RetouchKind.BLUR, com.tim.quartzeditor.engine.RetouchKind.SHARPEN, com.tim.quartzeditor.engine.RetouchKind.SMUDGE,
+                com.tim.quartzeditor.engine.RetouchKind.DODGE, com.tim.quartzeditor.engine.RetouchKind.BURN,
+            )
             ToolButton(
-                shapeIcon(vm.shapeKind), "Shape: ${vm.shapeKind.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE, buttonSize,
-                options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } },
-            ) { vm.onToolButton(Tool.SHAPE) }
+                retouchIcon(toneShown), "${toneShown.label} (hold for Blur, Sharpen, Smudge, Dodge, Burn)", toning, buttonSize,
+                options = toneOrder.mapIndexed { i, k ->
+                    ToolOption(retouchIcon(k), k.label, toning && vm.retouchKind == k, divider = i == 3) { vm.chooseRetouch(k) }
+                },
+            ) { vm.retouchButton(heal = false) }
+            // 8. Pen
             ToolButton(
                 QIcons.Pen, "Shape pen (hold for point editing)", t == Tool.PEN, buttonSize,
                 options = listOf(
@@ -194,15 +248,26 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                     ToolOption(Icons.Outlined.Polyline, "Edit points", t == Tool.PEN && vm.penEditing) { vm.choosePen(edit = true) },
                 ),
             ) { vm.onToolButton(Tool.PEN) }
-            ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
-            ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
-            ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
+            // 9. Shape
             ToolButton(
-                retouchIcon(vm.retouchKind), "${vm.retouchKind.label} (hold for Spot Healing, AI Remove, Clone Stamp, Dodge, Burn, Smudge, Blur, Sharpen)", t == Tool.RETOUCH, buttonSize,
-                options = com.tim.quartzeditor.engine.RetouchKind.entries.mapIndexed { i, k ->
-                    ToolOption(retouchIcon(k), k.label, t == Tool.RETOUCH && vm.retouchKind == k, divider = i == 3 || i == 5) { vm.chooseRetouch(k) }
-                },
-            ) { vm.onToolButton(Tool.RETOUCH) }
+                shapeIcon(vm.shapeKind), "Shape: ${vm.shapeKind.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE, buttonSize,
+                options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } },
+            ) { vm.onToolButton(Tool.SHAPE) }
+            // 10. Text
+            ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
+            // 11. Brush / Eraser
+            val erasing = t == Tool.ERASER || (t != Tool.BRUSH && vm.prefs.getString("lastBrush", "BRUSH") == "ERASER")
+            ToolButton(
+                if (erasing) QIcons.Eraser else Icons.Outlined.Brush,
+                if (erasing) "Eraser (hold for the brush; tap again to fold the brush column)" else "Brush (hold for the eraser; tap again to fold the brush column)",
+                t == Tool.BRUSH || t == Tool.ERASER, buttonSize, ring = !erasing,
+                options = listOf(
+                    ToolOption(Icons.Outlined.Brush, "Brush", t == Tool.BRUSH) { vm.chooseBrush(eraser = false) },
+                    ToolOption(QIcons.Eraser, "Eraser", t == Tool.ERASER) { vm.chooseBrush(eraser = true) },
+                ),
+            ) { vm.brushButton() }
+            // 12. Eyedropper
+            ToolButton(Icons.Outlined.Colorize, "Eyedropper", t == Tool.EYEDROPPER, buttonSize) { vm.onToolButton(Tool.EYEDROPPER) }
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))
             ColorSwatches(vm, swatchSize, onColorTap)
         }

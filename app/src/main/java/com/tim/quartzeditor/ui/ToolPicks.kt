@@ -49,3 +49,48 @@ fun EditorViewModel.choosePen(edit: Boolean) {
     if (tool != Tool.PEN) onToolButton(Tool.PEN)
     penEditing = false
 }
+
+/** The healing button (Spot healing, AI Remove, Clone stamp) or the toning one (Blur … Burn), picking its last tool. */
+fun EditorViewModel.retouchButton(heal: Boolean) {
+    val k = retouchKind
+    if (tool == Tool.RETOUCH && k.heals == heal) {
+        // Already on it: fold or unfold the brush column
+        onToolButton(Tool.RETOUCH)
+        return
+    }
+    val last = com.tim.quartzeditor.engine.RetouchKind.byName(prefs.getString(if (heal) "lastHeal" else "lastTone", null))
+    chooseRetouch(if (last.heals == heal) last else if (heal) com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL else com.tim.quartzeditor.engine.RetouchKind.BLUR)
+}
+
+/** The fill button: Gradient, Paint bucket or Pattern fill (tap again for the next one). */
+fun EditorViewModel.fillButton() {
+    when {
+        tool == Tool.GRADIENT -> chooseBucket(pattern = false)
+        tool == Tool.BUCKET && !bucketPattern -> chooseBucket(pattern = true)
+        tool == Tool.BUCKET -> onToolButton(Tool.GRADIENT)
+        else -> when (prefs.getString("lastFill", "GRADIENT")) {
+            "BUCKET" -> chooseBucket(pattern = false)
+            "PATTERN" -> chooseBucket(pattern = true)
+            else -> onToolButton(Tool.GRADIENT)
+        }
+    }
+    // (Unless something pending had to finish first and the tool hasn't changed yet)
+    if (tool == Tool.GRADIENT || tool == Tool.BUCKET) {
+        prefs.edit().putString("lastFill", if (tool == Tool.GRADIENT) "GRADIENT" else if (bucketPattern) "PATTERN" else "BUCKET").apply()
+    }
+}
+
+/** The brush button: Brush or Eraser (hold for both); tapping it while on one folds the brush column. */
+fun EditorViewModel.brushButton() {
+    if (tool == Tool.BRUSH || tool == Tool.ERASER) {
+        onToolButton(tool)
+        return
+    }
+    onToolButton(if (prefs.getString("lastBrush", "BRUSH") == "ERASER") Tool.ERASER else Tool.BRUSH)
+}
+
+fun EditorViewModel.chooseBrush(eraser: Boolean) {
+    val t = if (eraser) Tool.ERASER else Tool.BRUSH
+    prefs.edit().putString("lastBrush", t.name).apply()
+    if (tool != t) onToolButton(t)
+}

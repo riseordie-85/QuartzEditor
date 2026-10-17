@@ -261,12 +261,17 @@ fun EditorViewModel.flipImage(horizontal: Boolean) {
     }
 }
 
-internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int, build: (Matrix) -> Unit) {
+/**
+ * Turns, flips or straightens the whole image through [build] into a [newW]×[newH] canvas.
+ * [perspective]: the matrix bends lines (Perspective crop), so guides and the selection are
+ * cleared and what's kept around the new canvas is limited to a margin.
+ */
+internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int, perspective: Boolean = false, build: (Matrix) -> Unit) {
     val d = doc ?: return
-    if (pendingFirst { canvasTransform(label, newW, newH, build) }) return
+    if (pendingFirst { canvasTransform(label, newW, newH, perspective, build) }) return
     val fonts = d.layers.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
-        withFonts(fonts) { canvasTransform(label, newW, newH, build) }
+        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, build) }
         return
     }
     val layers = d.layers.toList()
@@ -275,7 +280,8 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
     val newProps = HashMap<Layer, LayerProps>()
     runBusy("Turning…") {
         val results = withContext(Dispatchers.Default) {
-            val everywhere = Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
+            // Beyond a perspective's horizon pixels run off to infinity: keep only a margin
+            val everywhere = if (perspective) Transformer.limitFor(newW, newH) else Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
             snaps.map { (l, tiles, mask) ->
                 val m = Matrix().apply { setTranslate(l.x.toFloat(), l.y.toFloat()) }
                 build(m)
@@ -311,6 +317,13 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
             }
             d.width = newW
             d.height = newH
+            if (perspective) {
+                // Straight guides don't stay straight through a perspective
+                d.guidesX.clear()
+                d.guidesY.clear()
+                d.selection = null
+                return@stackEdit
+            }
             // Guides turn and flip with the picture
             val gm = Matrix().also(build)
             val nx = ArrayList<Float>()

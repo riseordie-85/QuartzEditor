@@ -533,6 +533,13 @@ internal fun FxButtons(vm: EditorViewModel) {
         ToggleRow("Clip to the layer below (only changes it)", target.props.clip) { vm.onLayer(target.id) { toggleClip() } }
         return
     }
+    // On this layer, with a selection: only what's selected changes (a blur stops at its edge too)
+    if (vm.doc?.selection != null) {
+        Text(
+            "Only inside the selection: nothing outside it changes, and a blur doesn't spread past its edge. Deselect to change the whole layer.",
+            color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
     if (vm.pendingFx == null) return
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

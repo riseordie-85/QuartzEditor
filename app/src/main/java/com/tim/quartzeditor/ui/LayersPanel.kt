@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
@@ -309,22 +310,17 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             Box {
                 var adj by remember { mutableStateOf(false) }
                 BarButton(Icons.Outlined.Contrast, "Adjustments") { adj = true }
-                DropdownMenu(expanded = adj, onDismissRequest = { adj = false }) {
-                    Text("New adjustment layer", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    FxKind.entries.forEach { k ->
-                        DropdownMenuItem(
-                            text = { Text(FX_KIND_LABELS.getValue(k)) },
-                            leadingIcon = { Icon(fxKindIcon(k), contentDescription = null) },
-                            onClick = { adj = false; vm.addAdjustmentLayer(k) },
-                        )
+                PagedDropdownMenu(expanded = adj, onDismissRequest = { adj = false }) {
+                    Page("New adjustment layer", Icons.Outlined.Layers) {
+                        Label(if (d.selection != null) "Changes what's selected, everything below" else "Changes everything below, without touching pixels")
+                        FxKind.entries.forEach { k -> Item(FX_KIND_LABELS.getValue(k), fxKindIcon(k)) { vm.addAdjustmentLayer(k) } }
                     }
-                    HorizontalDivider()
-                    Text(if (active?.isAdjustment == true) "Edit this adjustment layer" else "On this layer", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    listOf(
-                        PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.HUE_SAT, PopupKind.COLOR_BALANCE,
-                        PopupKind.VIBRANCE, PopupKind.BLACK_WHITE, PopupKind.PHOTO_FILTER, PopupKind.GRADIENT_MAP, PopupKind.BLUR, PopupKind.FILTERS,
-                    ).forEach { k ->
-                        DropdownMenuItem(text = { Text("${k.title}…") }, onClick = { adj = false; vm.openPopup(k) })
+                    Page(if (active?.isAdjustment == true) "Edit this adjustment layer" else "On this layer", Icons.Outlined.Tune) {
+                        Label(if (d.selection != null) "Changes this layer's pixels, inside the selection" else "Changes this layer's pixels")
+                        listOf(
+                            PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.HUE_SAT, PopupKind.COLOR_BALANCE,
+                            PopupKind.VIBRANCE, PopupKind.BLACK_WHITE, PopupKind.PHOTO_FILTER, PopupKind.GRADIENT_MAP, PopupKind.BLUR, PopupKind.FILTERS,
+                        ).forEach { k -> Item("${k.title}…") { vm.openPopup(k) } }
                     }
                 }
             }
@@ -336,31 +332,31 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
             Box {
                 BarButton(Icons.Outlined.MoreVert, "More layer actions") { more = true }
-                DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                    fun item(label: String, action: () -> Unit) = @Composable {
-                        DropdownMenuItem(text = { Text(label) }, onClick = {
-                            more = false
-                            action()
-                        })
+                PagedDropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                    Item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }
+                    if (active?.isGroup == true) Item("Merge folder") { vm.mergeFolder() } else Item("Merge down") { vm.mergeDown() }
+                    Item("Put in a new folder") { vm.groupActive() }
+                    if (active != null && !active.isGroup) Item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }
+                    Item("Rename layer…") { renaming = active }
+                    Divider()
+                    Page("Fill and clear") {
+                        Item("Fill with foreground color") { vm.fillLayer(vm.foreground) }
+                        Item("Fill with pattern") { vm.fillWithPattern() }
+                        Item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }
                     }
-                    item(if (active?.isGroup == true) "Duplicate folder" else "Duplicate layer") { vm.duplicateLayer() }()
-                    if (active?.isGroup == true) item("Merge folder") { vm.mergeFolder() }() else item("Merge down") { vm.mergeDown() }()
-                    item("Put in a new folder") { vm.groupActive() }()
-                    if (active != null && !active.isGroup) item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }()
-                    if (active?.needsRaster == true) item("Rasterize layer") { vm.rasterizeLayer(active.id) }()
-                    if (active?.isSmart == true) item("Edit smart layer contents") { vm.openSmartContents(active.id) }()
-                    if (active != null && !active.isAdjustment) item(if (vm.isMultiSelecting) "Convert picked to smart layer" else "Convert to smart layer") { vm.convertToSmart() }()
-                    if (canApplyStyle(active)) item("Apply layer style") { vm.applyLayerStyle(active!!.id) }()
-                    item("Flatten image") { vm.flattenImage() }()
-                    HorizontalDivider()
-                    item("Place image as layer…") { onPlaceImage() }()
-                    item("Remove background") { vm.removeBackground() }()
-                    if (d.selection != null) item("Mask from selection") { vm.maskFromSelection() }()
-                    item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
-                    item("Fill with pattern") { vm.fillWithPattern() }()
-                    item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
-                    HorizontalDivider()
-                    item("Rename layer…") { renaming = active }()
+                    Page("Mask and background") {
+                        Item("Remove background") { vm.removeBackground() }
+                        Item("Mask from selection", enabled = d.selection != null) { vm.maskFromSelection() }
+                    }
+                    Page("Convert") {
+                        if (active != null && !active.isAdjustment) Item(if (vm.isMultiSelecting) "Convert picked to smart layer" else "Convert to smart layer") { vm.convertToSmart() }
+                        if (active?.isSmart == true) Item("Edit smart layer contents") { vm.openSmartContents(active.id) }
+                        Item("Rasterize layer", enabled = active?.needsRaster == true) { active?.let { vm.rasterizeLayer(it.id) } }
+                        Item("Apply layer style", enabled = canApplyStyle(active)) { vm.applyLayerStyle(active!!.id) }
+                    }
+                    Divider()
+                    Item("Place image as layer…") { onPlaceImage() }
+                    Item("Flatten image") { vm.flattenImage() }
                 }
             }
         }
@@ -540,41 +536,29 @@ private fun LayerRow(
         }
     }
     // Long press: this layer's quick actions
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-        fun item(label: String, enabled: Boolean = true, action: () -> Unit) = @Composable {
-            DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
-                menu = false
-                action()
-            })
-        }
+    PagedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         val ids = if (vm.isMultiSelecting && layer.id in vm.selectedLayerIds()) vm.selectedLayerIds() else listOf(layer.id)
-        item("Rename…") { onRename() }()
-        HorizontalDivider()
-        item("Copy layer style", enabled = layer.hasContent) { vm.copyLayerStyle(layer.id) }()
-        item(if (ids.size > 1) "Paste layer style (${ids.size} layers)" else "Paste layer style", enabled = vm.copiedStyle != null) { vm.pasteLayerStyle(ids) }()
-        item("Save layer style as preset…", enabled = p.style.any) { onSavePreset() }()
-        item("Apply layer style", enabled = canApplyStyle(layer)) { vm.applyLayerStyle(layer.id) }()
-        item("Clear layer style", enabled = p.style.any) { vm.applyStyleTo(ids, "Clear layer style", com.tim.quartzeditor.engine.LayerStyle()) }()
-        HorizontalDivider()
-        if (ids.size > 1) {
-            item("Merge ${ids.size} layers") { vm.mergeDown() }()
-        } else {
-            item(if (layer.isGroup) "Merge folder" else "Merge down") {
-                vm.onLayer(layer.id) { mergeDown() }
-            }()
+        Item("Rename…") { onRename() }
+        Item("Duplicate") { vm.onLayer(layer.id) { duplicateLayer() } }
+        if (ids.size > 1) Item("Merge ${ids.size} layers") { vm.mergeDown() }
+        else Item(if (layer.isGroup) "Merge folder" else "Merge down") { vm.onLayer(layer.id) { mergeDown() } }
+        if (!layer.isGroup) Item(if (p.clip) "Release clipping mask" else "Clip to layer below") { vm.onLayer(layer.id) { toggleClip() } }
+        Divider()
+        Page("Layer style") {
+            Item("Copy layer style", enabled = layer.hasContent) { vm.copyLayerStyle(layer.id) }
+            Item(if (ids.size > 1) "Paste layer style (${ids.size} layers)" else "Paste layer style", enabled = vm.copiedStyle != null) { vm.pasteLayerStyle(ids) }
+            Item("Save layer style as preset…", enabled = p.style.any) { onSavePreset() }
+            Divider()
+            Item("Apply layer style", enabled = canApplyStyle(layer)) { vm.applyLayerStyle(layer.id) }
+            Item("Clear layer style", enabled = p.style.any) { vm.applyStyleTo(ids, "Clear layer style", com.tim.quartzeditor.engine.LayerStyle()) }
         }
-        item("Duplicate") {
-            vm.onLayer(layer.id) { duplicateLayer() }
-        }()
-        if (!layer.isGroup) item(if (p.clip) "Release clipping mask" else "Clip to layer below") {
-            vm.onLayer(layer.id) { toggleClip() }
-        }()
-        HorizontalDivider()
-        if (layer.isSmart) item("Edit contents") { vm.openSmartContents(layer.id) }()
-        if (!layer.isAdjustment) item(if (ids.size > 1) "Convert ${ids.size} to smart layer" else "Convert to smart layer") {
-            if (ids.size > 1) vm.convertToSmart() else vm.onLayer(layer.id) { convertToSmart() }
-        }()
-        if (layer.needsRaster) item("Rasterize layer") { vm.rasterizeLayer(layer.id) }()
+        if (layer.isSmart || !layer.isAdjustment || layer.needsRaster) Page("Convert") {
+            if (layer.isSmart) Item("Edit contents") { vm.openSmartContents(layer.id) }
+            if (!layer.isAdjustment) Item(if (ids.size > 1) "Convert ${ids.size} to smart layer" else "Convert to smart layer") {
+                if (ids.size > 1) vm.convertToSmart() else vm.onLayer(layer.id) { convertToSmart() }
+            }
+            if (layer.needsRaster) Item("Rasterize layer") { vm.rasterizeLayer(layer.id) }
+        }
     }
     }
 }

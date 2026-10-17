@@ -127,6 +127,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The crop box while cropping (canvas pixels, may reach past the canvas). */
     var cropBox by mutableStateOf<RectF?>(null)
     var cropRatio by mutableStateOf(CropRatio.FREE)
+    /** Perspective crop: drag the four corners onto something slanted and it comes out straight. */
+    var cropPerspective by mutableStateOf(prefs.getBoolean("cropPersp", false))
+    /** The perspective crop's corners (TL, TR, BR, BL, canvas pixels); [cropBox] holds their bounds. */
+    var cropQuad by mutableStateOf<List<android.graphics.PointF>?>(null)
 
     var wandTolerance by mutableFloatStateOf(prefs.getFloat("wandTol", 0.12f))
     var wandContiguous by mutableStateOf(prefs.getBoolean("wandContig", true))
@@ -265,6 +269,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var guidesLocked by mutableStateOf(prefs.getBoolean("guidesLocked", false))
     /** A guide being dragged out of a ruler: (vertical, canvas position). */
     var guideDraft by mutableStateOf<Pair<Boolean, Float>?>(null)
+    /** The active layer's box while a guide is dragged (it snaps to its edges and middle). */
+    internal var guideSnapBox: RectF? = null
 
     var snapGuidesX by mutableStateOf<List<Float>>(emptyList())
         internal set
@@ -352,6 +358,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val stroking: Boolean get() = stroke != null || retouch != null
     /** The stroke under way paints where to heal or remove (not real paint). */
     internal var strokeHeals: com.tim.quartzeditor.engine.RetouchKind? = null
+    /** Spot healing: how far the stroke reaches so far, and whether it was said it's getting too big. */
+    internal var healReach: RectF? = null
+    internal var healWarned = false
 
     var foreground by mutableIntStateOf(prefs.getInt("fg", Color.BLACK))
         private set
@@ -451,6 +460,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         samplePicture = null
         samplePictureVersion = -1
         cropBox = null
+        cropQuad = null
         polygonPoints.clear()
         selectDraft = null
         effectsCache.clear()
@@ -489,6 +499,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         samplePicture = null
         samplePictureVersion = -1
         cropBox = null
+        cropQuad = null
         polygonPoints.clear()
         selectDraft = null
         // Effect images and thumbnails are kept by layer id, and ids repeat between documents

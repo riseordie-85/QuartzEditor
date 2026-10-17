@@ -49,27 +49,35 @@ object QIcons {
     }
 
     /** A box with corner handles and a turning arrow: free transform (scale, rotate, distort). */
+    /** A box with a handle box at each corner: Transform. */
     val Transform: ImageVector by lazy {
         build("Transform") {
-            // Dashed-looking frame: four sides between the corner handles
+            // The four sides, between the corner handles
             line {
-                moveTo(7f, 5f); lineTo(13f, 5f)
-                moveTo(7f, 19f); lineTo(17f, 19f)
-                moveTo(5f, 7f); lineTo(5f, 17f)
-                moveTo(19f, 11f); lineTo(19f, 17f)
+                moveTo(7.5f, 5f); lineTo(16.5f, 5f)
+                moveTo(7.5f, 19f); lineTo(16.5f, 19f)
+                moveTo(5f, 7.5f); lineTo(5f, 16.5f)
+                moveTo(19f, 7.5f); lineTo(19f, 16.5f)
             }
-            path(fill = SolidColor(Color.Black)) {
-                for ((x, y) in listOf(5f to 5f, 5f to 19f, 19f to 19f)) {
-                    moveTo(x - 2f, y - 2f); lineTo(x + 2f, y - 2f); lineTo(x + 2f, y + 2f); lineTo(x - 2f, y + 2f); close()
+            // The handles: small open boxes on the corners
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 1.6f, strokeLineJoin = StrokeJoin.Miter) {
+                for ((x, y) in listOf(5f to 5f, 19f to 5f, 19f to 19f, 5f to 19f)) {
+                    moveTo(x - 2.5f, y - 2.5f); lineTo(x + 2.5f, y - 2.5f); lineTo(x + 2.5f, y + 2.5f); lineTo(x - 2.5f, y + 2.5f); close()
                 }
             }
-            // Turning arrow at the top-right corner
+        }
+    }
+
+    /** A slanted four-sided shape with a corner handle on each corner: Perspective crop. */
+    val PerspectiveCrop: ImageVector by lazy {
+        build("PerspectiveCrop") {
             line {
-                moveTo(15.5f, 3.5f)
-                arcTo(5f, 5f, 0f, false, true, 20.5f, 8.5f)
+                moveTo(7f, 5f); lineTo(17f, 5f); lineTo(21f, 19f); lineTo(3f, 19f); close()
             }
             path(fill = SolidColor(Color.Black)) {
-                moveTo(18.2f, 7.6f); lineTo(22.6f, 7.4f); lineTo(20.6f, 11.2f); close()
+                for ((x, y) in listOf(7f to 5f, 17f to 5f, 21f to 19f, 3f to 19f)) {
+                    moveTo(x - 2f, y - 2f); lineTo(x + 2f, y - 2f); lineTo(x + 2f, y + 2f); lineTo(x - 2f, y + 2f); close()
+                }
             }
         }
     }

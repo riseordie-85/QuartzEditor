@@ -76,6 +76,7 @@ fun EditorViewModel.strokeTo(x: Float, y: Float) {
     }
     val s = stroke ?: return
     s.addPoint(x, y)
+    if (strokeHeals == com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL) checkHealReach(x, y)
     doc?.invalidate()
 }
 

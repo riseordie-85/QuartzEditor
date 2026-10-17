@@ -322,6 +322,14 @@ object Transformer {
     fun render(grid: Map<Long, Bitmap>, alphaOnly: Boolean, src: Rect, m: Matrix, limit: Rect): Pair<Bitmap, Rect>? {
         val dst = RectF(src)
         m.mapRect(dst)
+        // A strong perspective can put part of the source past the horizon, where its corners
+        // land on the wrong side; then only the limit says how far the result reaches
+        if (!m.isAffine) {
+            val v = FloatArray(9).also { m.getValues(it) }
+            val behind = listOf(src.left to src.top, src.right to src.top, src.right to src.bottom, src.left to src.bottom)
+                .any { (x, y) -> v[6] * x + v[7] * y + v[8] <= 1e-6f }
+            if (behind) dst.set(RectF(limit))
+        }
         val out = Rect(
             kotlin.math.floor(dst.left).toInt(), kotlin.math.floor(dst.top).toInt(),
             kotlin.math.ceil(dst.right).toInt(), kotlin.math.ceil(dst.bottom).toInt(),

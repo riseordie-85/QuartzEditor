@@ -182,7 +182,23 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         // Crop box handles: 0..3 corners, 4..7 edges, -1 inside
                         var cropHandle = -2
                         val cropStart = vm.cropBox?.let { android.graphics.RectF(it) }
-                        if (tool == Tool.CROP && cropStart != null) {
+                        val quadStart = vm.cropQuad?.map { android.graphics.PointF(it.x, it.y) }
+                        if (tool == Tool.CROP && quadStart != null) {
+                            // Perspective crop: a corner, an edge's middle, or inside
+                            val r = 30.dp.toPx()
+                            fun sc(p: android.graphics.PointF) = Offset(p.x * vm.scale + vm.offsetX, p.y * vm.scale + vm.offsetY)
+                            val c = quadStart.map { sc(it) }
+                            val e = (0 until 4).map { i -> (c[i] + c[(i + 1) % 4]) / 2f }
+                            val ci = c.indexOfFirst { (it - start).getDistance() < r }
+                            val ei = e.indexOfFirst { (it - start).getDistance() < r }
+                            cropHandle = when {
+                                ci >= 0 -> ci
+                                ei >= 0 -> 4 + ei
+                                pointInQuad(quadStart, startCx, startCy) -> -1
+                                else -> -2
+                            }
+                            if (cropHandle != -2) mode = GestureMode.CROP
+                        } else if (tool == Tool.CROP && cropStart != null) {
                             val r = 30.dp.toPx()
                             fun sc(x: Float, y: Float) = Offset(x * vm.scale + vm.offsetX, y * vm.scale + vm.offsetY)
                             val c = listOf(
@@ -213,9 +229,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 mode = GestureMode.PEN_EDIT
                             }
                         }
-                        // Move tool on a guide: drag it (off the picture removes it)
+                        // Move or Pan tool on a guide: drag it (off the picture removes it)
                         var guidePos = 0f
-                        if (tool == Tool.MOVE && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
+                        if ((tool == Tool.MOVE || tool == Tool.PAN) && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
                             val d0 = vm.doc
                             val r = 14.dp.toPx()
                             var best = r
@@ -232,6 +248,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
                             movingGuide?.let { (v, _) ->
                                 mode = GestureMode.GUIDE
+                                vm.prepareGuideSnap()
                                 vm.guideDraft = v to guidePos
                             }
                         }
@@ -242,10 +259,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var strokeOy = startCy
                         // Shift: the straight line's direction, fixed once the finger has moved a little
                         var lineAngle: Double? = null
-                        // Clone Stamp: Alt + tap (or Pick source, then a tap) sets where it copies from
-                        if (tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE &&
-                            (vm.altOn || vm.pickingCloneSource) && vm.isOnCanvas(start.x, start.y)
-                        ) {
+                        // Clone Stamp: Shift + tap (or Pick source, then a tap) sets where it copies from, and
+                        // Alt keeps the stroke straight; every other brush is straight with Shift
+                        val cloning = tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE
+                        fun straightOn() = if (cloning) vm.altOn else vm.shiftOn
+                        if (cloning && (vm.shiftOn || vm.pickingCloneSource) && vm.isOnCanvas(start.x, start.y)) {
                             vm.setCloneSource(startCx, startCy)
                             mode = GestureMode.DONE
                         }
@@ -253,7 +271,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.isOnCanvas(start.x, start.y)) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
                                 // Shift and a tap: a straight line from where the last stroke ended (like Photoshop)
-                                val join = vm.lastStrokeEnd?.takeIf { vm.shiftOn && it.first == vm.doc?.activeId }
+                                val join = vm.lastStrokeEnd?.takeIf { straightOn() && it.first == vm.doc?.activeId }
                                 val bx = join?.second ?: cx
                                 val by = join?.third ?: cy
                                 // Can't paint here: wait and see whether it becomes a pinch or stays a touch
@@ -332,6 +350,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         mode = GestureMode.NAV
                                     }
                                     GestureMode.CROP -> {
+                                        if (quadStart != null) vm.cropQuad = quadStart
                                         if (cropStart != null) vm.cropBox = cropStart
                                         mode = GestureMode.NAV
                                     }
@@ -376,7 +395,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.endStroke()
                                         cursor = null
                                         mode = GestureMode.DONE
-                                    } else if (vm.shiftOn) {
+                                    } else if (straightOn()) {
                                         // Straight: along 0°, 45° or 90° from where it started
                                         val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
                                         if (lineAngle == null && kotlin.math.hypot(x - strokeOx, y - strokeOy) * vm.scale > slop) {
@@ -477,7 +496,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                             // Skew / perspective / distort work from where the gesture started (a move that
                                             // would fold the box over leaves it where it last was)
                                             if (tStart.distort) tStart.dragCornerBy(h.i, ddx, ddy) ?: cur
-                                            else centered(vm, tStart, tStart.copy(keepAspect = ka != vm.shiftOn).dragCorner(h.i, target)).copy(keepAspect = ka)
+                                            else centered(vm, tStart, tStart.copy(keepAspect = ka || vm.shiftOn).dragCorner(h.i, target)).copy(keepAspect = ka)
                                         }
                                         is TransformHit.Edge -> vm.updateTransform { cur ->
                                             if (tStart.distort) {
@@ -487,7 +506,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                                 val b = q0[(h.i + 1) % 4]
                                                 val k = if (vm.altOn) 2f else 1f
                                                 val target = android.graphics.PointF((a.x + b.x) / 2f + ddx * k, (a.y + b.y) / 2f + ddy * k)
-                                                centered(vm, tStart, tStart.copy(keepAspect = cur.keepAspect != vm.shiftOn).dragEdge(h.i, target, target)).copy(keepAspect = cur.keepAspect)
+                                                centered(vm, tStart, tStart.copy(keepAspect = cur.keepAspect || vm.shiftOn).dragEdge(h.i, target, target)).copy(keepAspect = cur.keepAspect)
                                             }
                                         }
                                         TransformHit.Move -> {
@@ -546,7 +565,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     val (gx, gy) = if (vm.shiftOn) snap45(startCx, startCy, cx, cy) else cx to cy
                                     vm.gradientTo(gx, gy)
                                 }
-                                GestureMode.CROP -> if (main != null && cropStart != null) {
+                                GestureMode.CROP -> if (main != null && quadStart != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    vm.dragCropQuad(quadStart, cropHandle, cx - startCx, cy - startCy)
+                                } else if (main != null && cropStart != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                     vm.dragCrop(cropStart, cropHandle, cx - startCx, cy - startCy, keepShape = vm.shiftOn, fromCenter = vm.altOn)
                                 }
@@ -582,14 +604,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     val g = movingGuide
                                     if (g != null) {
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
-                                        var v = if (g.first) cx else cy
-                                        val d0 = vm.doc
-                                        if (d0 != null && vm.snapOn) {
-                                            val size = if (g.first) d0.width.toFloat() else d0.height.toFloat()
-                                            val r = 10.dp.toPx() / vm.scale
-                                            for (t in listOf(0f, size / 2f, size)) if (abs(v - t) <= r) v = t
-                                        }
-                                        guidePos = v.roundToInt().toFloat()
+                                        // Snaps to the canvas's and the active layer's edges and middle
+                                        guidePos = vm.snapGuide(g.first, if (g.first) cx else cy, 10.dp.toPx() / vm.scale)
                                         vm.guideDraft = g.first to guidePos
                                     }
                                 }
@@ -718,8 +734,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             @Suppress("UNUSED_VARIABLE") val gv = d.guidesX.size + d.guidesY.size
             drawGuides(vm, s, ox, oy, d.width, d.height, movingGuide)
 
+            // Perspective crop: the four corners, a grid that follows them, and what's cut off dimmed
+            val quad = vm.cropQuad
+            if (quad != null) drawCropQuad(quad, s, ox, oy)
             // Crop box: dim what's cut off, thirds, handles
-            vm.cropBox?.let { b ->
+            if (quad == null) vm.cropBox?.let { b ->
                 val l = b.left * s + ox
                 val t = b.top * s + oy
                 val r = b.right * s + ox
@@ -1102,5 +1121,59 @@ private fun MarchingAnts(vm: EditorViewModel, path: android.graphics.Path?, draf
             drawCircle(Color.White, (if (i == 0) 7 else 5).dp.toPx(), o)
             drawCircle(Q.accent, (if (i == 0) 5 else 3).dp.toPx(), o)
         }
+    }
+}
+
+/** True when canvas point ([x], [y]) is inside the four-cornered shape [q]. */
+private fun pointInQuad(q: List<android.graphics.PointF>, x: Float, y: Float): Boolean {
+    var inside = false
+    var j = q.size - 1
+    for (i in q.indices) {
+        val a = q[i]
+        val b = q[j]
+        if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside
+        j = i
+    }
+    return inside
+}
+
+/** The perspective crop on screen: outside dimmed, a 3×3 grid in perspective, corner and edge handles. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropQuad(q: List<android.graphics.PointF>, s: Float, ox: Float, oy: Float) {
+    val p = q.map { Offset(it.x * s + ox, it.y * s + oy) }
+    val outline = androidx.compose.ui.graphics.Path().apply {
+        moveTo(p[0].x, p[0].y)
+        for (i in 1 until 4) lineTo(p[i].x, p[i].y)
+        close()
+    }
+    val dim = androidx.compose.ui.graphics.Path().apply {
+        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+        addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+        addPath(outline)
+    }
+    drawPath(dim, Color.Black.copy(alpha = 0.55f))
+    val line = 1.dp.toPx()
+    // The grid follows the perspective: map the thirds of a square through the corners
+    val m = android.graphics.Matrix()
+    if (m.setPolyToPoly(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f), 0, floatArrayOf(p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y), 0, 4)) {
+        for (k in 1..2) {
+            val t = k / 3f
+            val a = floatArrayOf(t, 0f, t, 1f, 0f, t, 1f, t)
+            m.mapPoints(a)
+            drawLine(Color.White.copy(alpha = 0.5f), Offset(a[0], a[1]), Offset(a[2], a[3]), line)
+            drawLine(Color.White.copy(alpha = 0.5f), Offset(a[4], a[5]), Offset(a[6], a[7]), line)
+        }
+    }
+    drawPath(outline, Color.Black.copy(alpha = 0.6f), style = Stroke(line * 3.5f))
+    drawPath(outline, Color.White, style = Stroke(line * 1.5f))
+    val hs = 8.dp.toPx()
+    for (i in 0 until 4) {
+        val mid = (p[i] + p[(i + 1) % 4]) / 2f
+        drawCircle(Color.Black.copy(alpha = 0.6f), hs * 0.7f + line, mid)
+        drawCircle(Color.White, hs * 0.7f, mid)
+    }
+    for (c in p) {
+        drawCircle(Color.Black.copy(alpha = 0.6f), hs + line, c)
+        drawCircle(Color.White, hs, c)
+        drawCircle(Q.accent, hs - 2.5f * line, c)
     }
 }
