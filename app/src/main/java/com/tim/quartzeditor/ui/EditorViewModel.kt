@@ -271,6 +271,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var guideDraft by mutableStateOf<Pair<Boolean, Float>?>(null)
     /** The active layer's box while a guide is dragged (it snaps to its edges and middle). */
     internal var guideSnapBox: RectF? = null
+    internal var guideSnapJob: kotlinx.coroutines.Job? = null
 
     var snapGuidesX by mutableStateOf<List<Float>>(emptyList())
         internal set

@@ -327,8 +327,10 @@ object Transformer {
         if (!m.isAffine) {
             val v = FloatArray(9).also { m.getValues(it) }
             val behind = listOf(src.left to src.top, src.right to src.top, src.right to src.bottom, src.left to src.bottom)
-                .any { (x, y) -> v[6] * x + v[7] * y + v[8] <= 1e-6f }
-            if (behind) dst.set(RectF(limit))
+                .count { (x, y) -> v[6] * x + v[7] * y + v[8] <= 1e-6f }
+            // All of it past the horizon: nothing to see
+            if (behind == 4) return null
+            if (behind > 0) dst.set(RectF(limit))
         }
         val out = Rect(
             kotlin.math.floor(dst.left).toInt(), kotlin.math.floor(dst.top).toInt(),

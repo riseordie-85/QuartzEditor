@@ -168,12 +168,13 @@ const val GUIDE_COLOR = 0xFF00E5FF
 
 /** Works out (in the background) the active layer's box, for a guide being dragged to snap to. */
 fun EditorViewModel.prepareGuideSnap() {
+    guideSnapJob?.cancel()
     guideSnapBox = null
     val l = doc?.active?.takeIf { it.hasContent && it.props.visible } ?: return
     val tiles = HashMap(l.tiles.tiles)
     val x = l.x
     val y = l.y
-    viewModelScope.launch {
+    guideSnapJob = viewModelScope.launch {
         val b = withContext(Dispatchers.Default) { com.tim.quartzeditor.engine.Transformer.contentBounds(tiles) }
         guideSnapBox = b?.let { android.graphics.RectF(it).apply { offset(x.toFloat(), y.toFloat()) } }
     }

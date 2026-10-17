@@ -266,19 +266,19 @@ fun EditorViewModel.flipImage(horizontal: Boolean) {
  * [perspective]: the matrix bends lines (Perspective crop), so guides and the selection are
  * cleared and what's kept around the new canvas is limited to a margin.
  */
-internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int, perspective: Boolean = false, build: (Matrix) -> Unit) {
+internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int, perspective: Boolean = false, onDone: (() -> Unit)? = null, build: (Matrix) -> Unit) {
     val d = doc ?: return
-    if (pendingFirst { canvasTransform(label, newW, newH, perspective, build) }) return
+    if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, build) }) return
     val fonts = d.layers.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
-        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, build) }
+        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, build) }
         return
     }
     val layers = d.layers.toList()
     val snaps = layers.map { Triple(it, HashMap(it.tiles.tiles), it.mask?.let { m -> HashMap(m.tiles) }) }
     val oldProps = layers.associateWith { it.props }
     val newProps = HashMap<Layer, LayerProps>()
-    runBusy("Turning…") {
+    runBusy("Turning…", onDone = onDone) {
         val results = withContext(Dispatchers.Default) {
             // Beyond a perspective's horizon pixels run off to infinity: keep only a margin
             val everywhere = if (perspective) Transformer.limitFor(newW, newH) else Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)

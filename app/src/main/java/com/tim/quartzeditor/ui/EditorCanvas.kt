@@ -231,7 +231,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                         // Move or Pan tool on a guide: drag it (off the picture removes it)
                         var guidePos = 0f
-                        if ((tool == Tool.MOVE || tool == Tool.PAN) && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
+                        // (vm.tool, not tool: holding Space pans with any tool and shouldn't grab guides)
+                        if ((vm.tool == Tool.MOVE || vm.tool == Tool.PAN) && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
                             val d0 = vm.doc
                             val r = 14.dp.toPx()
                             var best = r

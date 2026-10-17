@@ -65,7 +65,7 @@ fun PagedMenuScope.Item(
     if (!visible) return
     DropdownMenuItem(
         text = { Text(label) },
-        leadingIcon = icon?.let { { Icon(it, contentDescription = null) } },
+        leadingIcon = if (icon != null) ({ Icon(icon, contentDescription = null) }) else null,
         trailingIcon = if (checked) ({ Icon(Icons.Outlined.Check, contentDescription = "On", tint = Q.accent) }) else null,
         enabled = enabled,
         onClick = {
@@ -97,7 +97,7 @@ fun PagedMenuScope.Page(label: String, icon: ImageVector? = null, content: @Comp
     if (visible) {
         DropdownMenuItem(
             text = { Text(label) },
-            leadingIcon = icon?.let { { Icon(it, contentDescription = null) } },
+            leadingIcon = if (icon != null) ({ Icon(icon, contentDescription = null) }) else null,
             trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Q.textDim) },
             onClick = { go(label) },
         )
@@ -110,7 +110,8 @@ fun PagedMenuScope.Page(label: String, icon: ImageVector? = null, content: @Comp
             onClick = { go(within) },
         )
         HorizontalDivider()
-        PagedMenuScope(page, go, dismiss, within = label).content()
     }
+    // Always built, so a page inside this one can show when it's open (items hide themselves otherwise)
+    PagedMenuScope(page, go, dismiss, within = label).content()
 }
 

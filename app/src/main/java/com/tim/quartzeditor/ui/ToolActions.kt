@@ -563,13 +563,14 @@ internal fun quadIsConvex(q: List<android.graphics.PointF>): Boolean {
         val sg = if (cross > 0) 1 else -1
         if (sign == 0) sign = sg else if (sg != sign) return false
     }
-    return true
+    // Clockwise on screen (TL, TR, BR, BL); the other way round would come out mirrored
+    return sign > 0
 }
 
 /** Straightens what's inside the four corners into a new, rectangular canvas. */
-private fun EditorViewModel.applyPerspectiveCrop(q: List<android.graphics.PointF>) {
+private fun EditorViewModel.applyPerspectiveCrop(q: List<android.graphics.PointF>, onDone: () -> Unit) {
     if (!quadIsConvex(q)) {
-        toast("The corners cross over. Drag them back into a four-sided shape")
+        toast("The corners cross over. Drag them back into a four-sided shape (top left, top right, bottom right, bottom left)")
         return
     }
     // The new size: the average length of opposite sides
@@ -586,7 +587,7 @@ private fun EditorViewModel.applyPerspectiveCrop(q: List<android.graphics.PointF
     cropBox = null
     cropQuad = null
     tool = Tool.MOVE
-    canvasTransform("Perspective crop", w, h, perspective = true) { m -> m.postConcat(poly) }
+    canvasTransform("Perspective crop", w, h, perspective = true, onDone = onDone) { m -> m.postConcat(poly) }
 }
 
 /** The canvas's width ÷ height for "Original". */
@@ -695,9 +696,9 @@ fun EditorViewModel.cancelCrop() {
 fun EditorViewModel.applyCrop(onDone: () -> Unit = {}) {
     val d = doc ?: return
     val box = cropBox ?: return
+    // (It finishes in the background, then runs onDone; a shape it can't straighten stays to fix)
     cropQuad?.let {
-        applyPerspectiveCrop(it)
-        onDone()
+        applyPerspectiveCrop(it, onDone)
         return
     }
     val r = Rect(box.left.roundToInt(), box.top.roundToInt(), box.right.roundToInt(), box.bottom.roundToInt())
