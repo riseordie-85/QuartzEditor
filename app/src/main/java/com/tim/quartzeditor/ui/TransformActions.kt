@@ -168,7 +168,7 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
     val t = transform ?: return
     if (busy != null) return
     // Text is redrawn in its own font: wait for it if it's still loading
-    val fonts = t.parts.mapNotNull { it.layer.props.text?.fontKey }.filter { !fontReady(it) }
+    val fonts = t.parts.filter { it.layer.props.text?.psdFont == null }.mapNotNull { it.layer.props.text?.fontKey }.filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
         withFonts(fonts) { applyTransform(onDone) }
         return
@@ -194,7 +194,8 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
                 val m = matrices.getValue(p.layer)
                 val vp = vectorProps[p.layer]
                 val sp = smartProps[p.layer]?.smart
-                val grid = if (vp != null) {
+                // Text from Photoshop that's still its own pixels is transformed as pixels
+                val grid = if (vp != null && vp.text?.psdFont == null) {
                     VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, d.width, d.height))
                 } else if (sp != null) {
                     SmartArt.rasterize(sp, limit)
@@ -274,7 +275,8 @@ internal fun EditorViewModel.canvasTransform(
 ) {
     val d = doc ?: return
     if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }) return
-    val fonts = d.layers.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
+    // (Text from Photoshop that's still its own pixels turns as pixels: no font needed)
+    val fonts = d.layers.filter { it.props.text?.psdFont == null }.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
         withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }
         return
@@ -296,8 +298,8 @@ internal fun EditorViewModel.canvasTransform(
                 oldProps.getValue(l).smart?.let { sp ->
                     synchronized(newProps) { newProps[l] = oldProps.getValue(l).copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, m))) }
                 }
-                val grid = if (vp != null) {
-                    synchronized(newProps) { newProps[l] = vp }
+                if (vp != null) synchronized(newProps) { newProps[l] = vp }
+                val grid = if (vp != null && vp.text?.psdFont == null) {
                     VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, newW, newH))
                 } else area?.let { a -> Transformer.render(tiles, false, a, m, everywhere) }
                     ?.let { (bmp, at) -> TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly = false).also { bmp.recycle() } }

@@ -284,8 +284,11 @@ object PsdImport {
             }
             var contents: Doc? = null
             if (why == null && quad != null && linked != null) {
+                // The contents' own width ÷ height, as Photoshop has it
+                val size = so?.get("Sz  ") as? Map<*, *>
+                val expect = (size?.get("Wdth") as? Number)?.toFloat()?.let { w -> (size["Hght"] as? Number)?.toFloat()?.takeIf { it > 0f }?.let { w / it } }
                 contents = try {
-                    embedded(linked)
+                    embedded(linked, expect)
                 } catch (e: OutOfMemoryError) {
                     null
                 } catch (e: Exception) {
@@ -300,7 +303,8 @@ object PsdImport {
             // What you see becomes the contents (still a smart layer)
             val b = grid.tileBounds() ?: return null
             val r = Transformer.contentBounds(grid.tiles)?.let { Rect(it) } ?: b
-            if (r.isEmpty) return null
+            // No bigger than the canvas (pixels far past it would make the contents huge)
+            if (!r.intersect(0, 0, doc.width, doc.height) || r.isEmpty) return null
             val inner = Doc(r.width(), r.height(), props.name)
             val il = Layer(inner.newId(), LayerProps(props.name), TileGrid(alphaOnly = false).also { it.tiles.putAll(grid.tiles) }, -r.left, -r.top)
             inner.layers.add(il)
@@ -310,7 +314,7 @@ object PsdImport {
         }
 
         /** A smart object's embedded file as a document: a picture Android can read, or a Photoshop file. */
-        fun embedded(l: PsdLinked): Doc? {
+        fun embedded(l: PsdLinked, expect: Float?): Doc? {
             val buf = f.buffer.duplicate()
             buf.position(l.offset.toInt())
             buf.limit((l.offset + l.length).toInt())
@@ -323,18 +327,53 @@ object PsdImport {
                 if (depth >= 2) return null
                 return fromBuffer(data, name, depth + 1).doc
             }
-            // A picture: decoded no bigger than the app's limit
-            val bytes = ByteArray(l.length.toInt())
-            data.duplicate().get(bytes)
+            // A picture: decoded straight from the file (never copied whole), no bigger than the app's limit
             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
             while (max(bounds.outWidth, bounds.outHeight) / sample > Doc.MAX_SIDE) sample *= 2
-            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply {
+            var bmp = android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }) ?: return null
+            // A photo saved sideways: turned upright, like Photoshop shows it
+            val orientation = try {
+                androidx.exifinterface.media.ExifInterface(BufferStream(data.duplicate()))
+                    .getAttributeInt(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION, androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL)
+            } catch (e: Exception) {
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+            }
+            val turn = Matrix()
+            when (orientation) {
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> turn.postRotate(90f)
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> turn.postRotate(180f)
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> turn.postRotate(270f)
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> turn.postScale(-1f, 1f)
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> turn.postScale(1f, -1f)
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSPOSE -> { turn.postRotate(90f); turn.postScale(-1f, 1f) }
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSVERSE -> { turn.postRotate(270f); turn.postScale(-1f, 1f) }
+            }
+            if (!turn.isIdentity) {
+                val upright = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, turn, true)
+                if (upright !== bmp) bmp.recycle()
+                bmp = upright
+            }
+            // Exactly within the limit (the decoder rounds sizes up)
+            if (max(bmp.width, bmp.height) > Doc.MAX_SIDE) {
+                val k = Doc.MAX_SIDE.toFloat() / max(bmp.width, bmp.height)
+                val fit = Bitmap.createScaledBitmap(bmp, (bmp.width * k).roundToInt().coerceIn(1, Doc.MAX_SIDE), (bmp.height * k).roundToInt().coerceIn(1, Doc.MAX_SIDE), true)
+                if (fit !== bmp) bmp.recycle()
+                bmp = fit
+            }
+            // Its shape should match what Photoshop says the contents are; otherwise it's not what we think
+            if (expect != null && expect > 0f) {
+                val ratio = bmp.width.toFloat() / bmp.height
+                if (abs(ratio - expect) / expect > 0.04f) {
+                    bmp.recycle()
+                    return null
+                }
+            }
             val inner = Doc(bmp.width.coerceAtMost(Doc.MAX_SIDE), bmp.height.coerceAtMost(Doc.MAX_SIDE), name)
             val il = Layer(inner.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false).also { it.dropEmptyTiles() })
             bmp.recycle()
@@ -915,5 +954,25 @@ object PsdImport {
             }
             return st
         }
+    }
+}
+
+/** Reads a [java.nio.ByteBuffer] as a stream (for decoding an embedded file in place). */
+private class BufferStream(private val b: java.nio.ByteBuffer) : java.io.InputStream() {
+    override fun read(): Int = if (b.hasRemaining()) b.get().toInt() and 0xFF else -1
+
+    override fun read(dst: ByteArray, off: Int, len: Int): Int {
+        if (!b.hasRemaining()) return -1
+        val n = minOf(len, b.remaining())
+        b.get(dst, off, n)
+        return n
+    }
+
+    override fun available(): Int = b.remaining()
+
+    override fun skip(n: Long): Long {
+        val k = minOf(n, b.remaining().toLong()).toInt()
+        b.position(b.position() + k)
+        return k.toLong()
     }
 }

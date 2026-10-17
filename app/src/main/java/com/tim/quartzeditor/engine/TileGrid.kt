@@ -246,7 +246,9 @@ object TileLod {
             if (c != null && c.generation == gen && !c.bitmap.isRecycled) return c.bitmap
             if (!waiting.add(tile)) return null
         }
-        maker.execute { make(tile) }
+        // (Held weakly while it waits: a tile replaced meanwhile isn't kept alive for this)
+        val ref = java.lang.ref.WeakReference(tile)
+        maker.execute { ref.get()?.let { make(it) } }
         return null
     }
 

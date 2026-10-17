@@ -422,6 +422,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         com.tim.quartzeditor.engine.Patterns.init(app)
         Q.load(prefs)
         viewModelScope.launch { effectsLoop() }
+        // Zoomed-out tile copies made in the background: draw again when they're ready
+        com.tim.quartzeditor.engine.TileLod.onReady = { doc?.invalidate() }
         // Keep thumbnails up to date shortly after changes
         viewModelScope.launch {
             var lastSeen = -1
@@ -974,6 +976,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 t.layer.maskThumb = pics.second?.asImageBitmap()
                 thumbVersions[t.layer.id] = t.version
             }
+            // Changes made while these were drawn (this job is done, so a new one can start)
+            thumbsJob = null
+            if (doc === d) refreshThumbs(d)
         }
     }
 

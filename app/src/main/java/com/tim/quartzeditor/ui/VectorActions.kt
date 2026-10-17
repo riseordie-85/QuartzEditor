@@ -126,10 +126,30 @@ internal fun vectorClipped(l: Layer, x: Int, y: Int, w: Int, h: Int): Boolean {
     return !VectorArt.clipFor(x, y, w, h).contains(b)
 }
 
-/** Redraws a shape or text layer's pixels now. */
+/**
+ * From Photoshop: text shows the file's own pixels until it's changed. This takes it off them
+ * (returns [props] without [TextSpec.psdFont]) and, when the font stays [oldFontKey] and isn't the
+ * original here, says so once.
+ */
+internal fun EditorViewModel.leavePsdPixels(props: LayerProps, oldFontKey: String?): LayerProps {
+    val spec = props.text ?: return props
+    val original = spec.psdFont ?: return props
+    if (original.isNotEmpty() && spec.fontKey == oldFontKey) {
+        val pick = com.tim.quartzeditor.engine.PsdFonts.map(original)
+        val missing = com.tim.quartzeditor.engine.Fonts.cached(spec.fontKey) == null
+        if (missing || !pick.exact) {
+            val shown = if (missing) "the standard font" else com.tim.quartzeditor.engine.Fonts.label(spec.fontKey)
+            toast("\"$original\" isn't on this device, so it's shown in $shown. Pick another font in Properties, or add it with Import font… there")
+        }
+    }
+    return props.copy(text = spec.copy(psdFont = null))
+}
+
+/** Redraws a shape or text layer's pixels now (text from Photoshop keeps its own until it's edited). */
 internal fun EditorViewModel.redrawVectorNow(l: Layer) {
     val d = doc ?: return
     if (!l.isVector) return
+    if (l.props.text?.psdFont != null) return
     if (vectorLiveLayer === l) vectorLiveLayer = null
     l.tiles = VectorArt.rasterize(l.props, d.vectorClip(l))
     d.touched(l)
@@ -226,12 +246,12 @@ fun EditorViewModel.editVector(id: Long, label: String, change: (LayerProps) -> 
         val cur = d.layer(id)?.takeIf { it.isVector && doc === d } ?: return@withFont
         // While typing, changes join the text edit (one undo step for all of it)
         if (textEdit?.layerId == id) {
-            cur.props = change(cur.props)
+            cur.props = leavePsdPixels(change(cur.props), cur.props.text?.fontKey)
             redrawVectorSoon(cur)
             return@withFont
         }
         stackEdit(label) {
-            cur.props = change(cur.props)
+            cur.props = leavePsdPixels(change(cur.props), cur.props.text?.fontKey)
             redrawVectorNow(cur)
         }
     }
@@ -253,7 +273,7 @@ fun EditorViewModel.editVectorLive(id: Long, change: (LayerProps) -> LayerProps)
         vectorBefore = d.snapshot()
         vectorBeforeId = id
     }
-    l.props = change(l.props)
+    l.props = leavePsdPixels(change(l.props), l.props.text?.fontKey)
     redrawVectorSoon(l)
     d.invalidate()
 }
@@ -450,23 +470,21 @@ fun EditorViewModel.beginTextEdit(l: Layer) {
         toast("\"${l.props.name}\" is locked")
         return
     }
-    withFont(l.props.text?.fontKey) {
+    // From Photoshop: a font imported since it was opened can stand in for the original now
+    val spec0 = l.props.text
+    val swapTo = spec0?.psdFont?.takeIf { it.isNotEmpty() }?.let { com.tim.quartzeditor.engine.PsdFonts.map(it) }
+        ?.takeIf { it.exact && it.key != spec0.fontKey }?.key
+    withFont(swapTo ?: l.props.text?.fontKey) {
         if (doc !== d || d.layer(l.id) !== l || textEdit != null) return@withFont
         // Typing happens with the Text tool (its settings show in Properties)
         if (tool != Tool.TEXT) onToolButton(Tool.TEXT)
         if (d.activeId != l.id) selectLayer(l.id)
         textEdit = TextEditSession(l.id, d.snapshot(), isNew = false)
-        // From Photoshop: until now it showed Photoshop's pixels; from here it's drawn here, in its
-        // font if this device has it (or a close match, said once)
-        l.props.text?.psdFont?.let { original ->
-            val spec = l.props.text ?: return@let
-            val pick = com.tim.quartzeditor.engine.PsdFonts.map(original.ifEmpty { null })
-            val missing = com.tim.quartzeditor.engine.Fonts.cached(spec.fontKey) == null
-            if (original.isNotEmpty() && (missing || !pick.exact)) {
-                val shown = if (missing) "the standard font" else com.tim.quartzeditor.engine.Fonts.label(spec.fontKey)
-                toast("\"$original\" isn't on this device, so it's shown in $shown. Pick another font in Properties, or add it with Import font… there")
-            }
-            l.props = l.props.copy(text = spec.copy(psdFont = null))
+        // From Photoshop: until now it showed Photoshop's pixels; from here it's drawn here
+        if (l.props.text?.psdFont != null) {
+            var p = l.props
+            if (swapTo != null) p = p.copy(text = p.text!!.copy(fontKey = swapTo))
+            l.props = leavePsdPixels(p, p.text?.fontKey)
             redrawVectorNow(l)
         }
     }
@@ -507,9 +525,14 @@ fun EditorViewModel.finishText() {
         }
         return
     }
-    // Nothing changed: keep the pixels as they are (they may be in a font that can't be had now)
-    val changed = t.isNew || t.before.layers.firstOrNull { it.layer === l }?.props != l.props
-    if (!changed) return
+    // Nothing changed: keep the pixels as they are (they may be in a font that can't be had now;
+    // text from Photoshop gets its own pixels back)
+    fun LayerProps.plain() = copy(text = text?.copy(psdFont = null))
+    val changed = t.isNew || t.before.layers.firstOrNull { it.layer === l }?.props?.plain() != l.props.plain()
+    if (!changed) {
+        d.restore(t.before)
+        return
+    }
     // The font was ready when typing started (and font changes wait for theirs)
     redrawVectorNow(l)
     history.record(StackChange(t.before, d.snapshot(), if (t.isNew) "New text" else "Edit text"))

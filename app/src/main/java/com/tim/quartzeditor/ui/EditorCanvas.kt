@@ -177,8 +177,6 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
                     )
                 }
-                // Copies made in the background: draw again when they're ready
-                com.tim.quartzeditor.engine.TileLod.onReady = { if (vm.doc === d) d.invalidate() }
                 if (more) lodHandler.post { if (vm.doc === d) d.invalidate() }
                 nc.restore()
             }

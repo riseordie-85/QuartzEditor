@@ -838,9 +838,10 @@ class PsdText(
             // Several styles: different fonts, sizes or colors in one layer
             val mixed = (runs?.size ?: 0) > 1 && runs!!.mapNotNull { styleOf(it) }.map { listOf(it["Font"], it["FontSize"], (it["FillColor"].m("Values"))) }.distinct().size > 1
             val para = dict.m("ParagraphRun").m("RunArray").l(0).m("ParagraphSheet").m("Properties")
+            // Justified paragraphs follow their last line's alignment
             val just = when ((para.m("Justification") as? Number)?.toInt() ?: 0) {
-                1 -> 1
-                2 -> 2
+                1, 4 -> 1
+                2, 5 -> 2
                 else -> 0
             }
             val shape = dict.m("Rendered").m("Shapes").m("Children").l(0)
