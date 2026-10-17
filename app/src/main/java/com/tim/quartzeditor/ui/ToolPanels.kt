@@ -371,17 +371,20 @@ fun CropBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
 /** Expand or shrink the selection by a typed number of pixels. */
 @Composable
 private fun GrowRow(vm: EditorViewModel) {
-    var px by remember { mutableStateOf(5f) }
+    // What's typed, read when a button is tapped
+    var raw by remember { mutableStateOf("5") }
+    fun px(): Float = raw.trim().toFloatOrNull()?.takeIf { it.isFinite() && it >= 1f }?.coerceAtMost(500f) ?: 5f
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        SmallButton("Shrink") { vm.growSelection(-px) }
-        SmallButton("Expand") { vm.growSelection(px) }
+        SmallButton("Shrink") { vm.growSelection(-px()) }
+        SmallButton("Expand") { vm.growSelection(px()) }
         Spacer(Modifier.width(4.dp))
         Text("by", color = Q.textDim, fontSize = 13.sp)
         PanelField(
-            "${px.roundToInt()}",
-            onCommit = { t -> t.trim().toFloatOrNull()?.takeIf { it.isFinite() && it >= 1f }?.let { px = it.coerceAtMost(500f) } },
+            "5",
+            onCommit = { raw = it },
             modifier = Modifier.width(56.dp),
             numeric = true,
+            onType = { raw = it },
         )
         Text("px", color = Q.textDim, fontSize = 13.sp)
     }
@@ -396,7 +399,7 @@ private fun RetouchOptions(vm: EditorViewModel) {
     Spacer(Modifier.height(6.dp))
     val help = when (k) {
         com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> "Paint over a spot, scratch or small thing; it's healed with texture from around it when you lift your finger. For big things, AI Remove does better."
-        com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> "Paint over something to remove (a person, a sign, a cone, wires): the AI fills in what would be behind it, on your device. Include its shadow."
+        com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> "Paint over something to remove (a person, a sign, a cone, wires): the AI fills in what would be behind it, on your device. Include its shadow. It looks at the picture as you see it, so it can work on an empty layer above the photo."
         com.tim.quartzeditor.engine.RetouchKind.CLONE -> "Pick where to copy from, then paint. Strength sets how strongly it covers."
         com.tim.quartzeditor.engine.RetouchKind.DODGE -> "Lightens where you paint."
         com.tim.quartzeditor.engine.RetouchKind.BURN -> "Darkens where you paint."
@@ -428,7 +431,7 @@ private fun RetouchOptions(vm: EditorViewModel) {
             }
             SampleAllRow(vm)
         }
-        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL, com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> SampleAllRow(vm)
+        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> SampleAllRow(vm)
         else -> Unit
     }
     Spacer(Modifier.height(8.dp))
@@ -438,6 +441,7 @@ private fun RetouchOptions(vm: EditorViewModel) {
 private fun SampleAllRow(vm: EditorViewModel) {
     ToggleRow("Look at all layers (heal on an empty layer, keeping the photo as it is)", vm.retouchAllLayers) {
         vm.retouchAllLayers = it
+        vm.cloneFlat = null
         vm.prefs.edit().putBoolean("retouchAll", it).apply()
     }
 }

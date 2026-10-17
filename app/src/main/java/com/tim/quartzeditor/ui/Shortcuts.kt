@@ -48,7 +48,7 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
                 toast("Liquify size ${liquifySize.roundToInt()} px")
                 return true
             }
-            val forTool = if (tool == Tool.ERASER) Tool.ERASER else Tool.BRUSH
+            val forTool = sliderTool
             if (shift) {
                 // Shift+[ softer, Shift+] harder (Photoshop's hardness, the other way round)
                 updateBrush(forTool) { it.copy(softness = (it.softness + if (bigger) -0.25f else 0.25f).coerceIn(0f, 1f)) }
@@ -215,7 +215,11 @@ fun EditorViewModel.onKeyUp(e: KeyEvent): Boolean {
     return false
 }
 
-private fun EditorViewModel.currentBrushFor(t: Tool) = if (t == Tool.ERASER) eraser else brush
+private fun EditorViewModel.currentBrushFor(t: Tool) = when (t) {
+    Tool.ERASER -> eraser
+    Tool.RETOUCH -> retouchBrush
+    else -> brush
+}
 
 private fun numberKey(code: Int): Int? = when (code) {
     in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> code - KeyEvent.KEYCODE_0

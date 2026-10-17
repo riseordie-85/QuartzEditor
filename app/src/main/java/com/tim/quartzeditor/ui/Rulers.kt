@@ -201,6 +201,7 @@ fun EditorViewModel.clearGuides() {
 
 fun EditorViewModel.toggleRulers() {
     showRulers = !showRulers
+    guideDraft = null
     prefs.edit().putBoolean("rulers", showRulers).apply()
 }
 
@@ -255,7 +256,9 @@ fun DrawScope.drawGuides(vm: EditorViewModel, s: Float, ox: Float, oy: Float, do
 fun NewGuideDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
     val d = vm.doc ?: return
     var vertical by remember { mutableStateOf(true) }
-    var at by remember { mutableStateOf("${d.width / 2}") }
+    // What the box starts with (changes with the direction), and what's typed
+    var initial by remember { mutableStateOf("${d.width / 2}") }
+    var at by remember { mutableStateOf(initial) }
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
@@ -268,12 +271,13 @@ fun NewGuideDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             ChipRow(listOf("Vertical", "Horizontal"), if (vertical) 0 else 1) { i ->
                 vertical = i == 0
-                at = "${(if (vertical) d.width else d.height) / 2}"
+                initial = "${(if (vertical) d.width else d.height) / 2}"
+                at = initial
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (vertical) "From the left" else "From the top", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                PanelField(at, onCommit = { at = it }, numeric = true, modifier = Modifier.width(90.dp))
+                PanelField(initial, onCommit = { at = it }, numeric = false, modifier = Modifier.width(90.dp), onType = { at = it })
                 Text(" px", color = Q.textDim, fontSize = 13.sp)
             }
             Text("Or a percent, like 50%", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))

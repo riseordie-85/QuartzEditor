@@ -52,9 +52,9 @@ fun EditorViewModel.beginMove(): Boolean {
 }
 
 /** Drag offset ([dx], [dy]) in canvas pixels; it snaps within [snapRadius] canvas pixels. */
-fun EditorViewModel.moveTo(dx: Float, dy: Float, snapRadius: Float = 0f) {
+fun EditorViewModel.moveTo(dx: Float, dy: Float, snapRadius: Float = 0f, lockedAxis: Int = 0) {
     if (moveLayer == null) return
-    val (sx, sy) = snapDelta(moveContent, dx, dy, snapRadius)
+    val (sx, sy) = snapDelta(moveContent, dx, dy, snapRadius, lockedAxis)
     preview = movePreview(sx, sy)
     doc?.invalidate()
 }

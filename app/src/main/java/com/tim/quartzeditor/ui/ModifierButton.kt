@@ -59,6 +59,15 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
         val x = (at.x.coerceIn(0f, 1f) * room.x).roundToInt()
         val y = (at.y.coerceIn(0f, 1f) * room.y).roundToInt()
         var lastTap by remember { mutableStateOf(0L) }
+        // Leaving the screen (Home, turning the tablet) lets go of a held Shift/Alt
+        androidx.compose.runtime.DisposableEffect(Unit) {
+            onDispose {
+                if (!vm.modLocked) {
+                    vm.modShift = false
+                    vm.modAlt = false
+                }
+            }
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -81,15 +90,24 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             vm.modShift = true
                             vm.modAlt = false
                             var moved = false
-                            while (true) {
-                                val ev = awaitPointerEvent()
-                                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                c.consume()
-                                if (!c.pressed) break
-                                // Slid out past the ring: Alt instead of Shift
-                                val d = (c.position - Offset(size.width / 2f, size.height / 2f)).getDistance()
-                                if (d > ring) moved = true
-                                vm.modAlt = d > ring
+                            try {
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    c.consume()
+                                    if (!c.pressed) break
+                                    // Slid out past the ring: Alt instead of Shift
+                                    val d = (c.position - Offset(size.width / 2f, size.height / 2f)).getDistance()
+                                    if (d > ring) moved = true
+                                    vm.modAlt = d > ring
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                // Interrupted: never leave Shift/Alt stuck on
+                                if (!vm.modLocked) {
+                                    vm.modShift = false
+                                    vm.modAlt = false
+                                }
+                                throw e
                             }
                             val now = android.os.SystemClock.uptimeMillis()
                             val quick = !moved && now - t0 < 260
@@ -115,7 +133,8 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     vm.modAlt = false
                                 }
                             }
-                            lastTap = if (quick) now else 0L
+                            // An unlocking tap doesn't count toward the next double-tap
+                            lastTap = if (quick && !wasLocked) now else 0L
                         }
                     },
             ) {
@@ -147,17 +166,21 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
         if (vm.modShift || vm.modAlt) {
             val hint = modifierHint(vm)
             if (hint != null) {
-                val right = x + bPx + with(density) { 10.dp.toPx() } < wPx - with(density) { 200.dp.toPx() }
+                val bubbleW = with(density) { 210.dp.toPx() }
+                val right = x + bPx + bubbleW < wPx
+                val left = x - bubbleW >= 0
                 Text(
                     hint,
                     color = Color.White,
                     fontSize = 13.sp,
                     modifier = Modifier
                         .offset {
-                            IntOffset(
-                                if (right) (x + bPx + 10.dp.toPx()).roundToInt() else (x - 210.dp.toPx()).roundToInt().coerceAtLeast(0),
-                                (y + bPx / 2f - 14.dp.toPx()).roundToInt(),
-                            )
+                            when {
+                                right -> IntOffset((x + bPx + 10.dp.toPx()).roundToInt(), (y + bPx / 2f - 14.dp.toPx()).roundToInt())
+                                left -> IntOffset((x - 210.dp.toPx()).roundToInt(), (y + bPx / 2f - 14.dp.toPx()).roundToInt())
+                                // No room either side: above it
+                                else -> IntOffset(0, (y - 64.dp.toPx()).roundToInt().coerceAtLeast(0))
+                            }
                         }
                         .widthIn(max = 200.dp)
                         .clip(RoundedCornerShape(10.dp))

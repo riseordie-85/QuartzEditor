@@ -17,7 +17,7 @@ internal suspend fun EditorViewModel.effectsLoop() {
     while (true) {
         delay(60)
         val d = doc ?: continue
-        if (stroke != null || transform != null || busy != null) continue
+        if (stroking || transform != null || busy != null) continue
         val todo = d.layers.firstOrNull {
             it.hasContent && it.props.visible && it.props.style.needsBuild &&
                 Effects.keyOf(it).let { k -> effectsCache[it.id]?.key != k && k !in failedEffects }

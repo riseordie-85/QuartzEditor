@@ -11,3 +11,4 @@
 /app/release
 .kotlin/
 /ai-models/
+/.ai-models-download/

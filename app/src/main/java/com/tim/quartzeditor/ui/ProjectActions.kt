@@ -113,6 +113,11 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
 /** Saves (when there's anything worth saving) and closes the document. */
 fun EditorViewModel.closeDocument() {
     if (doc == null) return
+    // Something's being worked out (AI, healing, saving): wait for it
+    if (busy != null) {
+        toast("Just a moment: ${busy?.trimEnd('…', '.')} is still working")
+        return
+    }
     if (pendingFirst { closeDocument() }) return
     // The picture is what's saved (with what's being edited in smart layers' tabs)
     if ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsUnsaved.isNotEmpty()) saveToProjects(quiet = false)

@@ -48,6 +48,7 @@ fun EditorViewModel.beginStroke(x: Float, y: Float): Boolean {
         }
         return beginRetouch(x, y)
     }
+    strokeHeals = null
     val d = doc ?: return false
     if (pendingFx != null) {
         applyFx()
@@ -85,9 +86,12 @@ fun EditorViewModel.endStroke() {
     }
     val s = stroke ?: return
     val d = doc ?: return
-    if (tool == Tool.RETOUCH && retouchKind.paintsArea) {
+    // Painted where to heal or remove (decided when the stroke started)
+    val heals = strokeHeals
+    strokeHeals = null
+    if (heals != null) {
         s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
-        finishSpotHeal(s, ai = retouchKind == com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE)
+        finishSpotHeal(s, ai = heals == com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE)
         return
     }
     s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
@@ -104,6 +108,7 @@ fun EditorViewModel.endStroke() {
 /** Drops a stroke that turned out to be the start of a two-finger gesture. */
 fun EditorViewModel.cancelStroke() {
     cancelRetouch()
+    strokeHeals = null
     stroke = null
     doc?.invalidate()
 }

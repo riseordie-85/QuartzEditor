@@ -40,11 +40,16 @@ object Models {
         sessions[name]?.let { return it }
         if (!has(ctx, name)) throw AiException("This build doesn't include the AI model ($name). Build the app with internet on once so Android Studio can download it.")
         val bytes = ctx.assets.open("models/$name").use { it.readBytes() }
-        val opts = OrtSession.SessionOptions().apply { setIntraOpNumThreads(max(1, min(4, Runtime.getRuntime().availableProcessors()))) }
-        return env.createSession(bytes, opts).also { sessions[name] = it }
+        return OrtSession.SessionOptions().use { opts ->
+            opts.setIntraOpNumThreads(max(1, min(4, Runtime.getRuntime().availableProcessors())))
+            env.createSession(bytes, opts).also { sessions[name] = it }
+        }
     }
 
     /** Lets go of the models (they're big); they load again next time. */
+    /** Runs a model (never while it's being let go). */
+    internal inline fun <T> running(block: () -> T): T = synchronized(this) { block() }
+
     @Synchronized
     fun release() {
         for (s in sessions.values) runCatching { s.close() }
@@ -116,7 +121,7 @@ object Sam {
         val enc = Models.session(ctx, Models.SAM_ENCODER)
         val name = enc.inputNames.firstOrNull() ?: "input_image"
         Models.floats(longArrayOf(SIDE.toLong(), SIDE.toLong(), 3), input).use { t ->
-            enc.run(mapOf(name to t)).use { r ->
+            Models.running { enc.run(mapOf(name to t)) }.use { r ->
                 val out = (r.get("image_embeddings").orElse(null) ?: r.get(0)) as OnnxTensor
                 val fb = out.floatBuffer
                 val data = FloatArray(fb.remaining())
@@ -147,17 +152,16 @@ object Sam {
             labels[i] = l.toFloat()
         }
         val dec = Models.session(ctx, Models.SAM_DECODER)
-        val inputs = mapOf(
-            "image_embeddings" to Models.floats(longArrayOf(1, 256, 64, 64), e.data),
-            "point_coords" to Models.floats(longArrayOf(1, n.toLong(), 2), coords),
-            "point_labels" to Models.floats(longArrayOf(1, n.toLong()), labels),
-            "mask_input" to Models.floats(longArrayOf(1, 1, 256, 256), FloatArray(256 * 256)),
-            "has_mask_input" to Models.floats(longArrayOf(1), floatArrayOf(0f)),
-            // At the resized size (the crop works out the same); scaled up below
-            "orig_im_size" to Models.floats(longArrayOf(2), floatArrayOf(e.newH.toFloat(), e.newW.toFloat())),
-        )
+        val inputs = LinkedHashMap<String, OnnxTensor>()
         try {
-            dec.run(inputs).use { r ->
+            inputs["image_embeddings"] = Models.floats(longArrayOf(1, 256, 64, 64), e.data)
+            inputs["point_coords"] = Models.floats(longArrayOf(1, n.toLong(), 2), coords)
+            inputs["point_labels"] = Models.floats(longArrayOf(1, n.toLong()), labels)
+            inputs["mask_input"] = Models.floats(longArrayOf(1, 1, 256, 256), FloatArray(256 * 256))
+            inputs["has_mask_input"] = Models.floats(longArrayOf(1), floatArrayOf(0f))
+            // At the resized size (the crop works out the same); scaled up below
+            inputs["orig_im_size"] = Models.floats(longArrayOf(2), floatArrayOf(e.newH.toFloat(), e.newW.toFloat()))
+            Models.running { dec.run(inputs) }.use { r ->
                 val out = (r.get("masks").orElse(null) ?: r.get(0)) as OnnxTensor
                 val fb = out.floatBuffer
                 val logits = FloatArray(e.newW * e.newH)
@@ -246,9 +250,14 @@ object MiGan {
         val imgName = names.firstOrNull { it.contains("image") } ?: "image"
         val maskName = names.firstOrNull { it.contains("mask") } ?: "mask"
         val ti = Models.bytes(longArrayOf(1, 3, h.toLong(), w.toLong()), rgb)
-        val tm = Models.bytes(longArrayOf(1, 1, h.toLong(), w.toLong()), mask)
+        val tm = try {
+            Models.bytes(longArrayOf(1, 1, h.toLong(), w.toLong()), mask)
+        } catch (e: Exception) {
+            ti.close()
+            throw e
+        }
         try {
-            s.run(mapOf(imgName to ti, maskName to tm)).use { r ->
+            Models.running { s.run(mapOf(imgName to ti, maskName to tm)) }.use { r ->
                 val out = (r.get("result").orElse(null) ?: r.get(0)) as OnnxTensor
                 val bb = out.byteBuffer
                 val res = ByteArray(bb.remaining())

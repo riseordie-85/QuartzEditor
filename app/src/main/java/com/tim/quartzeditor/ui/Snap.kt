@@ -10,7 +10,7 @@ import kotlin.math.abs
  * Snaps a drag of [content] (canvas pixels) by ([dx], [dy]): returns the drag to use and shows the
  * snap lines. [radius] is how close (canvas pixels) counts.
  */
-fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Float): Pair<Float, Float> {
+fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Float, lockedAxis: Int = 0): Pair<Float, Float> {
     val d = doc
     if ((!snapOn && !snapsToGrid) || content == null || d == null || radius <= 0f) {
         clearSnapGuides()
@@ -36,8 +36,9 @@ fun EditorViewModel.snapDelta(content: RectF?, dx: Float, dy: Float, radius: Flo
         }
         return (delta + best) to at
     }
-    val (sx, gx) = axis(content.left, content.right, d.width.toFloat(), dx, d.guidesX)
-    val (sy, gy) = axis(content.top, content.bottom, d.height.toFloat(), dy, d.guidesY)
+    // An axis held still with Shift doesn't snap
+    val (sx, gx) = if (lockedAxis == 1) dx to null else axis(content.left, content.right, d.width.toFloat(), dx, d.guidesX)
+    val (sy, gy) = if (lockedAxis == 2) dy to null else axis(content.top, content.bottom, d.height.toFloat(), dy, d.guidesY)
     snapGuidesX = listOfNotNull(gx)
     snapGuidesY = listOfNotNull(gy)
     return sx to sy

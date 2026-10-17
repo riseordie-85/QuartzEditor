@@ -78,6 +78,9 @@ val downloadAiModels by tasks.registering {
     description = "Downloads the on-device AI models (once) into ai-models/models."
     val dir = rootProject.file("ai-models/models")
     val models = aiModels
+    // Half-downloaded files wait outside the app's assets
+    val tmpDir = rootProject.file(".ai-models-download")
+    inputs.property("models", models.joinToString { it.name + "=" + it.sha256 })
     outputs.dir(dir)
     outputs.upToDateWhen { models.all { File(dir, it.name).isFile } }
     doLast {
@@ -97,7 +100,8 @@ val downloadAiModels by tasks.registering {
         for (m in models) {
             val target = File(dir, m.name)
             if (target.isFile && sha(target) == m.sha256) continue
-            val tmp = File(dir, m.name + ".part")
+            tmpDir.mkdirs()
+            val tmp = File(tmpDir, m.name + ".part")
             try {
                 logger.lifecycle("Downloading AI model ${m.name}…")
                 var url = java.net.URL(m.url)

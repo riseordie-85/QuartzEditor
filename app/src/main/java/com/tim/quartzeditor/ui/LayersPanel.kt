@@ -496,7 +496,9 @@ private fun LayerRow(
                     fun item(label: String, enabled: Boolean = true, action: EditorViewModel.() -> Unit) = @Composable {
                         DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
                             maskMenu = false
-                            vm.onLayer(layer.id) { action() }
+                            // On this layer, still working on its mask
+                            vm.selectLayer(layer.id, mask = true)
+                            vm.action()
                         })
                     }
                     DropdownMenuItem(text = { Text("Mask as selection") }, onClick = {

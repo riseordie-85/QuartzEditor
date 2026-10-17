@@ -343,8 +343,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var pickingCloneSource by mutableStateOf(false)
     /** Source minus where the first stroke started (kept while Aligned). */
     internal var cloneOffset: android.graphics.PointF? = null
+    /** With all layers: the picture as it was when the source was picked. */
+    internal var cloneFlat: com.tim.quartzeditor.engine.CloneSource? = null
     var retouch: com.tim.quartzeditor.engine.RetouchSession? = null
         internal set
+
+    /** A brush, eraser or retouch stroke is under way. */
+    val stroking: Boolean get() = stroke != null || retouch != null
+    /** The stroke under way paints where to heal or remove (not real paint). */
+    internal var strokeHeals: com.tim.quartzeditor.engine.RetouchKind? = null
 
     var foreground by mutableIntStateOf(prefs.getInt("fg", Color.BLACK))
         private set
@@ -406,7 +413,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 delay(300)
                 val d = doc ?: continue
-                if (stroke != null) continue
+                if (stroking) continue
                 val v = d.renderVersion
                 if (v != lastSeen) {
                     lastSeen = v
@@ -429,6 +436,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ================================================================== opening and closing
 
     internal fun setDocument(d: Doc, canvas: Int? = null) {
+        lastStrokeEnd = null
+        cloneSource = null
+        cloneOffset = null
+        cloneFlat = null
         propsBefore = null
         multiSelected = emptySet()
         resetVectorState()
@@ -462,6 +473,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Shows another open document (a tab) with its own undo, leaving nothing half done behind. */
     internal fun switchDocument(d: Doc, h: History) {
+        lastStrokeEnd = null
+        cloneSource = null
+        cloneOffset = null
+        cloneFlat = null
         propsBefore = null
         multiSelected = emptySet()
         resetVectorState()
@@ -803,7 +818,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun undo() {
         val d = doc ?: return
-        if (stroke != null || busy != null) return
+        if (stroking || busy != null) return
         if (pendingFx != null) {
             cancelFx()
             return
@@ -846,8 +861,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun jumpHistory(steps: Int) {
         val d = doc ?: return
-        if (stroke != null || busy != null) return
-        if (pendingFirst { jumpHistory(steps) }) return
+        if (stroking || busy != null) return
+        // Like Undo: what's being tried is dropped, not applied
+        if (pendingFx != null) cancelFx()
+        if (transform != null) cancelTransform()
+        if (warp != null) cancelWarp()
+        if (cropBox != null) cancelCrop()
+        if (textEdit != null) cancelText()
+        if (polygonPoints.isNotEmpty()) cancelPolygon()
+        if (penPoints.isNotEmpty()) cancelPen()
         var guard = 200
         while (history.undoLabels.size > steps && guard-- > 0) {
             closeTabsChangedBy(history.peekUndo())
@@ -865,7 +887,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun redo() {
         val d = doc ?: return
-        if (stroke != null || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
+        if (stroking || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
         closeTabsChangedBy(history.peekRedo())
         val at = smartPositions(d)
         history.redo(d)?.let { toast("Redo: $it") }

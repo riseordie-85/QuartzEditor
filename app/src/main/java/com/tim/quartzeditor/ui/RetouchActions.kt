@@ -18,6 +18,8 @@ import com.tim.quartzeditor.engine.TilePatch
 import com.tim.quartzeditor.engine.TileGrid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.lifecycle.viewModelScope
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -38,7 +40,25 @@ fun EditorViewModel.setCloneSource(x: Float, y: Float) {
     cloneOffset = null
     pickingCloneSource = false
     toast("Copying from here: now paint where it should go")
+    // With all layers: the picture as it is now, ready before the first stroke
+    cloneFlat = null
+    val d = doc ?: return
+    if (retouchAllLayers) {
+        val copy = d.shallowCopy()
+        viewModelScope.launch {
+            val src = withContext(Dispatchers.Default) {
+                runCatching {
+                    val pic = DocRenderer.flatten(copy)
+                    CloneSource(TileGrid.fromBitmap(pic, 0, 0, alphaOnly = false).also { pic.recycle() }, 0, 0)
+                }.getOrNull()
+            }
+            if (doc === d && cloneSource?.x == x && cloneSource?.y == y) cloneFlat = src
+        }
+    }
 }
+
+/** Biggest retouch brush (they work dab by dab as you paint). */
+private const val MAX_RETOUCH = 300f
 
 /** Starts a retouch stroke at canvas point ([x], [y]). False when it can't. */
 internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
@@ -54,9 +74,12 @@ internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
         toast("The retouch brushes change pixels: tap the layer's picture (not its mask)")
         return false
     }
-    val b = retouchBrush
+    // Retouch work happens as you paint: bigger than this would make the screen stutter
+    val b = retouchBrush.let { if (it.size > MAX_RETOUCH) it.copy(size = MAX_RETOUCH) else it }
+    strokeHeals = null
     when (val k = retouchKind) {
         RetouchKind.SPOT_HEAL, RetouchKind.AI_REMOVE -> {
+            strokeHeals = k
             // Paint where to heal (shown in pink); it heals when you lift your finger
             val s = StrokeSession(layer, StrokeTarget.PIXELS, false, 0xFFFF2DAA.toInt(), background, 0.45f, com.tim.quartzeditor.engine.BrushTip.ROUND, b.size, b.softness, d.selection)
             s.addPoint(x, y)
@@ -70,8 +93,11 @@ internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
             val off = (if (cloneAligned) cloneOffset else null) ?: PointF(src.x - x, src.y - y)
             cloneOffset = off
             val source = if (retouchAllLayers) {
-                val pic = DocRenderer.flatten(d.shallowCopy())
-                CloneSource(TileGrid.fromBitmap(pic, 0, 0, alphaOnly = false).also { pic.recycle() }, 0, 0)
+                // The picture as it was when the source was picked (worked out then)
+                cloneFlat ?: run {
+                    val pic = DocRenderer.flatten(d.shallowCopy())
+                    CloneSource(TileGrid.fromBitmap(pic, 0, 0, alphaOnly = false).also { pic.recycle() }, 0, 0).also { cloneFlat = it }
+                }
             } else {
                 CloneSource(TileGrid(alphaOnly = false).also { it.tiles.putAll(layer.tiles.tiles) }, layer.x, layer.y)
             }
@@ -164,7 +190,8 @@ private fun EditorViewModel.healArea(
     val tiles = HashMap(grid.tiles)
     val lx = layer.x
     val ly = layer.y
-    val copy = if (retouchAllLayers) d.shallowCopy() else null
+    // AI Remove always looks at the picture as you see it (it needs real pixels around the hole)
+    val copy = if (retouchAllLayers || ai) d.shallowCopy() else null
     val sel = if (useSelection) d.selection else null
     val lockAlpha = layer.props.lockAlpha
     val label = if (ai) "AI Remove" else "Spot healing"
@@ -184,7 +211,7 @@ private fun EditorViewModel.healArea(
             if (x1 < x0) return@withContext null
             val hole = Rect(bounds.left + x0, bounds.top + y0, bounds.left + x1 + 1, bounds.top + y1 + 1)
             val span = max(hole.width(), hole.height())
-            if (!ai && span > 700) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
+            if (!ai && span > 250) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
             // Room around it: to find a matching patch (healing) or to see what's there (AI)
             val margin = if (ai) max(96, (span * 0.6f).roundToInt()) else (span * 3.4f + 24f).roundToInt()
             val region = Rect(hole).apply { inset(-margin, -margin) }
@@ -219,7 +246,14 @@ private fun EditorViewModel.healArea(
                 val c = (holeBytes[i].toInt() and 0xFF) / 255f
                 if (c <= 0f) layerPx[i] else RetouchSession.mix(layerPx[i], filled[i], c, lockAlpha)
             }
-            region to out
+            // Only what changed (the hole and a little around it) goes back into the layer
+            val write = Rect(hole).apply { inset(-6, -6) }
+            if (!write.intersect(region)) return@withContext null
+            val ww = write.width()
+            val wh = write.height()
+            val part = IntArray(ww * wh)
+            for (y in 0 until wh) System.arraycopy(out, (write.top - region.top + y) * w + (write.left - region.left), part, y * ww, ww)
+            write to part
         } ?: return@runBusy
         if (doc !== d || layer.tiles !== grid) return@runBusy
         val (region, out) = res

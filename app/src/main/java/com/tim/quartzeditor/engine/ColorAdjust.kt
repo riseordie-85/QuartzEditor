@@ -207,7 +207,7 @@ data class GradientMap(
     fun lut(): Bitmap {
         val bmp = Bitmap.createBitmap(256, 1, Bitmap.Config.ARGB_8888)
         val cols = (if (reverse) colors.reversed() else colors).map { it or 0xFF000000.toInt() }.toIntArray()
-        val pos = positions?.takeIf { it.size == colors.size }?.let { p -> (if (reverse) p.reversed().map { 1f - it } else p).toFloatArray() }
+        val pos = positions?.takeIf { it.size == colors.size && cols.size >= 2 }?.let { p -> (if (reverse) p.reversed().map { 1f - it } else p).toFloatArray() }
         val p = Paint().apply { shader = LinearGradient(0f, 0f, 256f, 0f, if (cols.size >= 2) cols else intArrayOf(cols.firstOrNull() ?: Color.BLACK, cols.firstOrNull() ?: Color.WHITE), pos, Shader.TileMode.CLAMP) }
         Canvas(bmp).drawRect(0f, 0f, 256f, 1f, p)
         return bmp

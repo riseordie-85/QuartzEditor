@@ -240,7 +240,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
     val retouch = forTool == Tool.RETOUCH
     val preview: (Boolean) -> Unit = { vm.brushPreview = it }
     BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
-        val tipsH = (if (compact) 40.dp else 46.dp) * 4 + 24.dp
+        val tipsH = if (retouch) 0.dp else (if (compact) 40.dp else 46.dp) * 4 + 24.dp
         val sliderH = ((maxHeight - tipsH - 150.dp) / 3).coerceIn(56.dp, 220.dp)
         val tight = maxHeight < tipsH + 150.dp + 56.dp * 3
         Column(

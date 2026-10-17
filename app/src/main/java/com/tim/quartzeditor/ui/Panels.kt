@@ -297,13 +297,18 @@ fun PanelField(
     modifier: Modifier = Modifier,
     numeric: Boolean = false,
     mono: Boolean = false,
+    /** Every change as it's typed (for a button next to it that reads what's there). */
+    onType: ((String) -> Unit)? = null,
 ) {
     var text by remember(value) { mutableStateOf(value) }
     var wasFocused by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     BasicTextField(
         value = text,
-        onValueChange = { text = it },
+        onValueChange = {
+            text = it
+            onType?.invoke(it)
+        },
         singleLine = true,
         textStyle = TextStyle(color = Q.text, fontSize = 14.sp, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default),
         cursorBrush = SolidColor(Q.accent),

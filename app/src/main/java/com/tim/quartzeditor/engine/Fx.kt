@@ -294,9 +294,9 @@ class ColorShader {
     private val full: Boolean
 
     init {
-        var ok = true
+        var ok = colorSupported
         shader = try {
-            RuntimeShader(AGSL)
+            if (!ok) RuntimeShader(AGSL_BASIC) else RuntimeShader(AGSL)
         } catch (e: Exception) {
             // Never lose the basic adjustments over the newer ones: fall back, and say why in the log
             android.util.Log.e("QuartzShader", "Color adjustments shader failed: ${e.message}")
