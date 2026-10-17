@@ -37,6 +37,7 @@ fun EditorViewModel.chooseShapeKind(k: ShapeKind) {
         if (tool != Tool.SHAPE) return
     }
     shapeKind = k
+    if (k != ShapeKind.CUSTOM) lastBasicShape = k
     saveVectorPrefs()
 }
 

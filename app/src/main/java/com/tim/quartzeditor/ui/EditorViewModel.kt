@@ -181,6 +181,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Fill, outline, corners and points for new shapes (the last ones used). */
     var shapeStyle by mutableStateOf(loadShapeStyle(prefs))
 
+    /** The library shape Custom shape draws (ShapeLibraryActions.kt), and the shapes you've added. */
+    var customShapeKey by mutableStateOf(prefs.getString("customShape", null) ?: "lib:Heart")
+    var myShapes by mutableStateOf<List<com.tim.quartzeditor.engine.LibraryShape>>(emptyList())
+
+    /** The Shape tool's own shape to go back to after Custom shapes. */
+    var lastBasicShape by mutableStateOf(
+        com.tim.quartzeditor.engine.ShapeKind.entries.getOrElse(prefs.getInt("lastBasicShape", 0)) { com.tim.quartzeditor.engine.ShapeKind.RECT }
+            .takeIf { it in com.tim.quartzeditor.engine.ShapeKind.TOOL_SHAPES } ?: com.tim.quartzeditor.engine.ShapeKind.RECT
+    )
+
     /** Shapes are drawn square / round. */
     var shapeSquare by mutableStateOf(prefs.getBoolean("shapeSquare", false))
 
@@ -426,6 +436,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         com.tim.quartzeditor.engine.Patterns.init(app)
         Q.load(prefs)
         viewModelScope.launch { effectsLoop() }
+        // Your own custom shapes (small files)
+        viewModelScope.launch { myShapes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { loadMyShapes() } }
         // Zoomed-out tile copies made in the background: draw again when they're ready
         com.tim.quartzeditor.engine.TileLod.onReady = { doc?.invalidate() }
         // Keep thumbnails up to date shortly after changes

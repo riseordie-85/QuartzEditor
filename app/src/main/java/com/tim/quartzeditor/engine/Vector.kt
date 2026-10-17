@@ -69,13 +69,12 @@ enum class ShapeKind(val label: String) {
         TRIANGLE -> POLYGON
         POLYGON -> STAR
         STAR -> ARROW
-        ARROW -> CUSTOM
         else -> RECT
     }
 
     companion object {
         /** The shapes the Shape tool draws, in menu order. */
-        val TOOL_SHAPES = listOf(RECT, ELLIPSE, TRIANGLE, POLYGON, STAR, ARROW, CUSTOM)
+        val TOOL_SHAPES = listOf(RECT, ELLIPSE, TRIANGLE, POLYGON, STAR, ARROW)
     }
 }
 
@@ -84,7 +83,13 @@ enum class ShapeKind(val label: String) {
  * path operations: 1 add, 2 subtract, 3 keep only the overlap, 0 keep where they don't overlap;
  * -1 is part of one outline with the others, filled by the shape's fill rule (SVG files).
  */
-data class ShapePart(val points: List<PenPoint>, val closed: Boolean = true, val op: Int = -1)
+data class ShapePart(
+    val points: List<PenPoint>,
+    val closed: Boolean = true,
+    val op: Int = -1,
+    /** For an outline that starts a group: its fill rule, when it isn't the shape's (SVG elements each have their own). */
+    val evenOdd: Boolean? = null,
+)
 
 enum class StrokeAlign(val label: String) { INSIDE("Inside"), CENTER("Center"), OUTSIDE("Outside") }
 
@@ -177,7 +182,7 @@ data class ShapeSpec(
             if (parts.isNotEmpty()) {
                 o.put("parts", JSONArray().also { a ->
                     parts.forEach { part ->
-                        a.put(JSONObject().put("closed", part.closed).put("op", part.op).put("pts", JSONArray().also { pa ->
+                        a.put(JSONObject().put("closed", part.closed).put("op", part.op).also { po -> part.evenOdd?.let { po.put("eo", it) } }.put("pts", JSONArray().also { pa ->
                             part.points.forEach { pt -> pa.put(pt.x.toDouble()).put(pt.y.toDouble()).put(pt.hx.toDouble()).put(pt.hy.toDouble()).put(pt.ix.toDouble()).put(pt.iy.toDouble()) }
                         }))
                     }
@@ -224,6 +229,7 @@ data class ShapeSpec(
                                 PenPoint(v(0), v(1), v(2), v(3), v(4), v(5))
                             },
                             po.optBoolean("closed", true), po.optInt("op", -1),
+                            if (po.has("eo")) po.optBoolean("eo") else null,
                         )
                     }
                 } ?: emptyList(),
@@ -274,7 +280,10 @@ data class ShapeSpec(
                 if (part.points.isEmpty()) continue
                 val p = penPath(part.points, part.closed)
                 if (part.op < 0 && groups.isNotEmpty()) groups.last().second.addPath(p)
-                else groups.add((if (part.op < 0) 1 else part.op) to Path().apply { fillType = rule; addPath(p) })
+                else groups.add((if (part.op < 0) 1 else part.op) to Path().apply {
+                    fillType = part.evenOdd?.let { if (it) Path.FillType.EVEN_ODD else Path.FillType.WINDING } ?: rule
+                    addPath(p)
+                })
             }
             if (groups.isEmpty()) return Path()
             if (groups.size == 1 && (groups[0].first == 1 || groups[0].first == 0 || full == null)) return groups[0].second

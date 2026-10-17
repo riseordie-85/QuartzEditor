@@ -123,6 +123,7 @@ fun ShapeOptions(vm: EditorViewModel) {
         when {
             layer != null -> "Shape layer"
             vm.tool == Tool.PEN -> "Shape pen"
+            spec.kind == ShapeKind.CUSTOM -> "Custom shapes"
             else -> "Shape"
         }
     )
@@ -146,6 +147,20 @@ fun ShapeOptions(vm: EditorViewModel) {
             ToggleRow("Closed shape", spec.closed) { on ->
                 if (on && spec.path.size < 3) return@ToggleRow
                 set(if (on) "Close shape" else "Open shape") { it.copy(closed = on) }
+            }
+        }
+    } else if (spec.kind == ShapeKind.CUSTOM) {
+        Text(
+            if (layer != null) "Tap a shape to change this one into it." else "Pick a shape, then drag on the picture to draw it. Hold one of yours to remove it.",
+            color = Q.textDim, fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        ShapeLibraryGrid(vm, selectedName = layer?.props?.shape?.shapeName)
+        Spacer(Modifier.height(4.dp))
+        if (layer == null) {
+            ToggleRow("Keep its proportions", vm.shapeSquare) {
+                vm.shapeSquare = it
+                vm.saveVectorPrefs()
             }
         }
     } else if (vm.tool != Tool.PEN || layer != null) {

@@ -67,8 +67,9 @@ internal fun loadTextStyle(prefs: SharedPreferences): TextSpec =
 fun EditorViewModel.saveVectorPrefs() {
     prefs.edit()
         .putInt("shapeKind", shapeKind.ordinal)
+        .putInt("lastBasicShape", lastBasicShape.ordinal)
         .putBoolean("shapeSquare", shapeSquare)
-        .putString("shapeStyle", shapeStyle.copy(path = emptyList(), w = 0f, h = 0f).toJson().toString())
+        .putString("shapeStyle", shapeStyle.copy(path = emptyList(), parts = emptyList(), w = 0f, h = 0f).toJson().toString())
         .putString("textStyle", textStyle.copy(text = "").toJson().toString())
         .apply()
 }
@@ -303,7 +304,8 @@ fun EditorViewModel.commitVector(label: String) {
 
 /** Shape tool tapped again: the next shape. */
 internal fun EditorViewModel.nextShapeKind() {
-    shapeKind = shapeKind.next
+    // From Custom shapes: back to the shape it was on
+    shapeKind = if (shapeKind == ShapeKind.CUSTOM) lastBasicShape else shapeKind.next
     saveVectorPrefs()
     toast(shapeKind.label)
 }
@@ -326,19 +328,26 @@ fun EditorViewModel.dragShape(x0: Float, y0: Float, x1: Float, y1: Float, square
     }
     var w = x1 - x0
     var h = y1 - y0
+    val lib = if (shapeKind == ShapeKind.CUSTOM) currentLibraryShape else null
     if (square) {
-        val m = max(abs(w), abs(h))
+        // Custom shapes keep their own proportions; the others are square or round
+        val aspect = lib?.let { it.shape.h / it.shape.w.coerceAtLeast(0.001f) } ?: 1f
+        val m = max(abs(w), abs(h) / aspect)
         w = if (w < 0) -m else m
-        h = if (h < 0) -m else m
+        h = (if (y1 - y0 < 0) -m else m) * aspect
+    }
+    fun styled(sw: Float, sh: Float, m: com.tim.quartzeditor.engine.Affine): ShapeSpec {
+        val base = shapeStyle.copy(kind = shapeKind, w = sw, h = sh, path = emptyList(), closed = true, matrix = m)
+        return if (lib != null) withLibraryShape(base, lib, keepBox = true) else base
     }
     if (fromCenter) {
         // The drag start is the middle
-        shapeDraft = shapeStyle.copy(kind = shapeKind, w = abs(w) * 2f, h = abs(h) * 2f, path = emptyList(), closed = true, matrix = translation(x0 - abs(w), y0 - abs(h)))
+        shapeDraft = styled(abs(w) * 2f, abs(h) * 2f, translation(x0 - abs(w), y0 - abs(h)))
         return
     }
     val left = min(x0, x0 + w)
     val top = min(y0, y0 + h)
-    shapeDraft = shapeStyle.copy(kind = shapeKind, w = abs(w), h = abs(h), path = emptyList(), closed = true, matrix = translation(left, top))
+    shapeDraft = styled(abs(w), abs(h), translation(left, top))
 }
 
 fun EditorViewModel.finishShape() {
@@ -346,7 +355,7 @@ fun EditorViewModel.finishShape() {
     shapeDraft = null
     // Too small to be on purpose
     if (s.w * scale < 6f && s.h * scale < 6f) return
-    addShapeLayer(s, s.kind.label)
+    addShapeLayer(s, if (s.kind == ShapeKind.CUSTOM) s.shapeName.ifBlank { s.kind.label } else s.kind.label)
 }
 
 fun EditorViewModel.cancelShape() {

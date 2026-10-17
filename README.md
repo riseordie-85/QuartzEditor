@@ -12,21 +12,33 @@ from the build). Background removal's model is fetched by Google Play services i
   portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
 - **Open File Picker**: any image, a `.qedit` project file, or a **Photoshop file** (`.psd`, `.psb`).
 - **Photoshop files** open with their layers: pixel layers, folders at any depth (Pass Through or with
-  their own blend mode, open or closed), layer masks (and folder masks), vector masks, blend modes, opacity
-  and fill, clipping masks, hidden layers, transparency locks and names. Fill and shape layers are drawn
-  from their color or gradient and outline. Layer styles come across as ours: Drop Shadow, Inner Shadow,
-  Outer Glow, Stroke (color or gradient), Color Overlay, Gradient Overlay and Bevel & Emboss.
+  their own blend mode, open or closed, with their own layer styles), layer masks (and folder masks),
+  vector masks (with their path operations), every blend mode, opacity and fill, clipping masks (to
+  layers or folders), hidden layers, transparency locks and names. **Shape layers stay shapes**:
+  rectangles, rounded rectangles and ellipses as those, other outlines as pen shapes (edit their points)
+  or custom shapes, with their fill and outline (gradient or pattern fills and dashed outlines come in as
+  pixels). Fill layers are drawn from their color, gradient or pattern. **Adjustment layers** come in as
+  ours: Levels, Curves, Brightness/Contrast, Exposure, Vibrance, Hue/Saturation, Color Balance, Black &
+  White, Photo Filter, Gradient Map and Invert (with their masks, opacity and clipping). Layer styles come
+  across as ours: Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Satin, Stroke (color or gradient),
+  Color Overlay, Gradient Overlay, Pattern Overlay (the file's patterns are added to your patterns) and
+  Bevel & Emboss.
   **Text layers stay text** (like Photoshop, they show the file's own pixels until you edit them): the
   words, size, color, alignment, tracking, leading, caps and faux bold/italic, point or box text (box text
-  wraps to its box), and Arc warps. The font is the same Google Font when it is one (any weight), a font
+  wraps to its box), and Arc warps. Text with **several styles** (a word in another font, size or color)
+  keeps them; typing carries the style of the letter before, and changing the font, size or color in
+  Properties changes all of it (sizes keep their proportions). The font is the same Google Font when it is one (any weight), a font
   you imported with that name, or a close free match for common ones (Arial → Arimo, Helvetica Neue →
   Inter, Gotham/Proxima Nova → Montserrat, Futura → Jost…); editing says when it isn't the original.
   **Smart objects stay smart**: embedded pictures (PNG, JPEG, …) and embedded Photoshop files become the
-  smart layer's contents, placed where they were (edit them in their own tab). Linked files, TIFF, warps
-  and smart filters keep what you see as the contents. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger
-  than 4096 px are shrunk to fit. Afterwards a short list says what didn't come across exactly
-  (adjustment layers aren't brought in yet; Inner Glow, Satin and Pattern Overlay effects; blend modes we
-  don't have, shown as the nearest one).
+  smart layer's contents, placed where they were (edit them in their own tab). **Copies of one smart
+  object stay linked**: editing one changes them all. Linked files, TIFF, warps and smart filters keep
+  what you see as the contents. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger than 4096
+  px are shrunk to fit. Afterwards a short list says what didn't come across exactly (Channel Mixer,
+  Selective Color, Color Lookup, Posterize and Threshold adjustments; blend modes on effects that only
+  layers have).
+- **Very big Photoshop files** (over 300 MB) ask first: they can take minutes and may close the app on a
+  phone or tablet. **Open anyway** goes ahead.
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
 
 - If the app closed unexpectedly, the next launch says why (a crash, or Android closing it for memory),
@@ -113,9 +125,16 @@ the list; the button shows the one you used last.
 - **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from
   where you start dragging to where you stop) on a new shape layer; tap the tool again for the next shape,
   or hold it for the list. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
-  the star's points and depth (no depth makes a polygon), and "same width and height". New shapes always
+  the star's points and depth (no depth makes a polygon), **Flatten points** (flat tips and valleys: cogs
+  and gears, square teeth at 100%), and "same width and height". New shapes always
   start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
   layer selected, Properties changes that shape.
+- **Custom shapes** (the button under Shape) — the shape library in Properties: hearts, stars, speech and
+  thought bubbles, clouds, arrows, check marks, rings and frames, pins, tags, ribbons, badges and bursts,
+  cogs and more. Pick one and drag on the picture ("Keep its proportions" keeps its shape). **Add an
+  .svg…** adds your own (paths, rectangles, circles, polygons, groups and transforms; its colors aren't
+  used, and line drawings come in as outlines); hold one of yours to remove it. With a custom shape layer
+  selected, tapping a shape changes it.
 - **Shape pen** — tap to place corners; drag as you place a point to bend the line into a curve. Tap the first
   point (or Close shape) to finish, or Open line for an unclosed line. Two-finger tap or the bar's undo
   removes the last point. **Edit points** comes on after finishing (or tap the pen again, or Edit points in
@@ -203,14 +222,18 @@ Only **Color**, **Properties** and **Layers** live in the column.
   bottom stay put; only the list between them scrolls. It shows up to four layers while Color or Properties
   is open (fewer if the screen is short; the buttons always stay), and fills the column when they're folded.
   Tap its header to fold it too.
-  - Blend modes (Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Linear Dodge, Overlay,
-    Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity), Opacity and Fill.
+  - All of Photoshop's blend modes (Normal, Dissolve, Darken, Multiply, Color Burn, Linear Burn, Darker
+    Color, Lighten, Screen, Color Dodge, Linear Dodge, Lighter Color, Overlay, Soft Light, Hard Light, Vivid
+    Light, Linear Light, Pin Light, Hard Mix, Difference, Exclusion, Subtract, Divide, Hue, Saturation,
+    Color, Luminosity), Opacity and Fill. (Effects and adjustment layers offer the ones Android draws itself.)
   - Lock transparent pixels and lock the whole layer.
   - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder (drag near the top or
     bottom of the list and it scrolls; only the rows on screen are built, so hundreds of layers stay
     quick, and each picture keeps its place in the list when you come back from a smart layer's tab). **Long-press** a layer
     for Rename, Duplicate, Merge down, Clip to layer below, and pages for **Layer style** (Copy / Paste,
-    Save as preset, Apply / Clear) and **Convert** (smart layer, Edit contents, Rasterize).
+    Save as preset, Apply / Clear) and **Convert** (smart layer, Edit contents, Unlink from copies, Rasterize).
+    Duplicating a smart layer makes a **linked copy** (like Photoshop): editing either changes both; the
+    row says "Linked to n others", and **Unlink from copies** gives one its own contents.
   - **Pick several layers**: swipe right on a row (again to take it out). Move, Transform, Delete, put in a
     folder (Ctrl+G, or the folder button), merge (Ctrl+E) and pasting styles work on all of them. Tap any layer (or "n picked ✕")
     to go back to one.
@@ -222,8 +245,11 @@ Only **Color**, **Properties** and **Layers** live in the column.
     less than 100% opacity or a mask is drawn as one picture (blended Normally).
   - **Clipping masks**: ⋮ → **Clip to layer below** (or Ctrl+Alt+G) shows a layer only where the layer
     under it has pixels: a texture or photo inside text, a color only on one object, an adjustment that
-    only changes one layer. Clipped layers show an arrow; stack several on one base. The base's opacity
-    and blend mode apply to the whole group. Merge down a clipped layer to bake it in.
+    only changes one layer. The base can be a **folder** (clipped to everything in it). Clipped layers show
+    an arrow; stack several on one base. The base's opacity and blend mode apply to the whole group. Merge
+    down a clipped layer to bake it in.
+  - **Folders can have layer styles** (fx with the folder picked): everything in it gets them as one
+    picture, like Photoshop.
   - **Adjustment layers**: change everything below them without touching pixels; paint their mask to limit
     them. With a selection, the new layer's mask shows only what's selected (like Photoshop). Tap one's icon
     to edit it.
@@ -248,7 +274,8 @@ place, so the picture keeps its room; closing it brings the panels back as you l
   gradient, linear/radial/reflected, angle, scale, reverse), Long Shadow (angle, length, fade), Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
   angle and altitude, gloss contour, highlight and shadow colors), Pattern Overlay (any pattern, size,
   opacity; it moves with the layer), Stroke (outside, inside, center; a color or a gradient), Drop Shadow, Inner
-  Shadow, Outer Glow, Color Overlay.
+  Shadow, Inner Glow (from the edge or the center, size, choke), Satin (angle, distance, size, invert),
+  Outer Glow, Color Overlay.
   Colors: tap the swatch or the rainbow wheel for the full picker (the layer changes as you drag), or
   tap white, black or a rainbow color; below are your last 4 colors and the 4 main colors in the
   picture.
@@ -342,7 +369,9 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   (`Styles`), adjustments and filters (`Fx`, `Tone`), transforms, warps (`Warp`), face finding
   (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`),
   project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
-  selection expand/shrink (`SelectionOps`) and the AI models (`Ai`).
+  selection expand/shrink (`SelectionOps`), the AI models (`Ai`), Photoshop files (`Psd` reads them,
+  `PsdImport` turns them into a document, `PsdFonts` picks fonts), the blend modes Android doesn't have
+  (`Blends`), .svg files (`Svg`) and the custom shape library (`ShapeLibrary`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
   "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
 - `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:
@@ -350,11 +379,12 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `LayerActions`, `MaskActions`, `FxActions` (adjustments and filters), `StyleActions`, `ApplyStyle`,
   `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
-  `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`.
+  `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
+  `ShapeLibraryActions`.
 - The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
   over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
   `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`, `ColorPanels`,
-  `Rulers`, `ModifierButton`, `LayerStrip`.
+  `Rulers`, `ModifierButton`, `LayerStrip`, `ShapePanel` (the shape library), `ImageSize`.
 
 ## Settings
 Menu → Settings (or the gear on the home screen).

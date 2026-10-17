@@ -62,6 +62,7 @@ import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ChangeHistory
 import androidx.compose.material.icons.outlined.Hexagon
+import androidx.compose.material.icons.outlined.Interests
 import androidx.compose.material.icons.outlined.East
 import androidx.compose.material.icons.outlined.Rectangle
 import androidx.compose.material.icons.outlined.StarOutline
@@ -248,11 +249,14 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                     ToolOption(Icons.Outlined.Polyline, "Edit points", t == Tool.PEN && vm.penEditing) { vm.choosePen(edit = true) },
                 ),
             ) { vm.onToolButton(Tool.PEN) }
-            // 9. Shape
+            // 9. Shape, and custom shapes from the library
+            val custom = vm.shapeKind == com.tim.quartzeditor.engine.ShapeKind.CUSTOM
+            val basic = if (custom) vm.lastBasicShape else vm.shapeKind
             ToolButton(
-                shapeIcon(vm.shapeKind), "Shape: ${vm.shapeKind.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE, buttonSize,
+                shapeIcon(basic), "Shape: ${basic.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE && !custom, buttonSize,
                 options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } },
-            ) { vm.onToolButton(Tool.SHAPE) }
+            ) { if (custom) vm.chooseShapeKind(basic) else vm.onToolButton(Tool.SHAPE) }
+            ToolButton(Icons.Outlined.Interests, "Custom shapes (the shape library, and your .svg files)", t == Tool.SHAPE && custom, buttonSize) { vm.chooseCustomShapes() }
             // 10. Text
             ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
             // 11. Brush / Eraser

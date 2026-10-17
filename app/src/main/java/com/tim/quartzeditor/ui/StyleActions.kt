@@ -29,7 +29,9 @@ internal suspend fun EditorViewModel.effectsLoop() {
             val copy = d.shallowCopy()
             val group = copy.layer(todo.id) ?: continue
             val fx = HashMap(effectsCache)
-            withContext(Dispatchers.Default) { DocRenderer.buildEffects(copy, group, SCREEN_FX_PX, key) { fx[it.id] } }
+            // Matched to the folder itself (the copy has its own tile grids)
+            val tilesId = System.identityHashCode(todo.tiles)
+            withContext(Dispatchers.Default) { DocRenderer.buildEffects(copy, group, SCREEN_FX_PX, key, tilesId) { fx[it.id] } }
         } else {
             val style = todo.props.style
             val tilesId = System.identityHashCode(todo.tiles)

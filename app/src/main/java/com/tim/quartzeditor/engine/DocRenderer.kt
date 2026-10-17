@@ -976,11 +976,18 @@ object DocRenderer {
      * made: the layer is then drawn without them). A folder's are made from everything in it drawn
      * together ([effects]: its layers' own effects).
      */
-    fun buildEffects(doc: Doc, l: Layer, maxSide: Int, key: Any = Unit, effects: ((Layer) -> BuiltEffects?)? = null): BuiltEffects? {
+    fun buildEffects(
+        doc: Doc,
+        l: Layer,
+        maxSide: Int,
+        key: Any = Unit,
+        tilesId: Int = System.identityHashCode(l.tiles),
+        effects: ((Layer) -> BuiltEffects?)? = null,
+    ): BuiltEffects? {
         val mask = if (l.maskActive) l.mask?.tiles else null
         return runCatching {
             val tiles = if (l.isGroup) groupTiles(doc, l, effects) else l.tiles.tiles
-            Effects.build(key, l.props.style, tiles, mask, maxSide, System.identityHashCode(l.tiles))
+            Effects.build(key, l.props.style, tiles, mask, maxSide, tilesId)
         }.getOrNull()
     }
 
