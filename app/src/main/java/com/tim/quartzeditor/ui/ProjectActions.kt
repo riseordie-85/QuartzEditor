@@ -100,12 +100,14 @@ fun EditorViewModel.openPsd(uri: Uri) {
     }
 }
 
-/** True when [uri] is a Photoshop file (by its name, type or first bytes). */
+/** True when [uri] is a Photoshop file (by its name, type or first bytes). Reads the file: not on the main thread. */
 internal fun EditorViewModel.isPsd(uri: Uri): Boolean {
     val type = ctx.contentResolver.getType(uri).orEmpty().lowercase()
     if ("photoshop" in type || type.endsWith("/psd")) return true
     val name = com.tim.quartzeditor.data.Media.displayNameWithExtension(ctx, uri).lowercase()
     if (name.endsWith(".psd") || name.endsWith(".psb")) return true
+    // A known kind of picture: no need to look inside
+    if (type.startsWith("image/")) return false
     return try {
         ctx.contentResolver.openInputStream(uri)?.use { s ->
             val head = ByteArray(4)
@@ -118,14 +120,22 @@ internal fun EditorViewModel.isPsd(uri: Uri): Boolean {
 
 /** Opens whatever was picked in the file picker: a project, a Photoshop file or an image. */
 fun EditorViewModel.openPicked(uri: Uri) {
-    if (isPsd(uri)) {
-        openPsd(uri)
-        return
+    // Telling what it is can mean reading it (a file in the cloud may download first): in the background
+    viewModelScope.launch {
+        val kind = withContext(Dispatchers.IO) {
+            val type = ctx.contentResolver.getType(uri).orEmpty()
+            when {
+                isPsd(uri) -> 1
+                uri.toString().endsWith(".${ProjectIO.EXTENSION}") || (!type.startsWith("image/") && looksLikeProject(uri)) -> 2
+                else -> 0
+            }
+        }
+        when (kind) {
+            1 -> openPsd(uri)
+            2 -> openProjectFile(uri)
+            else -> openImage(uri)
+        }
     }
-    val type = ctx.contentResolver.getType(uri).orEmpty()
-    val isProject = uri.toString().endsWith(".${ProjectIO.EXTENSION}") ||
-        (!type.startsWith("image/") && looksLikeProject(uri))
-    if (isProject) openProjectFile(uri) else openImage(uri)
 }
 
 internal fun EditorViewModel.looksLikeProject(uri: Uri): Boolean = try {
@@ -147,7 +157,10 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
     }
     if (uri == null) return false
     if (doc != null) saveToProjects(quiet = true)
-    if (isPsd(uri)) openPsd(uri) else openImage(uri)
+    viewModelScope.launch {
+        val psd = withContext(Dispatchers.IO) { runCatching { isPsd(uri) }.getOrDefault(false) }
+        if (psd) openPsd(uri) else openImage(uri)
+    }
     return true
 }
 
@@ -173,6 +186,8 @@ fun EditorViewModel.closeDocument() {
     tabIndex = 0
     com.tim.quartzeditor.engine.SmartArt.release()
     releaseAi()
+    imagePalette = emptyList()
+    paletteFrom = null
     doc = null
     stroke = null
     preview = null

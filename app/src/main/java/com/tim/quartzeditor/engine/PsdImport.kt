@@ -62,12 +62,23 @@ object PsdImport {
         var asPixels = 0
         var groupFx = 0
 
+        /** How the layer clipped to it should be treated, per folder: what its base was. */
+        private enum class Base { LAYER, FOLDER, SKIPPED }
+        private val lastBase = HashMap<Long, Base>()
+        var clippedToFolder = 0
+
         fun build(): Result {
             if (s < 1f) notes.add("Shrunk from ${f.width} × ${f.height} to ${doc.width} × ${doc.height} px (the biggest the app works with).")
-            if (f.layers.isEmpty()) {
+            if (f.layers.isNotEmpty()) layers()
+            // No layers (or only ones we can't show, like adjustment layers): the flattened picture
+            if (doc.layers.none { !it.isGroup }) {
+                doc.layers.clear()
+                if (f.layers.isNotEmpty()) {
+                    // The flattened picture already has the adjustments in it
+                    skippedAdjustments.clear()
+                    notes.add("Its layers couldn't be shown, so the flattened picture opened as one layer.")
+                }
                 compositeOnly()
-            } else {
-                layers()
             }
             if (doc.layers.isEmpty()) throw PsdException("There's nothing in this Photoshop file that can be shown.")
             doc.activeId = doc.layers.lastOrNull { !it.isGroup }?.id ?: doc.layers.last().id
@@ -77,7 +88,9 @@ object PsdImport {
             }
             if (unsupportedFx.isNotEmpty()) notes.add("Layer effects not brought in: ${unsupportedFx.joinToString()}.")
             if (groupFx > 0) notes.add("Layer effects on folders aren't supported ($groupFx folder${if (groupFx > 1) "s" else ""}).")
+            if (clippedToFolder > 0) notes.add("Clipping to a folder isn't supported: $clippedToFolder layer${if (clippedToFolder > 1) "s show" else " shows"} unclipped.")
             if (approxBlends.isNotEmpty()) notes.add("Blend modes shown as the nearest one we have: ${approxBlends.joinToString()}.")
+            if (unsupportedColors > 0) notes.add("Some colors were saved as book (Pantone) colors and came in as black.")
             if (asPixels > 0) notes.add("$asPixels text or smart object layer${if (asPixels > 1) "s" else ""} came in as pixels (they look the same but can't be retyped or replaced).")
             return Result(doc, notes)
         }
@@ -88,10 +101,11 @@ object PsdImport {
             if (rows.isEmpty()) return
             val colors = colorChannels().size
             val color = rows.take(colors)
-            val alpha = if (rows.size > colors && f.mode != 4) rows[colors] else null
+            // Extra channels are saved selections, unless the file says the first is transparency
+            val alpha = if (f.mergedAlpha && rows.size > colors) rows[colors] else null
             val grid = decode(color, alpha, 0, 0, f.width, f.height)
             rows.forEach { it.close() }
-            doc.layers.add(Layer(doc.newId(), LayerProps("Background"), scaled(grid, false)))
+            doc.layers.add(Layer(doc.newId(), LayerProps("Background"), grid))
         }
 
         fun colorChannels(): List<Int> = when (f.mode) {
@@ -110,6 +124,7 @@ object PsdImport {
                     pl.isGroup -> {
                         val id = if (open.isNotEmpty()) open.removeAt(open.size - 1) else doc.newId()
                         val outer = open.lastOrNull() ?: 0L
+                        if (pl.clipping != 1) lastBase[outer] = Base.FOLDER
                         val pass = pl.blendKey == "pass" || pl.sectionBlend == "pass"
                         if (pl.effects != null && hasEnabledFx(pl.effects!!)) groupFx++
                         val props = LayerProps(
@@ -125,8 +140,27 @@ object PsdImport {
                         g.collapsed = pl.section == 2
                         doc.layers.add(g)
                     }
-                    pl.adjustment != null -> skippedAdjustments.add(pl.adjustment!!)
-                    else -> layer(pl, parent)?.let { doc.layers.add(it) }
+                    pl.adjustment != null -> {
+                        skippedAdjustments.add(pl.adjustment!!)
+                        if (pl.clipping != 1) lastBase[parent] = Base.SKIPPED
+                    }
+                    else -> {
+                        // Clipped to something we can't use as a base: shown as it is
+                        var clip = pl.clipping == 1
+                        if (clip) {
+                            when (lastBase[parent]) {
+                                Base.SKIPPED -> clip = false
+                                Base.FOLDER -> {
+                                    clip = false
+                                    clippedToFolder++
+                                }
+                                else -> Unit
+                            }
+                        } else {
+                            lastBase[parent] = Base.LAYER
+                        }
+                        layer(pl, parent, clip)?.let { doc.layers.add(it) }
+                    }
                 }
             }
             // Folders whose own record was missing: their contents go to the top level
@@ -136,7 +170,7 @@ object PsdImport {
             }
         }
 
-        fun layer(pl: PsdLayer, parent: Long): Layer? {
+        fun layer(pl: PsdLayer, parent: Long, clip: Boolean): Layer? {
             if (pl.isText || pl.isSmart) asPixels++
             val vector = pl.vectorMask?.takeIf { !it.disabled && it.paths.isNotEmpty() }
             val grid: TileGrid = when {
@@ -144,9 +178,10 @@ object PsdImport {
                 pl.solidColor != null || pl.gradientFill != null -> synthesizedFill(pl, vector)
                 else -> TileGrid(alphaOnly = false)
             }
-            // The pixel mask (and, for a pixel layer, its vector mask as one)
+            // The pixel mask, and for a pixel layer its vector mask too (a shape's outline is already in its pixels)
             var mask = pixelMask(pl, isFolder = false)
-            if (vector != null && !pl.isFill && pl.channels.none { it.id == -2 } && pl.hasPixels) {
+            val usedReal = pl.vectorMask != null && pl.realMask != null && pl.channels.any { it.id == -3 }
+            if (vector != null && !pl.isFill && pl.hasPixels && (usedReal || pl.channels.none { it.id == -2 })) {
                 mask = combine(mask, vectorMaskGrid(vector, pl))
             }
             val style = style(pl)
@@ -160,14 +195,17 @@ object PsdImport {
                 maskDisabled = mask?.second ?: false,
                 style = if (s < 1f) style.scaled(s) else style,
                 parent = parent,
-                clip = pl.clipping == 1,
+                clip = clip,
             )
-            return Layer(doc.newId(), props, scaled(grid, false), mask = mask?.first?.let { scaled(it, true) })
+            return Layer(doc.newId(), props, grid, mask = mask?.first)
         }
 
         // ------------------------------------------------------------ pixels
 
-        /** A layer's stored pixels, as tiles at canvas position. */
+        /** Photoshop pixels kept: the canvas and as much again around it (more would only use up memory). */
+        val keep = Rect(-f.width, -f.height, 2 * f.width, 2 * f.height)
+
+        /** A layer's stored pixels, as tiles at canvas position (shrunk when the file is too big). */
         fun pixels(pl: PsdLayer): TileGrid {
             val w = pl.width
             val h = pl.height
@@ -179,26 +217,20 @@ object PsdImport {
             return grid
         }
 
-        /**
-         * Rows of [color] (and [alpha]) at canvas ([left], [top]) into tiles. Rows far off the canvas
-         * are left out (a huge layer mostly off to the side would only use up memory).
-         */
+        /** Rows of [color] (and [alpha]) at Photoshop canvas ([left], [top]) into tiles. */
         fun decode(color: List<PsdReader.ChannelRows?>, alpha: PsdReader.ChannelRows?, left: Int, top: Int, w: Int, h: Int): TileGrid {
             val grid = TileGrid(alphaOnly = false)
+            val sink = RowSink(grid)
             val rows = color.map { ByteArray(w) }
             val a = ByteArray(w)
             val argb = IntArray(w)
-            val minX = -f.width
-            val maxX = 2 * f.width
-            val minY = -f.height
-            val maxY = 2 * f.height
-            val x0 = max(left, minX)
-            val x1 = min(left + w, maxX)
+            val x0 = max(left, keep.left)
+            val x1 = min(left + w, keep.right)
             for (y in 0 until h) {
                 for (i in color.indices) color[i]?.next(rows[i]) ?: java.util.Arrays.fill(rows[i], 0)
                 if (alpha != null) alpha.next(a) else java.util.Arrays.fill(a, -1)
                 val cy = top + y
-                if (cy < minY || cy >= maxY || x1 <= x0) continue
+                if (cy < keep.top || cy >= keep.bottom || x1 <= x0) continue
                 when (f.mode) {
                     1 -> for (x in 0 until w) {
                         val g = rows[0][x].toInt() and 0xFF
@@ -217,10 +249,86 @@ object PsdImport {
                             ((rows[1][x].toInt() and 0xFF) shl 8) or (rows[2][x].toInt() and 0xFF)
                     }
                 }
-                writeRow(grid, argb, left, x0, x1, cy)
+                sink.row(argb, left, x0, x1, cy)
             }
+            sink.finish()
             grid.dropEmptyTiles()
             return grid
+        }
+
+        /**
+         * Takes Photoshop rows (top to bottom) and writes them into [grid]: as they are, or shrunk
+         * to the document's size by averaging the pixels that fall on each one (so even a huge
+         * file never needs more than a row or two at full size).
+         */
+        inner class RowSink(private val grid: TileGrid) {
+            private var curY = Int.MIN_VALUE
+            private var minX = 0
+            private var sa = DoubleArray(0)
+            private var sr = DoubleArray(0)
+            private var sg = DoubleArray(0)
+            private var sb = DoubleArray(0)
+            private var n = IntArray(0)
+            private var out = IntArray(0)
+
+            fun row(argb: IntArray, left: Int, x0: Int, x1: Int, cy: Int) {
+                if (s >= 1f) {
+                    writeRow(grid, argb, left, x0, x1, cy)
+                    return
+                }
+                val ty = floor(cy * s).toInt()
+                if (ty != curY) {
+                    flush()
+                    curY = ty
+                    minX = floor(x0 * s).toInt()
+                    val width = floor((x1 - 1) * s).toInt() - minX + 1
+                    if (sa.size < width) {
+                        sa = DoubleArray(width); sr = DoubleArray(width); sg = DoubleArray(width); sb = DoubleArray(width)
+                        n = IntArray(width); out = IntArray(width)
+                    }
+                    java.util.Arrays.fill(sa, 0.0); java.util.Arrays.fill(sr, 0.0); java.util.Arrays.fill(sg, 0.0); java.util.Arrays.fill(sb, 0.0)
+                    java.util.Arrays.fill(n, 0)
+                }
+                for (x in x0 until x1) {
+                    val tx = floor(x * s).toInt() - minX
+                    if (tx < 0 || tx >= n.size) continue
+                    val p = argb[x - left]
+                    val alpha = (p ushr 24).toDouble()
+                    // Weighted by alpha, so see-through pixels don't darken the edges
+                    sa[tx] += alpha
+                    sr[tx] += ((p shr 16) and 0xFF) * alpha
+                    sg[tx] += ((p shr 8) and 0xFF) * alpha
+                    sb[tx] += (p and 0xFF) * alpha
+                    n[tx]++
+                }
+            }
+
+            private fun flush() {
+                if (curY == Int.MIN_VALUE) return
+                var last = -1
+                for (i in n.indices) {
+                    if (n[i] == 0) {
+                        out[i] = 0
+                        continue
+                    }
+                    last = i
+                    val a = sa[i] / n[i]
+                    if (sa[i] <= 0.0) {
+                        out[i] = 0
+                    } else {
+                        val r = (sr[i] / sa[i]).roundToInt().coerceIn(0, 255)
+                        val g = (sg[i] / sa[i]).roundToInt().coerceIn(0, 255)
+                        val b = (sb[i] / sa[i]).roundToInt().coerceIn(0, 255)
+                        out[i] = (a.roundToInt().coerceIn(0, 255) shl 24) or (r shl 16) or (g shl 8) or b
+                    }
+                }
+                if (last >= 0) writeRow(grid, out, minX, minX, minX + last + 1, curY)
+            }
+
+            fun finish() {
+                flush()
+                curY = Int.MIN_VALUE
+            }
         }
 
         /** Puts canvas pixels [x0] until [x1] of row [cy] (from [row], which starts at canvas x [left]) into [grid]'s tiles. */
@@ -241,42 +349,51 @@ object PsdImport {
 
         // ------------------------------------------------------------ masks
 
+        /** A Photoshop-canvas area in document pixels (after any shrinking), kept within [keep]. */
+        fun docArea(r: Rect): RectF {
+            val k = Rect(r)
+            if (!k.intersect(keep)) return RectF()
+            return RectF(k.left * s, k.top * s, k.right * s, k.bottom * s)
+        }
+
         /**
          * The layer's pixel mask as "how hidden" tiles (and whether it's switched off). With a
          * vector mask, channel -2 is the outline drawn as pixels (already in a shape's pixels), so
          * only the separate pixel mask (-3) is used then.
          */
         fun pixelMask(pl: PsdLayer, isFolder: Boolean): Pair<TileGrid, Boolean>? {
+            val vm = pl.vectorMask
             val (m, id) = when {
-                pl.vectorMask != null && pl.realMask != null && pl.channels.any { it.id == -3 } -> pl.realMask!! to -3
-                pl.vectorMask != null && (pl.isFill || pl.channels.none { it.id == -2 }) -> return null
+                vm != null && pl.realMask != null && pl.channels.any { it.id == -3 } -> pl.realMask!! to -3
+                vm != null && (vm.disabled || pl.isFill || pl.channels.none { it.id == -2 }) -> return null
                 pl.mask != null && pl.channels.any { it.id == -2 } -> pl.mask!! to -2
                 else -> return null
             }
             val ch = pl.channels.first { it.id == id }
             val grid = TileGrid(alphaOnly = true)
-            val n = TileGrid.SIZE
             // Outside its area the mask is all one value: hidden everywhere else when that's black
             if (m.defaultColor < 128) {
                 val area = Rect(0, 0, f.width, f.height)
                 if (!isFolder && pl.width > 0 && pl.height > 0) area.union(Rect(pl.left, pl.top, pl.right, pl.bottom))
                 if (m.width > 0 && m.height > 0) area.union(Rect(m.left, m.top, m.right, m.bottom))
-                for (k in grid.keysIn(RectF(area))) grid.getOrCreate(k).eraseColor(Color.BLACK)
+                for (k in grid.keysIn(docArea(area))) grid.getOrCreate(k).eraseColor(Color.BLACK)
             }
             if (m.width > 0 && m.height > 0) {
                 val rows = PsdReader.ChannelRows.layer(f, ch, m.width, m.height)
                 if (rows != null) {
+                    val sink = RowSink(grid)
                     val v = ByteArray(m.width)
                     val argb = IntArray(m.width)
+                    val x0 = max(m.left, keep.left)
+                    val x1 = min(m.right, keep.right)
                     for (y in 0 until m.height) {
                         rows.next(v)
                         val cy = m.top + y
-                        if (cy < -f.height || cy >= 2 * f.height) continue
+                        if (cy < keep.top || cy >= keep.bottom || x1 <= x0) continue
                         for (x in 0 until m.width) argb[x] = (255 - (v[x].toInt() and 0xFF)) shl 24
-                        val x0 = max(m.left, -f.width)
-                        val x1 = min(m.right, 2 * f.width)
-                        if (x1 > x0) writeRow(grid, argb, m.left, x0, x1, cy)
+                        sink.row(argb, m.left, x0, x1, cy)
                     }
+                    sink.finish()
                     rows.close()
                 }
             }
@@ -284,10 +401,10 @@ object PsdImport {
             return grid to m.disabled
         }
 
-        /** The canvas-pixel outline of a vector mask. */
+        /** The outline of a vector mask, in document pixels. */
         fun path(vm: PsdVectorMask): Path {
-            val w = f.width.toFloat()
-            val h = f.height.toFloat()
+            val w = f.width * s
+            val h = f.height * s
             val p = Path()
             for (sp in vm.paths) {
                 val k = sp.knots
@@ -316,7 +433,7 @@ object PsdImport {
             val area = Rect(0, 0, f.width, f.height).apply { union(Rect(pl.left, pl.top, pl.right, pl.bottom)) }
             val p = path(vm)
             val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
-            for (k in grid.keysIn(RectF(area))) {
+            for (k in grid.keysIn(docArea(area))) {
                 val t = grid.getOrCreate(k)
                 t.eraseColor(Color.BLACK)
                 val c = Canvas(t)
@@ -344,7 +461,8 @@ object PsdImport {
         fun synthesizedFill(pl: PsdLayer, vector: PsdVectorMask?): TileGrid {
             val grid = TileGrid(alphaOnly = false)
             val outline = vector?.let { path(it) }
-            val area = RectF(0f, 0f, f.width.toFloat(), f.height.toFloat())
+            val canvasArea = RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat())
+            val area = RectF(canvasArea)
             val bounds = RectF().also { b -> if (outline != null) outline.computeBounds(b, true) else b.set(area) }
             if (outline != null && vector?.invert != true) area.set(bounds)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -354,7 +472,7 @@ object PsdImport {
             } else {
                 val g = pl.gradientFill!!
                 val fx = gradient(g, g["Opct"]?.let { opacity(it) } ?: 1f, Blend.NORMAL)
-                paint.shader = shader(fx, if (g["Algn"] == false) RectF(0f, 0f, f.width.toFloat(), f.height.toFloat()) else bounds)
+                paint.shader = shader(fx, if (g["Algn"] == false) canvasArea else bounds)
             }
             if (area.isEmpty) return grid
             for (k in grid.keysIn(area)) {
@@ -385,22 +503,6 @@ object PsdImport {
                     LinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half, mirrored, mpos, Shader.TileMode.CLAMP)
                 }
                 else -> LinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half, colors, pos, Shader.TileMode.CLAMP)
-            }
-        }
-
-        // ------------------------------------------------------------ shrinking
-
-        /** Scaled to the document's size when the file was bigger than the app's limit. */
-        fun scaled(grid: TileGrid, alphaOnly: Boolean): TileGrid {
-            if (s >= 1f || grid.isEmpty) return grid
-            val b = grid.tileBounds() ?: return grid
-            val m = Matrix().apply { setScale(s, s) }
-            val out = Transformer.render(grid.tiles, alphaOnly, b, m, Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000))
-            for (t in grid.tiles.values) t.recycle()
-            val (bmp, at) = out ?: return TileGrid(alphaOnly)
-            return TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly).also {
-                bmp.recycle()
-                it.dropEmptyTiles()
             }
         }
 
@@ -466,9 +568,12 @@ object PsdImport {
             else -> Blend.NORMAL
         }
 
+        var unsupportedColors = 0
+
         fun color(v: Any?): Int {
             val m = v as? Map<*, *> ?: return Color.BLACK
             fun d(vararg keys: String): Double? = keys.firstNotNullOfOrNull { (m[it] as? Number)?.toDouble() ?: (m[it] as? PsdUnit)?.value }
+            fun c255(x: Double) = (x * 255).roundToInt().coerceIn(0, 255)
             return when (m["_class"]) {
                 "Grsc" -> {
                     // Gray as a percent of black
@@ -476,6 +581,19 @@ object PsdImport {
                     Color.rgb(g, g, g)
                 }
                 "HSBC" -> Color.HSVToColor(floatArrayOf((d("H   ") ?: 0.0).toFloat(), ((d("Strt") ?: 0.0) / 100).toFloat(), ((d("Brgh") ?: 0.0) / 100).toFloat()))
+                "CMYC" -> {
+                    // Percent of each ink (a simple conversion, no color profile)
+                    val c = (d("Cyn ") ?: 0.0) / 100
+                    val mg = (d("Mgnt") ?: 0.0) / 100
+                    val y = (d("Ylw ") ?: 0.0) / 100
+                    val k = (d("Blck") ?: 0.0) / 100
+                    Color.rgb(c255((1 - c) * (1 - k)), c255((1 - mg) * (1 - k)), c255((1 - y) * (1 - k)))
+                }
+                "LbCl" -> lab(d("Lmnc") ?: 0.0, d("A   ") ?: 0.0, d("B   ") ?: 0.0)
+                "BkCl" -> {
+                    unsupportedColors++
+                    Color.BLACK
+                }
                 else -> {
                     val r = d("Rd  ", "redFloat")
                     val g = d("Grn ", "greenFloat")
@@ -485,6 +603,27 @@ object PsdImport {
                     Color.rgb(((r ?: 0.0) * scale).roundToInt().coerceIn(0, 255), ((g ?: 0.0) * scale).roundToInt().coerceIn(0, 255), ((b ?: 0.0) * scale).roundToInt().coerceIn(0, 255))
                 }
             }
+        }
+
+        /** CIE Lab (D50, like Photoshop) to sRGB. */
+        fun lab(l: Double, a: Double, b: Double): Int {
+            val fy = (l + 16) / 116
+            val fx = fy + a / 500
+            val fz = fy - b / 200
+            fun inv(t: Double) = if (t * t * t > 0.008856) t * t * t else (t - 16.0 / 116) / 7.787
+            // D50 white
+            val x = 0.9642 * inv(fx)
+            val y = 1.0 * inv(fy)
+            val z = 0.8249 * inv(fz)
+            // D50 XYZ to linear sRGB (Bradford-adapted)
+            val rl = 3.1339 * x - 1.6169 * y - 0.4906 * z
+            val gl = -0.9788 * x + 1.9161 * y + 0.0335 * z
+            val bl = 0.0719 * x - 0.2290 * y + 1.4052 * z
+            fun gamma(c: Double): Int {
+                val v = if (c <= 0.0031308) 12.92 * c else 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+                return (v * 255).roundToInt().coerceIn(0, 255)
+            }
+            return Color.rgb(gamma(rl), gamma(gl), gamma(bl))
         }
 
         fun opacity(v: Any?): Float = (((v as? PsdUnit)?.value ?: (v as? Number)?.toDouble() ?: 100.0) / 100.0).toFloat().coerceIn(0f, 1f)

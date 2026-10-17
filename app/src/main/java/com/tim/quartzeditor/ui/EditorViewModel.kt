@@ -400,7 +400,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
     /** The picture's main colors (for the layer style color swatches), and what they were worked out from. */
     var imagePalette by mutableStateOf<List<Int>>(emptyList())
-    internal var paletteFrom: Pair<Doc, Int>? = null
+    internal var paletteFrom: Pair<Int, Int>? = null
     var messageId by mutableIntStateOf(0)
         private set
 
@@ -467,6 +467,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         samplePictureVersion = -1
         cropBox = null
         cropQuad = null
+        imagePalette = emptyList()
+        paletteFrom = null
         polygonPoints.clear()
         selectDraft = null
         effectsCache.clear()
@@ -506,6 +508,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         samplePictureVersion = -1
         cropBox = null
         cropQuad = null
+        imagePalette = emptyList()
+        paletteFrom = null
         polygonPoints.clear()
         selectDraft = null
         // Effect images and thumbnails are kept by layer id, and ids repeat between documents

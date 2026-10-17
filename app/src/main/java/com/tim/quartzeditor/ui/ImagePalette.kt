@@ -12,7 +12,8 @@ import kotlinx.coroutines.withContext
 /** Works out the picture's main colors in the background (again only when it has changed since). */
 fun EditorViewModel.ensurePalette() {
     val d = doc ?: return
-    val key = d to d.renderVersion
+    // (By identity, so a closed picture isn't kept in memory by this)
+    val key = System.identityHashCode(d) to d.renderVersion
     if (paletteFrom == key) return
     paletteFrom = key
     val copy = d.shallowCopy()

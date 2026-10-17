@@ -108,6 +108,8 @@ class PsdFile(
     /** Photoshop's global light angle (layer styles that use it). */
     val globalAngle: Double,
     val globalAltitude: Double,
+    /** The flattened picture's first extra channel is its transparency (otherwise extra channels are saved selections). */
+    val mergedAlpha: Boolean = false,
 ) {
     val psb: Boolean get() = version == 2
 }
@@ -157,10 +159,14 @@ object PsdReader {
         val lmLen = if (psb) r.u64() else r.u32()
         val lmEnd = r.pos + lmLen
         var layers: List<PsdLayer> = emptyList()
+        var mergedAlpha = false
         if (lmLen > 0) {
             val infoLen = if (psb) r.u64() else r.u32()
             val infoEnd = r.pos + infoLen
-            if (infoLen > 0) layers = readLayerInfo(r, psb, depth)
+            if (infoLen > 0) {
+                mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
+                layers = readLayerInfo(r, psb, depth)
+            }
             r.pos = infoEnd
             // Global layer mask info
             if (r.pos + 4 <= lmEnd) r.skip(r.u32())
@@ -173,6 +179,7 @@ object PsdReader {
                     val len = if (psb && key in LONG_KEYS) r.u64() else r.u32()
                     val at = r.pos
                     if ((key == "Lr16" || key == "Lr32" || key == "Layr") && len > 0) {
+                        mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
                         layers = readLayerInfo(r, psb, depth)
                     }
                     r.pos = at + len
@@ -182,7 +189,7 @@ object PsdReader {
             }
         }
         r.pos = lmEnd
-        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude)
+        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha)
     }
 
     /** The layer records and where each channel's data is. */
@@ -251,6 +258,7 @@ object PsdReader {
                     readLayerBlock(r, l, key, len)
                 } catch (e: Exception) {
                     // A block we couldn't understand: carry on without it
+                } catch (e: StackOverflowError) {
                 }
                 r.pos = at + len
             }
@@ -597,7 +605,21 @@ object PsdReader {
  */
 internal object Descriptors {
 
+    /** How deep descriptors are nested right now (a damaged file can't recurse forever). */
+    private val depth = ThreadLocal<Int>()
+
     fun read(r: PsdReader.Reader): Map<String, Any?> {
+        val d = depth.get() ?: 0
+        if (d > 48) throw PsdException("Descriptor nested too deep.")
+        depth.set(d + 1)
+        try {
+            return readFields(r)
+        } finally {
+            depth.set(d)
+        }
+    }
+
+    private fun readFields(r: PsdReader.Reader): Map<String, Any?> {
         r.unicode() // the class's display name
         val cls = id(r)
         val n = r.i32()
