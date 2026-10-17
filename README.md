@@ -25,7 +25,10 @@ selection tools, the shapes, pen drawing/point editing).
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view). While moving
   (and moving a Transform box), the layer's edges and middle **snap** to the canvas's edges and middle,
   with a pink line showing where. Menu → "Snap to center and edges" turns it off.
-- **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand. Drag
+- **Select** — tap again to switch shape: Rectangle → Ellipse → Lasso → Polygonal lasso → Magic wand →
+  **Object (AI)**: tap an object, or drag a box around it, and the on-device Segment Anything model
+  (MobileSAM) outlines it (the first time on a picture it takes a moment to look; after that it's quick).
+  **Expand / Shrink** (Properties, or −10…+10 in the bar's ⋮) grows or shrinks the selection by pixels. Drag
   to select (polygonal: tap corners, tap the first one or Close to finish; two-finger tap removes the last
   corner). **Magic wand**: tap a color; Properties has tolerance, "only touching pixels" and "look at all
   layers". **Select subject** / **Select background** / **Invert** (Properties, ⋮ on the bar, or hold
@@ -90,12 +93,35 @@ selection tools, the shapes, pen drawing/point editing).
   Outline, shadow and glow come from Layer Style (fx).
 - **Brush** and **Eraser** — open a second column with the tips (Round, Square, Triangle, Grunge) and the
   Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
+- **Retouch** (hold for the list; Size, Softness and Strength in the brush column):
+  - **Spot healing** — paint over a spot; when you lift your finger it's filled with texture from the
+    best-matching place nearby and its color and light are evened out to blend in.
+  - **AI Remove** — paint over something (include its shadow); the on-device MI-GAN model fills in what
+    would be behind it. Also Select ⋮ → AI Remove selected.
+  - **Clone stamp** — Pick source (or Alt + tap) then paint; Aligned keeps the source moving with each
+    new stroke. A crosshair shows where it copies from.
+  - **Dodge / Burn** (Shadows / Midtones / Highlights), **Smudge**, **Blur**, **Sharpen**.
+  - "Look at all layers" (healing, AI Remove, clone): read the picture as you see it and paint onto the
+    layer you're on — an empty layer keeps the photo untouched.
 - The toolbar's buttons shrink to fit the screen's height (it only scrolls on very short screens).
 - **Colors** — foreground (top) and background. Tap one for a color picker beside the toolbar; swipe up or
   down on them to swap.
 
 ### On the picture
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
+- **Modifier button** (the floating ⇧; drag its grip to move it; ☰ → Modifier button turns it off): hold it
+  for **Shift**, slide out past its edge for **Alt**, double-tap to keep Shift on. A keyboard's Shift and
+  Alt do the same. Brushes: straight lines at 0°/45°/90° (tap: a line from the last stroke). Shapes and
+  rectangle/ellipse selections: square or circle (Alt: from the middle). Transform: proportions the
+  other way, rotation in 15° steps (Alt: resize from the middle). Move: straight across or up and down
+  (Alt: move a copy). Lasso, wand, Object: add (Alt: take away). Gradient: 45° steps. Crop: keep the shape
+  (Alt: from the middle). Clone stamp: Alt + tap sets the source.
+- **Rulers and guides** (☰ → Rulers, Ctrl+R): drag out of the top ruler for a horizontal guide, the left
+  one for a vertical guide; with Move, drag a guide to move it, or off the picture to remove it. ☰ has
+  Show guides (Ctrl+;), Lock guides, New guide… (exact pixels or a percent) and Clear guides. Things snap
+  to guides when snapping is on; guides save with the project and follow crop, rotate and flip.
+- **History** (the page button next to undo/redo): every step, oldest first; tap one to go back (or
+  forward) to it.
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
 - **Grid** (menu → Show grid, or Ctrl+'): evenly spaced lines from the canvas's top-left corner. Grid
   settings: spacing in pixels (or split the canvas into 2–12 equal parts), subdivisions, color, and Snap to
@@ -105,10 +131,9 @@ selection tools, the shapes, pen drawing/point editing).
 - Undo, redo and fit buttons at the top right; the menu at the bottom left has Home, Rename image, Export
   image (with a file name), Save project file, Place image as layer, Flatten and **Settings**.
 - **Sliders** have their number in a box beside them: tap it and type an exact value (90°, 50%, 12 px).
-- **Panels hidden** (the arrow at the bottom right, or Tab): the layers show as a small stack at the right
-  edge, like Photoshop on phones. Swipe up or down on it to go through the layers, tap one peeking out to
-  pick it, hold the middle one to hide or show it; ⌃ opens the full panel, + adds a layer, the picture,
-  or a folder.
+- **Panels hidden** (the arrow at the bottom right, or Tab): the layers show as a short column at the right
+  edge, like Photoshop on phones: three at a time, scroll for the rest. Tap one to pick it, hold one to hide
+  or show it; + adds a layer, a picture or a folder. Panels slide in and out.
 
 ### Smart layers
 - **Placing an image** (Menu → Place image, or + on the layer stack) makes a smart layer at the image's full
@@ -157,9 +182,10 @@ Only **Color**, **Properties** and **Layers** live in the column.
     Transform (they stay sharp), add masks and layer styles. Painting, fills, filters and adjustments ask to
     **rasterize** them first (turn them into pixels); ⋮ → Rasterize layer does it any time. Text layers
     show a T; tap it on the selected layer to edit the text.
-  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (a new Adjustments, Levels, Curves or
-    Gaussian Blur adjustment layer; or Adjustments…, Levels…, Curves…, Gaussian Blur…, Filters… on the
-    layer), new folder, new layer, delete, and ⋮ for everything else.
+  - Bottom buttons: **fx** (Layer Style), mask, **adjustments** (a new adjustment layer, or the same
+    windows on the layer itself), new folder, new layer, delete, and ⋮ for everything else.
+  - **Hold a mask's thumbnail** for: Mask as selection, Replace with selection, Invert, Enable/Disable,
+    Clear, Apply and Delete.
 
 ### Floating windows
 **Layer Style**, **Adjustments**, **Levels**, **Curves**, **Gaussian Blur** and **Filters** open in a window
@@ -186,6 +212,18 @@ place, so the picture keeps its room; closing it brings the panels back as you l
 - **Gaussian Blur** — radius up to 250 px. As an adjustment layer it blurs everything below it; paint its
   mask black where things should stay sharp.
 - **Filters** — Quartz Gallery's 13 looks (including Invert and Duotone) with strength.
+- **Hue/Saturation** — Master, or just Reds, Yellows, Greens, Cyans, Blues or Magentas (each blends into
+  its neighbors); Hue, Saturation, Lightness; Colorize.
+- **Color Balance** — Cyan–Red, Magenta–Green, Yellow–Blue for Shadows, Midtones and Highlights;
+  Preserve luminosity.
+- **Vibrance** — Vibrance and Saturation.
+- **Black & White** — how bright each color becomes, Photoshop's presets, and a tint.
+- **Photo Filter** — Photoshop's filters (Warming, Cooling, Sepia, Underwater…) or your color, density,
+  Preserve luminosity.
+- **Gradient Map** — any gradient (dark → light), reverse.
+- In every adjustment layer's window: **Clip to the layer below**.
+- Layer Style effects each have a **Blend mode** (Multiply shadows darken what's below; Bevel's highlight
+  and shadow start at Screen and Multiply).
 
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for
@@ -217,7 +255,9 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
   **Ctrl+Shift+N** new layer, **Ctrl+G** put in a folder, **Ctrl+Alt+G** clip to the layer below,
   **Ctrl+E** merge down.
 - **Ctrl+L** Levels, **Ctrl+M** Curves, **Ctrl+U** Adjustments.
-- View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels, **Ctrl+'** grid.
+- View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels, **Ctrl+'** grid,
+  **Ctrl+R** rulers, **Ctrl+;** guides (**Ctrl+Alt+;** lock them). **Shift** and **Alt** work like the
+  modifier button.
 - **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves to Projects.
 
 ## How it works
@@ -232,13 +272,22 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
 - Shape and text layers keep what they are (the shape, the words, the font) and redraw their pixels from
   it whenever it changes, so blend modes, masks, styles, merging and export treat them like any layer.
 
+## On-device AI
+Select Object (MobileSAM: its image encoder plus the Segment Anything mask decoder) and AI Remove (MI-GAN)
+run on the tablet through ONNX Runtime; the app has no internet permission, so nothing leaves the device.
+The model files (about 72 MB) are downloaded by Gradle the first time the app is built on a computer, into
+`ai-models/` (ignored by Git; Clean leaves it), and checked against their SHA-256. Built without internet,
+the app still works; those two features say the model isn't included. Licenses: MobileSAM Apache-2.0
+(its mask decoder is the original Segment Anything decoder, Apache-2.0), MI-GAN MIT, ONNX Runtime MIT.
+
 ## Where the code is
 Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 - `engine/` — the picture itself, with no screens: layers and tiles (`Doc`, `TileGrid`), drawing
   (`DocRenderer`), brushes, selections, fills and gradients (`FillTools`), patterns, layer styles
   (`Styles`), adjustments and filters (`Fx`, `Tone`), transforms, warps (`Warp`), face finding
-  (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`) and
-  project files (`ProjectIO`).
+  (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`),
+  project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
+  selection expand/shrink (`SelectionOps`) and the AI models (`Ai`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
   "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
 - `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:
@@ -246,10 +295,11 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `LayerActions`, `MaskActions`, `FxActions` (adjustments and filters), `StyleActions`, `ApplyStyle`,
   `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
-  `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`.
+  `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`.
 - The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
   over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
-  `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`.
+  `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`, `ColorPanels`,
+  `Rulers`, `ModifierButton`, `LayerStrip`.
 
 ## Settings
 Menu → Settings (or the gear on the home screen).

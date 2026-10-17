@@ -183,7 +183,7 @@ private fun modifierHint(vm: EditorViewModel): String? {
         Tool.SELECT -> when (vm.selectShape) {
             com.tim.quartzeditor.engine.SelectShape.RECT, com.tim.quartzeditor.engine.SelectShape.ELLIPSE ->
                 if (alt) "Draw from the middle" else "Square or circle"
-            com.tim.quartzeditor.engine.SelectShape.WAND, com.tim.quartzeditor.engine.SelectShape.LASSO ->
+            com.tim.quartzeditor.engine.SelectShape.WAND, com.tim.quartzeditor.engine.SelectShape.LASSO, com.tim.quartzeditor.engine.SelectShape.OBJECT ->
                 if (alt) "Take away from the selection" else "Add to the selection"
             else -> null
         }

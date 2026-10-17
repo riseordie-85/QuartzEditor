@@ -21,7 +21,7 @@ enum class SelectMode(val label: String) { NEW("New"), ADD("Add"), SUBTRACT("Sub
 
 /** Selection tool shapes. Tapping the Select button again goes to the next one. */
 enum class SelectShape(val label: String) {
-    RECT("Rectangle"), ELLIPSE("Ellipse"), LASSO("Lasso"), POLYGON("Polygonal lasso"), WAND("Magic wand");
+    RECT("Rectangle"), ELLIPSE("Ellipse"), LASSO("Lasso"), POLYGON("Polygonal lasso"), WAND("Magic wand"), OBJECT("Object (AI)");
 
     val next: SelectShape get() = entries[(ordinal + 1) % entries.size]
 }

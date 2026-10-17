@@ -85,9 +85,9 @@ fun EditorViewModel.endStroke() {
     }
     val s = stroke ?: return
     val d = doc ?: return
-    if (tool == Tool.RETOUCH && retouchKind == com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL) {
+    if (tool == Tool.RETOUCH && retouchKind.paintsArea) {
         s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
-        finishSpotHeal(s)
+        finishSpotHeal(s, ai = retouchKind == com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE)
         return
     }
     s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }

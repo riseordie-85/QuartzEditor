@@ -18,7 +18,10 @@ import kotlin.math.sqrt
 // painted and heals it when you lift your finger (see [Heal]).
 
 enum class RetouchKind(val label: String) {
-    SPOT_HEAL("Spot healing"), CLONE("Clone stamp"), DODGE("Dodge"), BURN("Burn"), SMUDGE("Smudge"), BLUR("Blur"), SHARPEN("Sharpen");
+    SPOT_HEAL("Spot healing"), AI_REMOVE("AI Remove"), CLONE("Clone stamp"), DODGE("Dodge"), BURN("Burn"), SMUDGE("Smudge"), BLUR("Blur"), SHARPEN("Sharpen");
+
+    /** Painted where to work, then done all at once when the finger lifts. */
+    val paintsArea: Boolean get() = this == SPOT_HEAL || this == AI_REMOVE
 
     companion object {
         fun byName(n: String?): RetouchKind = entries.firstOrNull { it.name == n } ?: SPOT_HEAL
@@ -125,7 +128,7 @@ class RetouchSession(
                 val src = source ?: return
                 readPatch(src.grid, Rect(r).apply { offset(offX.roundToInt() + layer.x - src.ox, offY.roundToInt() + layer.y - src.oy) }, 0, 0)
             }
-            RetouchKind.SPOT_HEAL -> return
+            RetouchKind.SPOT_HEAL, RetouchKind.AI_REMOVE -> return
         }
         // How much of each pixel this dab changes: the dab's shape, the strength, the selection
         val sel = selection?.let { readMask(it.mask(), Rect(r).apply { offset(layer.x, layer.y) }) }

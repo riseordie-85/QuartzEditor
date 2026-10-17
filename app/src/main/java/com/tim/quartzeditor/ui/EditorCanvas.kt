@@ -513,7 +513,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     // Shift: a square or circle; Alt: drawn from the middle
                                     val r = constrainedBox(vm, startCx, startCy, cx, cy)
                                     vm.selectDraft = when (vm.selectShape) {
-                                        com.tim.quartzeditor.engine.SelectShape.RECT -> com.tim.quartzeditor.engine.Selection.rect(r)
+                                        com.tim.quartzeditor.engine.SelectShape.RECT, com.tim.quartzeditor.engine.SelectShape.OBJECT -> com.tim.quartzeditor.engine.Selection.rect(r)
                                         com.tim.quartzeditor.engine.SelectShape.ELLIPSE -> com.tim.quartzeditor.engine.Selection.oval(r)
                                         else -> {
                                             for (h in main.historical) {
@@ -605,6 +605,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     Tool.SELECT -> when (vm.selectShape) {
                                         com.tim.quartzeditor.engine.SelectShape.POLYGON -> vm.polygonTap(startCx, startCy, 24.dp.toPx() / vm.scale)
                                         com.tim.quartzeditor.engine.SelectShape.WAND -> withSelectMode(vm) { vm.magicWand(startCx, startCy) }
+                                        // Object: tap one and the AI outlines it
+                                        com.tim.quartzeditor.engine.SelectShape.OBJECT -> if (vm.isOnCanvas(start.x, start.y)) withSelectMode(vm) { vm.selectObjectAt(startCx, startCy) }
                                         else -> vm.selectTap()
                                     }
                                     // A tap picks the shape under your finger (to change it in Properties)
@@ -621,7 +623,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
                             GestureMode.SELECTING -> {
                                 val draft = vm.selectDraft
-                                if (draft != null) {
+                                if (draft != null && vm.selectShape == com.tim.quartzeditor.engine.SelectShape.OBJECT) {
+                                    // A box around the object: the AI outlines what's in it
+                                    val b = android.graphics.RectF().also { draft.computeBounds(it, true) }
+                                    vm.selectDraft = null
+                                    withSelectMode(vm) { vm.selectObjectIn(b) }
+                                } else if (draft != null) {
                                     if (vm.selectShape == com.tim.quartzeditor.engine.SelectShape.LASSO) {
                                         draft.close()
                                         // Shift adds the lasso to the selection, Alt takes it away

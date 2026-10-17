@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.AutoFixNormal
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Deselect
@@ -135,6 +136,9 @@ fun ToolOptions(vm: EditorViewModel) {
             )
             if (vm.selectShape == SelectShape.POLYGON) {
                 Text("Tap to place corners; tap the first corner (or Close) to finish.", color = Q.textDim, fontSize = 12.sp)
+            }
+            if (vm.selectShape == SelectShape.OBJECT) {
+                Text("Tap an object, or drag a box around it: the AI outlines it on your device. The first time on a picture it takes a moment to look. Hold ⇧ to add to the selection, slide out to Alt to take away.", color = Q.textDim, fontSize = 12.sp)
             }
             if (vm.selectShape == SelectShape.WAND) {
                 Spacer(Modifier.height(6.dp))
@@ -332,6 +336,7 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 DropdownMenuItem(text = { Text("Copy to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) }, onClick = { menu = false; vm.selectionToLayer(cut = false) })
                 DropdownMenuItem(text = { Text("Cut to new layer") }, leadingIcon = { Icon(Icons.Outlined.ContentCut, null) }, onClick = { menu = false; vm.selectionToLayer(cut = true) })
                 DropdownMenuItem(text = { Text("Delete selected pixels") }, onClick = { menu = false; vm.clearSelected() })
+                DropdownMenuItem(text = { Text("AI Remove selected") }, leadingIcon = { Icon(Icons.Outlined.AutoFixNormal, null) }, onClick = { menu = false; vm.removeSelected() })
                 DropdownMenuItem(text = { Text("Fill with foreground color") }, onClick = { menu = false; vm.fillWithColor(vm.foreground) })
                 DropdownMenuItem(text = { Text("Fill with pattern") }, onClick = { menu = false; vm.fillWithPattern() })
                 DropdownMenuItem(text = { Text("Define pattern from selection") }, onClick = { menu = false; vm.definePattern() })
@@ -391,6 +396,7 @@ private fun RetouchOptions(vm: EditorViewModel) {
     Spacer(Modifier.height(6.dp))
     val help = when (k) {
         com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> "Paint over a spot, scratch or small thing; it's healed with texture from around it when you lift your finger. For big things, AI Remove does better."
+        com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> "Paint over something to remove (a person, a sign, a cone, wires): the AI fills in what would be behind it, on your device. Include its shadow."
         com.tim.quartzeditor.engine.RetouchKind.CLONE -> "Pick where to copy from, then paint. Strength sets how strongly it covers."
         com.tim.quartzeditor.engine.RetouchKind.DODGE -> "Lightens where you paint."
         com.tim.quartzeditor.engine.RetouchKind.BURN -> "Darkens where you paint."
@@ -422,7 +428,7 @@ private fun RetouchOptions(vm: EditorViewModel) {
             }
             SampleAllRow(vm)
         }
-        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> SampleAllRow(vm)
+        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL, com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> SampleAllRow(vm)
         else -> Unit
     }
     Spacer(Modifier.height(8.dp))

@@ -48,6 +48,8 @@ import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
+import androidx.compose.material.icons.outlined.AutoFixNormal
+import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Details
 import androidx.compose.material.icons.outlined.BlurOn
 import androidx.compose.material.icons.outlined.TouchApp
@@ -196,9 +198,9 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
             ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
             ToolButton(
-                retouchIcon(vm.retouchKind), "${vm.retouchKind.label} (hold for Clone Stamp, Dodge, Burn, Smudge, Blur, Sharpen)", t == Tool.RETOUCH, buttonSize,
+                retouchIcon(vm.retouchKind), "${vm.retouchKind.label} (hold for Spot Healing, AI Remove, Clone Stamp, Dodge, Burn, Smudge, Blur, Sharpen)", t == Tool.RETOUCH, buttonSize,
                 options = com.tim.quartzeditor.engine.RetouchKind.entries.mapIndexed { i, k ->
-                    ToolOption(retouchIcon(k), k.label, t == Tool.RETOUCH && vm.retouchKind == k, divider = i == 2 || i == 4) { vm.chooseRetouch(k) }
+                    ToolOption(retouchIcon(k), k.label, t == Tool.RETOUCH && vm.retouchKind == k, divider = i == 3 || i == 5) { vm.chooseRetouch(k) }
                 },
             ) { vm.onToolButton(Tool.RETOUCH) }
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))
@@ -211,6 +213,7 @@ private val MIN_TOOL_BUTTON = 30.dp
 
 internal fun retouchIcon(k: com.tim.quartzeditor.engine.RetouchKind) = when (k) {
     com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> Icons.Outlined.Healing
+    com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE -> Icons.Outlined.AutoFixNormal
     com.tim.quartzeditor.engine.RetouchKind.CLONE -> Icons.Outlined.Approval
     com.tim.quartzeditor.engine.RetouchKind.DODGE -> Icons.Outlined.LightMode
     com.tim.quartzeditor.engine.RetouchKind.BURN -> Icons.Outlined.LocalFireDepartment
@@ -376,6 +379,7 @@ private fun selectIcon(s: SelectShape): ImageVector = when (s) {
     SelectShape.LASSO -> Icons.Outlined.Gesture
     SelectShape.POLYGON -> Icons.Outlined.Polyline
     SelectShape.WAND -> Icons.Outlined.AutoFixHigh
+    SelectShape.OBJECT -> Icons.Outlined.CenterFocusStrong
 }
 
 private fun shapeIcon(k: com.tim.quartzeditor.engine.ShapeKind): ImageVector = when (k) {

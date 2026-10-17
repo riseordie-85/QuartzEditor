@@ -126,6 +126,7 @@ fun EditorViewModel.closeDocument() {
     tabs = emptyList()
     tabIndex = 0
     com.tim.quartzeditor.engine.SmartArt.release()
+    releaseAi()
     doc = null
     stroke = null
     preview = null
@@ -148,6 +149,7 @@ fun EditorViewModel.discardDocument() {
     tabs = emptyList()
     tabIndex = 0
     com.tim.quartzeditor.engine.SmartArt.release()
+    releaseAi()
     d.invalidate()
 }
 

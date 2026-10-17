@@ -56,7 +56,7 @@ internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
     }
     val b = retouchBrush
     when (val k = retouchKind) {
-        RetouchKind.SPOT_HEAL -> {
+        RetouchKind.SPOT_HEAL, RetouchKind.AI_REMOVE -> {
             // Paint where to heal (shown in pink); it heals when you lift your finger
             val s = StrokeSession(layer, StrokeTarget.PIXELS, false, 0xFFFF2DAA.toInt(), background, 0.45f, com.tim.quartzeditor.engine.BrushTip.ROUND, b.size, b.softness, d.selection)
             s.addPoint(x, y)
@@ -110,41 +110,89 @@ internal fun EditorViewModel.cancelRetouch() {
     doc?.invalidate()
 }
 
-/** Spot Healing: heals where the stroke painted, in the background. */
-internal fun EditorViewModel.finishSpotHeal(s: StrokeSession) {
+/** Spot Healing or AI Remove: works on where the stroke painted, in the background. */
+internal fun EditorViewModel.finishSpotHeal(s: StrokeSession, ai: Boolean) {
     val d = doc ?: return
     stroke = null
     d.invalidate()
-    val layer = s.layer
     val buf = s.buffer
     val tb = buf.tileBounds() ?: return
+    healArea(s.layer, tb, { r -> RetouchSession.readMask(buf, r) }, ai)
+}
+
+/** AI Remove of what's selected (on the layer you're on). */
+fun EditorViewModel.removeSelected() {
+    val d = doc ?: return
+    if (pendingFirst { removeSelected() }) return
+    val sel = d.selection ?: run {
+        toast("Select what to remove first")
+        return
+    }
+    val layer = d.active
+    if (blockPaint(layer)) return
+    layer!!
+    if (layer.isGroup || layer.isAdjustment) {
+        toast("Pick a pixel layer")
+        return
+    }
+    val m = sel.mask()
+    val lx = layer.x
+    val ly = layer.y
+    val b = sel.reach.let { Rect(kotlin.math.floor(it.left).toInt(), kotlin.math.floor(it.top).toInt(), kotlin.math.ceil(it.right).toInt(), kotlin.math.ceil(it.bottom).toInt()) }
+    if (!b.intersect(0, 0, d.width, d.height)) return
+    b.offset(-lx, -ly)
+    healArea(layer, b, { r -> RetouchSession.readMask(m, Rect(r).apply { offset(lx, ly) }) }, ai = true, useSelection = false)
+}
+
+/**
+ * Heals (or, with [ai], removes with the AI model) where [holeAt] says, around [bounds] (layer-local),
+ * on [layer]. [holeAt] gives how much of each pixel of a layer-local area to fill.
+ */
+private fun EditorViewModel.healArea(
+    layer: com.tim.quartzeditor.engine.Layer,
+    bounds: Rect,
+    holeAt: (Rect) -> ByteArray,
+    ai: Boolean,
+    useSelection: Boolean = true,
+) {
+    val d = doc ?: return
+    if (ai && !com.tim.quartzeditor.engine.Models.has(ctx, com.tim.quartzeditor.engine.Models.MIGAN)) {
+        toast("This build doesn't include the AI Remove model. Build once with internet on so Android Studio downloads it")
+        return
+    }
     val grid = layer.tiles
     val tiles = HashMap(grid.tiles)
     val lx = layer.x
     val ly = layer.y
     val copy = if (retouchAllLayers) d.shallowCopy() else null
-    val sel = d.selection
+    val sel = if (useSelection) d.selection else null
     val lockAlpha = layer.props.lockAlpha
-    runBusy("Healing…") {
+    val label = if (ai) "AI Remove" else "Spot healing"
+    runBusy(if (ai) "Removing…" else "Healing…") {
         val res = withContext(Dispatchers.Default) {
-            // Where it was painted (layer-local), exactly
-            val cov = RetouchSession.readMask(buf, tb)
+            // Where to work (layer-local), exactly
+            val cov = holeAt(bounds)
             var x0 = Int.MAX_VALUE
             var y0 = Int.MAX_VALUE
             var x1 = Int.MIN_VALUE
             var y1 = Int.MIN_VALUE
-            for (y in 0 until tb.height()) for (x in 0 until tb.width()) {
-                if ((cov[y * tb.width() + x].toInt() and 0xFF) > 8) {
+            for (y in 0 until bounds.height()) for (x in 0 until bounds.width()) {
+                if ((cov[y * bounds.width() + x].toInt() and 0xFF) > 8) {
                     x0 = min(x0, x); y0 = min(y0, y); x1 = max(x1, x); y1 = max(y1, y)
                 }
             }
             if (x1 < x0) return@withContext null
-            val hole = Rect(tb.left + x0, tb.top + y0, tb.left + x1 + 1, tb.top + y1 + 1)
+            val hole = Rect(bounds.left + x0, bounds.top + y0, bounds.left + x1 + 1, bounds.top + y1 + 1)
             val span = max(hole.width(), hole.height())
-            if (span > 700) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
-            // Room around it to find a patch that matches
-            val margin = (span * 3.4f + 24f).roundToInt()
+            if (!ai && span > 700) throw IllegalStateException("That's a big area for spot healing: try AI Remove (or smaller strokes)")
+            // Room around it: to find a matching patch (healing) or to see what's there (AI)
+            val margin = if (ai) max(96, (span * 0.6f).roundToInt()) else (span * 3.4f + 24f).roundToInt()
             val region = Rect(hole).apply { inset(-margin, -margin) }
+            if (ai) {
+                // The model needs real pixels around the hole: keep it on the picture
+                val canvas = Rect(-lx, -ly, d.width - lx, d.height - ly)
+                if (!region.intersect(canvas)) return@withContext null
+            }
             val w = region.width()
             val h = region.height()
             val src = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }
@@ -155,15 +203,21 @@ internal fun EditorViewModel.finishSpotHeal(s: StrokeSession) {
                 val bmp = DocRenderer.renderLayers(copy.children(0L), canvasRegion, copy.width, copy.height, doc = copy)
                 IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h); bmp.recycle() }
             } else layerPx
-            val holeBytes = RetouchSession.readMask(buf, region)
+            val holeBytes = holeAt(region)
             if (sel != null) {
                 val sm = RetouchSession.readMask(sel.mask(), Rect(region).apply { offset(lx, ly) })
                 for (i in holeBytes.indices) holeBytes[i] = ((holeBytes[i].toInt() and 0xFF) * (sm[i].toInt() and 0xFF) / 255).toByte()
             }
-            val healed = Heal.heal(context, holeBytes, w, h)
+            val filled = if (ai) {
+                // A little past the painted edge, so no outline of the old thing is left
+                val grown = grow(holeBytes, w, h, 3)
+                val out = com.tim.quartzeditor.engine.MiGan.fill(ctx, context, grown, w, h)
+                for (i in holeBytes.indices) holeBytes[i] = grown[i]
+                out
+            } else Heal.heal(context, holeBytes, w, h)
             val out = IntArray(w * h) { i ->
                 val c = (holeBytes[i].toInt() and 0xFF) / 255f
-                if (c <= 0f) layerPx[i] else RetouchSession.mix(layerPx[i], healed[i], c, lockAlpha)
+                if (c <= 0f) layerPx[i] else RetouchSession.mix(layerPx[i], filled[i], c, lockAlpha)
             }
             region to out
         } ?: return@runBusy
@@ -183,7 +237,25 @@ internal fun EditorViewModel.finishSpotHeal(s: StrokeSession) {
         }
         bmp.recycle()
         if (saved.isEmpty()) return@runBusy
-        history.record(TilePatch(layer, grid, saved, "Spot healing"))
+        history.record(TilePatch(layer, grid, saved, label))
         d.touched(layer)
     }
+}
+
+/** [m] (0..255 per pixel) with everything set grown by [r] pixels, at full strength. */
+private fun grow(m: ByteArray, w: Int, h: Int, r: Int): ByteArray {
+    val on = BooleanArray(w * h) { (m[it].toInt() and 0xFF) > 8 }
+    val tmp = BooleanArray(w * h)
+    for (y in 0 until h) for (x in 0 until w) {
+        if (!on[y * w + x]) continue
+        for (dx in -r..r) { val xx = x + dx; if (xx in 0 until w) tmp[y * w + xx] = true }
+    }
+    val out = ByteArray(w * h)
+    for (y in 0 until h) for (x in 0 until w) {
+        if (!tmp[y * w + x]) continue
+        for (dy in -r..r) { val yy = y + dy; if (yy in 0 until h) out[yy * w + x] = 255.toByte() }
+    }
+    // Keep the soft painted edge where it's stronger
+    for (i in out.indices) if ((m[i].toInt() and 0xFF) > (out[i].toInt() and 0xFF)) out[i] = m[i]
+    return out
 }

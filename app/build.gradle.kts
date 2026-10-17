@@ -39,7 +39,102 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // The AI models are big and already compressed: keep them as they are in the app
+    androidResources {
+        noCompress += "onnx"
+    }
+
+    sourceSets["main"].assets.srcDir(rootProject.file("ai-models"))
 }
+
+// ===================================================================== on-device AI models
+//
+// Select Object (MobileSAM) and AI Remove (MI-GAN) run on the tablet with no internet. Their model
+// files are downloaded here, once per computer, when the app is built (into ai-models/, which Git
+// ignores and Clean leaves alone), and checked against their known SHA-256. Without internet the app still
+// builds; those two features then say the model isn't included.
+data class AiModel(val name: String, val url: String, val sha256: String)
+
+val aiModels = listOf(
+    AiModel(
+        "mobile_sam_image_encoder.onnx",
+        "https://huggingface.co/Acly/MobileSAM/resolve/0d3b403339b4674a82493d5e97964dd78089ddc8/mobile_sam_image_encoder.onnx",
+        "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
+    ),
+    AiModel(
+        "sam_mask_decoder_single.onnx",
+        "https://huggingface.co/Acly/MobileSAM/resolve/0d3b403339b4674a82493d5e97964dd78089ddc8/sam_mask_decoder_single.onnx",
+        "93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d",
+    ),
+    AiModel(
+        "migan_pipeline_v2.onnx",
+        "https://huggingface.co/andraniksargsyan/migan/resolve/1538c135034b8cfe7a8472f34d09c8a5a45b17a7/migan_pipeline_v2.onnx",
+        "6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b",
+    ),
+)
+
+val downloadAiModels by tasks.registering {
+    description = "Downloads the on-device AI models (once) into ai-models/models."
+    val dir = rootProject.file("ai-models/models")
+    val models = aiModels
+    outputs.dir(dir)
+    outputs.upToDateWhen { models.all { File(dir, it.name).isFile } }
+    doLast {
+        dir.mkdirs()
+        fun sha(f: File): String {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            f.inputStream().use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            return md.digest().joinToString("") { "%02x".format(it) }
+        }
+        for (m in models) {
+            val target = File(dir, m.name)
+            if (target.isFile && sha(target) == m.sha256) continue
+            val tmp = File(dir, m.name + ".part")
+            try {
+                logger.lifecycle("Downloading AI model ${m.name}…")
+                var url = java.net.URL(m.url)
+                lateinit var conn: java.net.HttpURLConnection
+                var hops = 0
+                // Follow the download's redirects (Hugging Face sends you on to its file servers)
+                while (true) {
+                    conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.instanceFollowRedirects = false
+                    conn.connectTimeout = 30_000
+                    conn.readTimeout = 120_000
+                    val code = conn.responseCode
+                    if (code in 300..399 && hops++ < 8) {
+                        url = java.net.URL(url, conn.getHeaderField("Location"))
+                        conn.disconnect()
+                        continue
+                    }
+                    if (code != 200) throw GradleException("HTTP $code")
+                    break
+                }
+                conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                val got = sha(tmp)
+                if (got != m.sha256) {
+                    tmp.delete()
+                    throw GradleException("checksum didn't match ($got)")
+                }
+                if (target.exists()) target.delete()
+                tmp.renameTo(target)
+            } catch (e: Exception) {
+                tmp.delete()
+                logger.warn("Couldn't download AI model ${m.name}: ${e.message}. The app builds without it (Select Object / AI Remove will say so).")
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(downloadAiModels) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
@@ -64,4 +159,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     // Face-aware Liquify (runs in Google Play services, like subject segmentation)
     implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
+
+    // Runs the bundled AI models (Select Object, AI Remove) on the device
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 }
