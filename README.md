@@ -50,7 +50,7 @@ right (the arrow button at the bottom right); on tablets and the unfolded Fold t
 and the same button hides them.
 
 ### Toolbar
-Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape, Custom shapes, Text, Brush/Eraser,
+Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape (hold for Custom shapes), Text, Brush/Eraser,
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
@@ -129,7 +129,7 @@ the list; the button shows the one you used last.
   and gears, square teeth at 100%), and "same width and height". New shapes always
   start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
   layer selected, Properties changes that shape.
-- **Custom shapes** (the button under Shape) — the shape library in Properties: hearts, stars, speech and
+- **Custom shapes** (hold the Shape tool → Custom shapes; tap Shape again to go back) — the shape library in Properties: hearts, stars, speech and
   thought bubbles, clouds, arrows, check marks, rings and frames, pins, tags, ribbons, badges and bursts,
   cogs and more. Pick one and drag on the picture ("Keep its proportions" keeps its shape). **Add an
   .svg…** adds your own (paths, rectangles, circles, polygons, groups and transforms; its colors aren't
@@ -166,6 +166,11 @@ the list; the button shows the one you used last.
   down on them to swap.
 
 ### On the picture
+- **Cut, copy, paste** — the button at the bottom left (or Ctrl+X / C / V). Copy takes what's selected on
+  the layer (or the whole layer with nothing selected) as you see it on that layer; **Copy merged** (Ctrl+Shift+C)
+  takes everything you see. **Paste** puts it on a new layer right where it came from (in the middle if
+  that's off the canvas) and picks Move to place it; it pastes pictures copied in other apps too. Cut takes
+  the selected pixels away (or the whole layer). Also New layer via copy / cut, Select all, Deselect.
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
 - **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it
   for **Shift** (the button fills with your accent color), slide out past its edge for **Alt** (the emblem turns the accent color), double-tap to keep Shift on. A keyboard's Shift and

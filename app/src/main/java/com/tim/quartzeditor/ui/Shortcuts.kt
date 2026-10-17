@@ -86,7 +86,10 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             KeyEvent.KEYCODE_Y -> redo()
             KeyEvent.KEYCODE_T -> onToolButton(Tool.TRANSFORM)
             // Ctrl+Shift+X: Liquify (like Photoshop)
-            KeyEvent.KEYCODE_X -> if (shift) chooseWarp(com.tim.quartzeditor.engine.WarpKind.LIQUIFY) else return false
+            KeyEvent.KEYCODE_X -> if (shift) chooseWarp(com.tim.quartzeditor.engine.WarpKind.LIQUIFY) else cutPixels()
+            // Ctrl+C copy (Ctrl+Shift+C: copy merged), Ctrl+V paste
+            KeyEvent.KEYCODE_C -> copyPixels(merged = shift)
+            KeyEvent.KEYCODE_V -> pastePixels()
             KeyEvent.KEYCODE_D -> deselect()
             KeyEvent.KEYCODE_A -> selectAll()
             KeyEvent.KEYCODE_I -> if (shift) invertSelection() else return false

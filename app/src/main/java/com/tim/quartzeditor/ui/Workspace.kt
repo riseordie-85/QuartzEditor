@@ -47,6 +47,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.FitScreen
+import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -233,6 +237,9 @@ fun Workspace(vm: EditorViewModel) {
                 WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
+
+                // Cut, copy, paste
+                EditButton(vm, Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp))
 
                 // The on-screen Shift / Alt
                 ModifierButton(vm)
@@ -441,6 +448,31 @@ fun BusyOverlay(label: String?) {
             CircularProgressIndicator(color = Q.accent)
             Spacer(Modifier.height(12.dp))
             Text(label, color = Q.text)
+        }
+    }
+}
+
+/** Bottom left of the picture: Cut, Copy, Paste and friends. */
+@Composable
+private fun EditButton(vm: EditorViewModel, modifier: Modifier) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        RoundButton(Icons.Outlined.ContentPaste, "Cut, copy, paste") { open = true }
+        PagedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val d = vm.doc
+            val sel = d?.selection?.isEmpty == false
+            Label(if (sel) "What's selected on \"${d?.active?.props?.name ?: ""}\"" else "The whole layer \"${d?.active?.props?.name ?: ""}\" (select part of it to copy just that)")
+            Item("Cut", Icons.Outlined.ContentCut) { vm.cutPixels() }
+            Item("Copy", Icons.Outlined.ContentCopy) { vm.copyPixels() }
+            Item("Copy merged (everything you see)", Icons.Outlined.Layers) { vm.copyPixels(merged = true) }
+            Item("Paste", Icons.Outlined.ContentPaste, enabled = vm.clip != null || vm.otherAppHasImage()) { vm.pastePixels() }
+            if (vm.clip != null && vm.otherAppHasImage()) Item("Paste from another app", Icons.Outlined.Image) { vm.pasteFromOtherApp() }
+            Divider()
+            Item("New layer via copy", enabled = sel) { vm.selectionToLayer(cut = false) }
+            Item("New layer via cut", enabled = sel) { vm.selectionToLayer(cut = true) }
+            Divider()
+            Item("Select all") { vm.selectAll() }
+            Item("Deselect", enabled = sel) { vm.deselect() }
         }
     }
 }

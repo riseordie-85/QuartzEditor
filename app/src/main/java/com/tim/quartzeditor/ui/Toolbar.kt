@@ -253,10 +253,12 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             val custom = vm.shapeKind == com.tim.quartzeditor.engine.ShapeKind.CUSTOM
             val basic = if (custom) vm.lastBasicShape else vm.shapeKind
             ToolButton(
-                shapeIcon(basic), "Shape: ${basic.label} (tap again for the next shape, hold for all)", t == Tool.SHAPE && !custom, buttonSize,
-                options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } },
-            ) { if (custom) vm.chooseShapeKind(basic) else vm.onToolButton(Tool.SHAPE) }
-            ToolButton(Icons.Outlined.Interests, "Custom shapes (the shape library, and your .svg files)", t == Tool.SHAPE && custom, buttonSize) { vm.chooseCustomShapes() }
+                if (custom) Icons.Outlined.Interests else shapeIcon(basic),
+                if (custom) "Custom shapes (tap again for the Shape tool's shapes, hold for all)" else "Shape: ${basic.label} (tap again for the next shape, hold for all and Custom shapes)",
+                t == Tool.SHAPE, buttonSize,
+                options = SHAPE_CHOICES.map { k -> ToolOption(shapeIcon(k), k.label, t == Tool.SHAPE && vm.shapeKind == k) { vm.chooseShapeKind(k) } } +
+                    ToolOption(Icons.Outlined.Interests, "Custom shapes (library and .svg)", t == Tool.SHAPE && custom, divider = true) { vm.chooseCustomShapes() },
+            ) { vm.onToolButton(Tool.SHAPE) }
             // 10. Text
             ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
             // 11. Brush / Eraser

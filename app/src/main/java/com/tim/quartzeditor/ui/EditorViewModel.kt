@@ -408,6 +408,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var message by mutableStateOf<String?>(null)
     /** After opening a Photoshop file: its name and what didn't come across exactly (shown once). */
     var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
+    /** What Copy or Cut last took (ClipboardActions.kt). */
+    var clip by mutableStateOf<ClipItem?>(null)
     /** A very big Photoshop file waiting for "Open anyway" (its address and size in bytes). */
     var bigPsdAsk by mutableStateOf<Pair<android.net.Uri, Long>?>(null)
     /** The picture's main colors (for the layer style color swatches), and what they were worked out from. */
