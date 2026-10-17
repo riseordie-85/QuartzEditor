@@ -44,7 +44,9 @@ enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Propert
 
 /** Floating windows opened from the bottom of the Layers panel. */
 enum class PopupKind(val title: String) {
-    STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), LEVELS("Levels"), CURVES("Curves"), BLUR("Gaussian Blur"), FILTERS("Filters");
+    STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), LEVELS("Levels"), CURVES("Curves"), BLUR("Gaussian Blur"), FILTERS("Filters"),
+    HUE_SAT("Hue/Saturation"), COLOR_BALANCE("Color Balance"), BLACK_WHITE("Black & White"), PHOTO_FILTER("Photo Filter"),
+    GRADIENT_MAP("Gradient Map"), VIBRANCE("Vibrance");
 
     /** Changes pixels (or an adjustment layer), as opposed to Layer Style. */
     val isFx: Boolean get() = this != STYLE
@@ -56,6 +58,12 @@ enum class PopupKind(val title: String) {
             com.tim.quartzeditor.engine.FxKind.LEVELS -> LEVELS
             com.tim.quartzeditor.engine.FxKind.CURVES -> CURVES
             com.tim.quartzeditor.engine.FxKind.BLUR -> BLUR
+            com.tim.quartzeditor.engine.FxKind.HUE_SAT -> HUE_SAT
+            com.tim.quartzeditor.engine.FxKind.COLOR_BALANCE -> COLOR_BALANCE
+            com.tim.quartzeditor.engine.FxKind.BLACK_WHITE -> BLACK_WHITE
+            com.tim.quartzeditor.engine.FxKind.PHOTO_FILTER -> PHOTO_FILTER
+            com.tim.quartzeditor.engine.FxKind.GRADIENT_MAP -> GRADIENT_MAP
+            com.tim.quartzeditor.engine.FxKind.VIBRANCE -> VIBRANCE
         }
     }
 }
@@ -649,7 +657,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         popup = k
-        if (k == PopupKind.FILTERS || k == PopupKind.LEVELS || k == PopupKind.CURVES) fxThumb = null
+        if (k == PopupKind.FILTERS || k == PopupKind.LEVELS || k == PopupKind.CURVES || k == PopupKind.GRADIENT_MAP) fxThumb = null
     }
 
     /** Closes the floating window; adjustments being tried on a pixel layer are dropped. */

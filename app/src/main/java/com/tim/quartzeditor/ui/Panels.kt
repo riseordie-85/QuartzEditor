@@ -190,6 +190,12 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 PopupKind.LEVELS -> LevelsPanel(vm)
                 PopupKind.CURVES -> CurvesPanel(vm)
                 PopupKind.BLUR -> BlurPanel(vm)
+                PopupKind.HUE_SAT -> HueSatPanel(vm)
+                PopupKind.COLOR_BALANCE -> ColorBalancePanel(vm)
+                PopupKind.BLACK_WHITE -> BlackWhitePanel(vm)
+                PopupKind.PHOTO_FILTER -> PhotoFilterPanel(vm)
+                PopupKind.GRADIENT_MAP -> GradientMapPanel(vm)
+                PopupKind.VIBRANCE -> VibrancePanel(vm)
             }
         }
     }
@@ -515,7 +521,14 @@ internal fun AdjustPanel(vm: EditorViewModel) {
 
 @Composable
 internal fun FxButtons(vm: EditorViewModel) {
-    if (vm.pendingFx == null || vm.fxTarget != null) return
+    val target = vm.fxTarget
+    if (target != null) {
+        // An adjustment layer: clip it to the layer below so it only changes that one
+        Spacer(Modifier.height(6.dp))
+        ToggleRow("Clip to the layer below (only changes it)", target.props.clip) { vm.onLayer(target.id) { toggleClip() } }
+        return
+    }
+    if (vm.pendingFx == null) return
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SmallButton("Cancel", Modifier.weight(1f)) { vm.cancelFx() }

@@ -333,7 +333,7 @@ private fun FxSlider(
 
 /** Swatches: your foreground and background colors, recent colors, then the basics. */
 @Composable
-private fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
+internal fun FxColor(vm: EditorViewModel, current: Int, onPick: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Color", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(48.dp))
         Box(

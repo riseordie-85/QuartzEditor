@@ -147,6 +147,7 @@ fun EditorViewModel.applyFx(onDone: () -> Unit = {}) {
                 fx.kind == com.tim.quartzeditor.engine.FxKind.LEVELS -> "Levels"
                 fx.kind == com.tim.quartzeditor.engine.FxKind.CURVES -> "Curves"
                 fx.kind == com.tim.quartzeditor.engine.FxKind.BLUR -> "Gaussian Blur"
+                fx.kind != com.tim.quartzeditor.engine.FxKind.ADJUST -> PopupKind.forKind(fx.kind).title
                 else -> "Adjustments"
             }
             stackEdit(label) { l.tiles = grid }

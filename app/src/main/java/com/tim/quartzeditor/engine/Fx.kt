@@ -92,6 +92,11 @@ data class FxParams(
     val curves: Curves? = null,
     /** Gaussian blur radius in canvas pixels (0 = none). */
     val blur: Float = 0f,
+    val hueSat: HueSat? = null,
+    val colorBalance: ColorBalance? = null,
+    val blackWhite: BlackWhite? = null,
+    val photoFilter: PhotoFilter? = null,
+    val gradientMap: GradientMap? = null,
 ) {
     fun adjust(a: Adjust): Float = adjust[a] ?: 0f
 
@@ -99,7 +104,12 @@ data class FxParams(
     val hasTone: Boolean get() = (levels?.isIdentity == false) || (curves?.isIdentity == false)
 
     val isIdentity: Boolean
-        get() = filter == FilterPreset.NONE && adjust.values.all { it == 0f } && !hasTone && blur <= 0f
+        get() = filter == FilterPreset.NONE && adjust.values.all { it == 0f } && !hasTone && blur <= 0f && !hasColor
+
+    /** One of the Photoshop-style color adjustments changes something. */
+    val hasColor: Boolean
+        get() = (hueSat?.isIdentity == false) || (colorBalance?.isIdentity == false) || blackWhite != null ||
+            (photoFilter?.isIdentity == false) || gradientMap != null
 
     /** Vignette strength 0..1 (slider plus the filter's own). */
     val vignette: Float
@@ -118,6 +128,11 @@ data class FxParams(
             .put("blur", blur.toDouble())
             .also { o -> levels?.let { o.put("levels", it.toJson()) } }
             .also { o -> curves?.let { o.put("curves", it.toJson()) } }
+            .also { o -> hueSat?.let { o.put("hueSat", it.toJson()) } }
+            .also { o -> colorBalance?.let { o.put("colorBalance", it.toJson()) } }
+            .also { o -> blackWhite?.let { o.put("blackWhite", it.toJson()) } }
+            .also { o -> photoFilter?.let { o.put("photoFilter", it.toJson()) } }
+            .also { o -> gradientMap?.let { o.put("gradientMap", it.toJson()) } }
     }
 
     companion object {
@@ -136,6 +151,11 @@ data class FxParams(
                 levels = runCatching { Levels.fromJson(o.optJSONArray("levels")) }.getOrNull(),
                 curves = runCatching { Curves.fromJson(o.optJSONArray("curves")) }.getOrNull(),
                 blur = o.optDouble("blur", 0.0).toFloat(),
+                hueSat = runCatching { HueSat.fromJson(o.optJSONObject("hueSat")) }.getOrNull(),
+                colorBalance = runCatching { ColorBalance.fromJson(o.optJSONObject("colorBalance")) }.getOrNull(),
+                blackWhite = runCatching { BlackWhite.fromJson(o.optJSONObject("blackWhite")) }.getOrNull(),
+                photoFilter = runCatching { PhotoFilter.fromJson(o.optJSONObject("photoFilter")) }.getOrNull(),
+                gradientMap = runCatching { GradientMap.fromJson(o.optJSONObject("gradientMap")) }.getOrNull(),
             )
         }
     }
@@ -269,7 +289,23 @@ object Gpu {
  * place that draws (preview, each filter thumbnail, export).
  */
 class ColorShader {
-    private val shader = RuntimeShader(AGSL)
+    private val shader: RuntimeShader
+    /** Whether this device's GPU took the full shader (with the color adjustments). */
+    private val full: Boolean
+
+    init {
+        var ok = true
+        shader = try {
+            RuntimeShader(AGSL)
+        } catch (e: Exception) {
+            // Never lose the basic adjustments over the newer ones: fall back, and say why in the log
+            android.util.Log.e("QuartzShader", "Color adjustments shader failed: ${e.message}")
+            ok = false
+            colorSupported = false
+            RuntimeShader(AGSL_BASIC)
+        }
+        full = ok
+    }
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private var bound: Bitmap? = null
 
@@ -307,8 +343,59 @@ class ColorShader {
         shader.setInputShader("lut", s)
     }
 
+    private var gmapKey: Any? = Unit
+
+    /** The gradient map's lookup table (a plain one when there's none). */
+    private fun bindGradientMap(state: FxParams) {
+        val key: Any? = state.gradientMap
+        if (key == gmapKey) return
+        gmapKey = key
+        val bmp = state.gradientMap?.lut() ?: IDENTITY_LUT
+        val s = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        s.filterMode = BitmapShader.FILTER_MODE_LINEAR
+        shader.setInputShader("gmap", s)
+    }
+
+    private fun setColorUniforms(state: FxParams) {
+        if (!full) return
+        bindGradientMap(state)
+        val hs = state.hueSat?.takeUnless { it.isIdentity }
+        shader.setFloatUniform("useHS", if (hs != null) 1f else 0f)
+        val m = hs?.master ?: HueShift()
+        shader.setFloatUniform("hsMaster", m.hue, m.sat, m.light)
+        for (i in 0 until 6) {
+            val b = hs?.bands?.getOrNull(i) ?: HueShift()
+            shader.setFloatUniform("hsBand$i", b.hue, b.sat, b.light)
+        }
+        shader.setFloatUniform("hsColorize", if (hs?.colorize == true) 1f else 0f, (hs?.colorHue ?: 0f) / 360f, hs?.colorSat ?: 0f)
+        val cb = state.colorBalance?.takeUnless { it.isIdentity }
+        shader.setFloatUniform("useCB", if (cb != null) 1f else 0f)
+        val cbs = cb?.shadows ?: ColorShift()
+        val cbm = cb?.midtones ?: ColorShift()
+        val cbh = cb?.highlights ?: ColorShift()
+        shader.setFloatUniform("cbS", cbs.cyanRed, cbs.magentaGreen, cbs.yellowBlue)
+        shader.setFloatUniform("cbM", cbm.cyanRed, cbm.magentaGreen, cbm.yellowBlue)
+        shader.setFloatUniform("cbH", cbh.cyanRed, cbh.magentaGreen, cbh.yellowBlue)
+        shader.setFloatUniform("cbPreserve", if (cb?.preserveLuminosity == true) 1f else 0f)
+        val bw = state.blackWhite
+        shader.setFloatUniform("useBW", if (bw != null) 1f else 0f)
+        val w = bw?.weights ?: BlackWhite.DEFAULT_WEIGHTS
+        shader.setFloatUniform("bwA", w[0], w[1], w[2])
+        shader.setFloatUniform("bwB", w[3], w[4], w[5])
+        val tc = bw?.tintColor ?: Color.WHITE
+        shader.setFloatUniform("bwTint", if (bw?.tint == true) 1f else 0f)
+        shader.setFloatUniform("bwTintColor", Color.red(tc) / 255f, Color.green(tc) / 255f, Color.blue(tc) / 255f)
+        val pf = state.photoFilter?.takeUnless { it.isIdentity }
+        val pc = pf?.color ?: Color.WHITE
+        shader.setFloatUniform("pfColor", Color.red(pc) / 255f, Color.green(pc) / 255f, Color.blue(pc) / 255f)
+        shader.setFloatUniform("pfDensity", pf?.density ?: 0f)
+        shader.setFloatUniform("pfPreserve", if (pf?.preserveLuminosity == true) 1f else 0f)
+        shader.setFloatUniform("useGM", if (state.gradientMap != null) 1f else 0f)
+    }
+
     private fun setUniforms(state: FxParams, unit: Float) {
         bindLut(state)
+        setColorUniforms(state)
         shader.setFloatUniform("useLut", if (state.hasTone) 1f else 0f)
         val strength = if (state.filter == FilterPreset.NONE) 0f else state.filterStrength
         shader.setFloatUniform("unit", unit)
@@ -338,10 +425,15 @@ class ColorShader {
     }
 
     companion object {
+        /** False when this device couldn't run the color adjustments (they then change nothing). */
+        @Volatile
+        var colorSupported = true
+            private set
+
         /** Lookup table that changes nothing. */
         private val IDENTITY_LUT: Bitmap by lazy { Tone.lut(null, null) }
 
-        private const val AGSL = """
+        private const val AGSL_BASIC = """
 uniform shader image;
 uniform shader lut;
 uniform float useLut;
@@ -422,6 +514,255 @@ half4 main(float2 p) {
     float vib = vibrance * (1.0 - clamp(sat, 0.0, 1.0));
     c = mix(float3(l2), c, 1.0 + saturationAmt + vib);
     c = clamp(c, 0.0, 1.0);
+
+    float3 f = float3(dot(fr.rgb, c) + fr.a, dot(fg.rgb, c) + fg.a, dot(fb.rgb, c) + fb.a);
+    if (duo > 0.5) {
+        f = mix(duoA, duoB, smoothstep(0.0, 1.0, clamp(luma(c), 0.0, 1.0)));
+    }
+    c = mix(c, f, fstrength);
+
+    if (grain > 0.0) {
+        float g = hash(floor(p / unit)) - 0.5;
+        c = c + g * grain * 0.18;
+    }
+
+    c = clamp(c, 0.0, 1.0);
+    return half4(half3(c * a), half(a));
+}
+"""
+
+        private const val AGSL = """
+uniform shader image;
+uniform shader lut;
+uniform float useLut;
+uniform float unit;
+uniform float exposure;
+uniform float brightness;
+uniform float contrastAmt;
+uniform float highlights;
+uniform float shadows;
+uniform float saturationAmt;
+uniform float vibrance;
+uniform float warmth;
+uniform float tintAmt;
+uniform float sharpness;
+uniform float grain;
+uniform float4 fr;
+uniform float4 fg;
+uniform float4 fb;
+uniform float fstrength;
+uniform float duo;
+uniform float3 duoA;
+uniform float3 duoB;
+uniform shader gmap;
+uniform float useHS;
+uniform float3 hsMaster;
+uniform float3 hsBand0;
+uniform float3 hsBand1;
+uniform float3 hsBand2;
+uniform float3 hsBand3;
+uniform float3 hsBand4;
+uniform float3 hsBand5;
+uniform float3 hsColorize;
+uniform float useCB;
+uniform float3 cbS;
+uniform float3 cbM;
+uniform float3 cbH;
+uniform float cbPreserve;
+uniform float useBW;
+uniform float3 bwA;
+uniform float3 bwB;
+uniform float bwTint;
+uniform float3 bwTintColor;
+uniform float3 pfColor;
+uniform float pfDensity;
+uniform float pfPreserve;
+uniform float useGM;
+
+float3 straight(float4 c) {
+    return c.a > 0.0 ? c.rgb / c.a : float3(0.0);
+}
+
+float luma(float3 c) {
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+float hash(float2 p) {
+    return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Hue 0..1, saturation, lightness
+float3 rgb2hsl(float3 c) {
+    float mx = max(c.r, max(c.g, c.b));
+    float mn = min(c.r, min(c.g, c.b));
+    float l = (mx + mn) * 0.5;
+    float d = mx - mn;
+    if (d < 0.00001) return float3(0.0, 0.0, l);
+    float s = l > 0.5 ? d / (2.0 - mx - mn) : d / (mx + mn);
+    float h = 0.0;
+    if (mx == c.r) h = (c.g - c.b) / d + (c.g < c.b ? 6.0 : 0.0);
+    else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+    else h = (c.r - c.g) / d + 4.0;
+    return float3(h / 6.0, s, l);
+}
+
+float hue2rgb(float p, float q, float t) {
+    t = fract(t);
+    if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+    if (t < 0.5) return q;
+    if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+    return p;
+}
+
+float3 hsl2rgb(float3 hsl) {
+    float s = hsl.y;
+    float l = hsl.z;
+    if (s <= 0.0) return float3(l);
+    float q = l < 0.5 ? l * (1.0 + s) : l + s - l * s;
+    float p = 2.0 * l - q;
+    return float3(hue2rgb(p, q, hsl.x + 1.0 / 3.0), hue2rgb(p, q, hsl.x), hue2rgb(p, q, hsl.x - 1.0 / 3.0));
+}
+
+// How much a hue (degrees) belongs to the range centered at [center]: all of it within 15°, none past 45°
+float bandWeight(float h, float center) {
+    float d = abs(mod(h - center + 540.0, 360.0) - 180.0);
+    return 1.0 - smoothstep(15.0, 45.0, d);
+}
+
+// Photoshop's non-separable blend helpers (Color / Luminosity)
+float lum3(float3 c) { return dot(c, float3(0.3, 0.59, 0.11)); }
+
+float3 clipColor(float3 c) {
+    float l = lum3(c);
+    float n = min(c.r, min(c.g, c.b));
+    float x = max(c.r, max(c.g, c.b));
+    if (n < 0.0) c = l + (c - l) * l / max(l - n, 0.00001);
+    if (x > 1.0) c = l + (c - l) * (1.0 - l) / max(x - l, 0.00001);
+    return c;
+}
+
+float3 setLum(float3 c, float l) {
+    return clipColor(c + (l - lum3(c)));
+}
+
+float3 hueSat(float3 c) {
+    float3 hsl = rgb2hsl(c);
+    if (hsColorize.x > 0.5) {
+        float3 o = hsl2rgb(float3(hsColorize.y, hsColorize.z, hsl.z));
+        float L = hsMaster.z;
+        return L >= 0.0 ? mix(o, float3(1.0), L) : o * (1.0 + L);
+    }
+    float hd = hsl.x * 360.0;
+    // Grays have no hue: the color ranges leave them alone
+    float colorful = clamp(hsl.y * 4.0, 0.0, 1.0);
+    float w0 = bandWeight(hd, 0.0) * colorful;
+    float w1 = bandWeight(hd, 60.0) * colorful;
+    float w2 = bandWeight(hd, 120.0) * colorful;
+    float w3 = bandWeight(hd, 180.0) * colorful;
+    float w4 = bandWeight(hd, 240.0) * colorful;
+    float w5 = bandWeight(hd, 300.0) * colorful;
+    float3 sh = hsMaster + hsBand0 * w0 + hsBand1 * w1 + hsBand2 * w2 + hsBand3 * w3 + hsBand4 * w4 + hsBand5 * w5;
+    float h = fract(hsl.x + sh.x * 0.5 + 1.0);
+    float s = clamp(sh.y >= 0.0 ? hsl.y * (1.0 + sh.y * 1.5) : hsl.y * (1.0 + sh.y), 0.0, 1.0);
+    float3 o = hsl2rgb(float3(h, s, hsl.z));
+    float L = sh.z;
+    return L >= 0.0 ? mix(o, float3(1.0), L) : o * (1.0 + L);
+}
+
+float3 colorBalance(float3 c) {
+    float l = clamp(luma(c), 0.0, 1.0);
+    float ws = 1.0 - smoothstep(0.0, 0.55, l);
+    float wh = smoothstep(0.45, 1.0, l);
+    float wm = clamp(1.0 - ws - wh, 0.0, 1.0);
+    float3 d = (cbS * ws + cbM * wm + cbH * wh) * 0.3;
+    // Toward one color is away from its opposite: keep the overall brightness about the same
+    float3 o = c + d - (d.r + d.g + d.b) / 3.0 * 0.5;
+    if (cbPreserve > 0.5) o = o + (luma(c) - luma(o));
+    return clamp(o, 0.0, 1.0);
+}
+
+float3 blackWhite(float3 c) {
+    float r = c.r;
+    float g = c.g;
+    float b = c.b;
+    float mx = max(r, max(g, b));
+    float mn = min(r, min(g, b));
+    float md = r + g + b - mx - mn;
+    // Each color is white + a two-channel color (yellow, cyan or magenta) + a one-channel color
+    float wp = 0.0;
+    float wsec = 0.0;
+    if (mx == r) {
+        wp = bwA.x;
+        wsec = (md == g) ? bwA.y : bwB.z;
+    } else if (mx == g) {
+        wp = bwA.z;
+        wsec = (md == r) ? bwA.y : bwB.x;
+    } else {
+        wp = bwB.y;
+        wsec = (md == g) ? bwB.x : bwB.z;
+    }
+    float gray = clamp(mn + (md - mn) * wsec + (mx - md) * wp, 0.0, 1.0);
+    if (bwTint > 0.5) return setLum(bwTintColor, gray);
+    return float3(gray);
+}
+
+float3 photoFilter(float3 c) {
+    float3 o = mix(c, c * pfColor * 1.6, pfDensity);
+    if (pfPreserve > 0.5) o = o + (luma(c) - luma(o));
+    return clamp(o, 0.0, 1.0);
+}
+
+half4 main(float2 p) {
+    float4 src = float4(image.eval(p));
+    float a = src.a;
+    float3 c = straight(src);
+
+    if (sharpness > 0.0) {
+        float3 n = straight(float4(image.eval(p + float2(unit, 0.0))))
+                 + straight(float4(image.eval(p - float2(unit, 0.0))))
+                 + straight(float4(image.eval(p + float2(0.0, unit))))
+                 + straight(float4(image.eval(p - float2(0.0, unit))));
+        c = c + (c - n * 0.25) * sharpness * 1.5;
+    }
+
+    // Levels and Curves
+    if (useLut > 0.5) {
+        c = clamp(c, 0.0, 1.0);
+        c = float3(
+            lut.eval(float2(c.r * 255.0 + 0.5, 0.5)).r,
+            lut.eval(float2(c.g * 255.0 + 0.5, 0.5)).g,
+            lut.eval(float2(c.b * 255.0 + 0.5, 0.5)).b
+        );
+    }
+
+    c = c * exp2(exposure * 2.0);
+    c = c + brightness * 0.25;
+
+    float k = contrastAmt >= 0.0 ? 1.0 + contrastAmt : 1.0 + contrastAmt * 0.7;
+    c = (c - 0.5) * k + 0.5;
+
+    float l = clamp(luma(c), 0.0, 1.0);
+    float ws = 1.0 - smoothstep(0.0, 0.6, l);
+    float wh = smoothstep(0.4, 1.0, l);
+    c = c + shadows * 0.35 * ws + highlights * 0.35 * wh;
+
+    c.r = c.r + warmth * 0.08;
+    c.b = c.b - warmth * 0.08;
+    c.g = c.g - tintAmt * 0.06;
+    c.r = c.r + tintAmt * 0.03;
+    c.b = c.b + tintAmt * 0.03;
+
+    float l2 = luma(c);
+    float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+    float vib = vibrance * (1.0 - clamp(sat, 0.0, 1.0));
+    c = mix(float3(l2), c, 1.0 + saturationAmt + vib);
+    c = clamp(c, 0.0, 1.0);
+
+    if (useHS > 0.5) c = clamp(hueSat(c), 0.0, 1.0);
+    if (useCB > 0.5) c = colorBalance(c);
+    if (pfDensity > 0.0) c = photoFilter(c);
+    if (useBW > 0.5) c = blackWhite(c);
+    if (useGM > 0.5) c = float3(gmap.eval(float2(clamp(luma(c), 0.0, 1.0) * 255.0 + 0.5, 0.5)).rgb);
 
     float3 f = float3(dot(fr.rgb, c) + fr.a, dot(fg.rgb, c) + fg.a, dot(fb.rgb, c) + fb.a);
     if (duo > 0.5) {

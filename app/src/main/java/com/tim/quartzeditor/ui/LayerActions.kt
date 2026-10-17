@@ -94,6 +94,12 @@ fun EditorViewModel.addAdjustmentLayer(kind: com.tim.quartzeditor.engine.FxKind 
         com.tim.quartzeditor.engine.FxKind.LEVELS -> "Levels" to FxParams(kind = kind, levels = com.tim.quartzeditor.engine.Levels())
         com.tim.quartzeditor.engine.FxKind.CURVES -> "Curves" to FxParams(kind = kind, curves = com.tim.quartzeditor.engine.Curves())
         com.tim.quartzeditor.engine.FxKind.BLUR -> "Blur" to FxParams(kind = kind, blur = 8f)
+        com.tim.quartzeditor.engine.FxKind.HUE_SAT -> "Hue/Saturation" to FxParams(kind = kind, hueSat = com.tim.quartzeditor.engine.HueSat())
+        com.tim.quartzeditor.engine.FxKind.COLOR_BALANCE -> "Color Balance" to FxParams(kind = kind, colorBalance = com.tim.quartzeditor.engine.ColorBalance())
+        com.tim.quartzeditor.engine.FxKind.BLACK_WHITE -> "Black & White" to FxParams(kind = kind, blackWhite = com.tim.quartzeditor.engine.BlackWhite())
+        com.tim.quartzeditor.engine.FxKind.PHOTO_FILTER -> "Photo Filter" to FxParams(kind = kind, photoFilter = com.tim.quartzeditor.engine.PhotoFilter())
+        com.tim.quartzeditor.engine.FxKind.GRADIENT_MAP -> "Gradient Map" to FxParams(kind = kind, gradientMap = com.tim.quartzeditor.engine.GradientMap(listOf(foreground or 0xFF000000.toInt(), background or 0xFF000000.toInt())))
+        com.tim.quartzeditor.engine.FxKind.VIBRANCE -> "Vibrance" to FxParams(kind = kind)
     }
     stackEdit("New $name layer") {
         val (at, parent) = insertPoint(d)

@@ -11,7 +11,7 @@ import kotlin.math.sqrt
 // adjustments shader reads, so they cost the same however many points or channels you change.
 
 /** Which adjustment an adjustment layer (or a window) is about. */
-enum class FxKind { ADJUST, LEVELS, CURVES, BLUR }
+enum class FxKind { ADJUST, LEVELS, CURVES, BLUR, HUE_SAT, COLOR_BALANCE, BLACK_WHITE, PHOTO_FILTER, GRADIENT_MAP, VIBRANCE }
 
 /** Channels in Levels and Curves: all three together, or one. */
 enum class ToneChannel(val label: String) { RGB("RGB"), RED("Red"), GREEN("Green"), BLUE("Blue") }

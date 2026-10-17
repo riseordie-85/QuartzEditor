@@ -46,6 +46,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.BlurOn
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Gradient
+import androidx.compose.material.icons.outlined.PhotoFilter
+import androidx.compose.material.icons.outlined.FilterBAndW
+import androidx.compose.material.icons.outlined.Balance
+import androidx.compose.material.icons.outlined.ColorLens
 import com.tim.quartzeditor.engine.FxKind
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -314,7 +320,10 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     }
                     HorizontalDivider()
                     Text(if (active?.isAdjustment == true) "Edit this adjustment layer" else "On this layer", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    listOf(PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.BLUR, PopupKind.FILTERS).forEach { k ->
+                    listOf(
+                        PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.HUE_SAT, PopupKind.COLOR_BALANCE,
+                        PopupKind.VIBRANCE, PopupKind.BLACK_WHITE, PopupKind.PHOTO_FILTER, PopupKind.GRADIENT_MAP, PopupKind.BLUR, PopupKind.FILTERS,
+                    ).forEach { k ->
                         DropdownMenuItem(text = { Text("${k.title}…") }, onClick = { adj = false; vm.openPopup(k) })
                     }
                 }
@@ -572,6 +581,12 @@ private val FX_KIND_LABELS = mapOf(
     FxKind.LEVELS to "Levels",
     FxKind.CURVES to "Curves",
     FxKind.BLUR to "Gaussian Blur",
+    FxKind.HUE_SAT to "Hue/Saturation",
+    FxKind.COLOR_BALANCE to "Color Balance",
+    FxKind.BLACK_WHITE to "Black & White",
+    FxKind.PHOTO_FILTER to "Photo Filter",
+    FxKind.GRADIENT_MAP to "Gradient Map",
+    FxKind.VIBRANCE to "Vibrance",
 )
 
 internal fun fxKindIcon(k: FxKind): ImageVector = when (k) {
@@ -579,6 +594,12 @@ internal fun fxKindIcon(k: FxKind): ImageVector = when (k) {
     FxKind.LEVELS -> Icons.Outlined.BarChart
     FxKind.CURVES -> Icons.Outlined.ShowChart
     FxKind.BLUR -> Icons.Outlined.BlurOn
+    FxKind.HUE_SAT -> Icons.Outlined.ColorLens
+    FxKind.COLOR_BALANCE -> Icons.Outlined.Balance
+    FxKind.BLACK_WHITE -> Icons.Outlined.FilterBAndW
+    FxKind.PHOTO_FILTER -> Icons.Outlined.PhotoFilter
+    FxKind.GRADIENT_MAP -> Icons.Outlined.Gradient
+    FxKind.VIBRANCE -> Icons.Outlined.AutoAwesome
 }
 
 /**
