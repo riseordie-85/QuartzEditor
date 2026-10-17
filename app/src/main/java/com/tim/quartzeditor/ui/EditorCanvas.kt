@@ -722,11 +722,15 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 nc.translate(ox, oy)
                 nc.scale(s, s)
                 val visible = RectF(-ox / s, -oy / s, (size.width - ox) / s, (size.height - oy) / s)
-                DocRenderer.draw(
-                    nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
-                    view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
-                    viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
-                )
+                // Zoomed out, smaller copies of the tiles are drawn; any not made yet follow in the next frames
+                val more = com.tim.quartzeditor.engine.TileLod.drawing(s) {
+                    DocRenderer.draw(
+                        nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
+                        view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
+                        viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
+                    )
+                }
+                if (more) lodHandler.post { if (vm.doc === d) d.invalidate() }
                 nc.restore()
             }
             // Alignment grid
@@ -1178,3 +1182,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropQuad(q: Lis
         drawCircle(Q.accent, hs - 2.5f * line, c)
     }
 }
+
+/** Asks for another frame (after this one is drawn) while zoomed-out tile copies are still being made. */
+private val lodHandler = android.os.Handler(android.os.Looper.getMainLooper())

@@ -94,6 +94,7 @@ fun Workspace(vm: EditorViewModel) {
     var gridOpen by remember { mutableStateOf(false) }
     var guideOpen by remember { mutableStateOf(false) }
     var editGuidesOpen by remember { mutableStateOf(false) }
+    var imageSizeOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
 
@@ -160,6 +161,9 @@ fun Workspace(vm: EditorViewModel) {
                                 Item("Close without saving…") { discardOpen = true }
                             }
                             Page("Image", Icons.Outlined.Image) {
+                                Label("${vm.doc?.width ?: 0} × ${vm.doc?.height ?: 0} px")
+                                Item("Image size…") { imageSizeOpen = true }
+                                Divider()
                                 Item("Rotate 90° right") { vm.rotateImage(clockwise = true) }
                                 Item("Rotate 90° left") { vm.rotateImage(clockwise = false) }
                                 Item("Flip horizontally") { vm.flipImage(horizontal = true) }
@@ -348,6 +352,7 @@ fun Workspace(vm: EditorViewModel) {
     RasterizeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
     if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
+    if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
     if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
         editGuidesOpen = false
         guideOpen = true

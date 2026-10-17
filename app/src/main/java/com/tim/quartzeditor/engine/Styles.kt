@@ -183,6 +183,17 @@ data class LayerStyle(
         get() = (dropShadow.on && dropShadow.blend != Blend.NORMAL) || (outerGlow.on && outerGlow.blend != Blend.NORMAL) ||
             (longShadow.on && longShadow.blend != Blend.NORMAL)
 
+    /** The same look on a picture resized by [k]: widths, distances, sizes and the pattern's size scale with it. */
+    fun scaled(k: Float): LayerStyle = copy(
+        stroke = stroke.copy(size = stroke.size * k),
+        dropShadow = dropShadow.copy(distance = dropShadow.distance * k, size = dropShadow.size * k),
+        innerShadow = innerShadow.copy(distance = innerShadow.distance * k, size = innerShadow.size * k),
+        outerGlow = outerGlow.copy(size = outerGlow.size * k),
+        bevel = bevel.copy(size = bevel.size * k, soften = bevel.soften * k),
+        longShadow = longShadow.copy(length = longShadow.length * k),
+        patternOverlay = patternOverlay.copy(scale = patternOverlay.scale * k),
+    )
+
     val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on || gradientFill.on || longShadow.on || patternOverlay.on
 
     /**

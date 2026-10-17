@@ -88,11 +88,23 @@ class TileGrid(val alphaOnly: Boolean) {
         // neighboring tiles don't add up to solid, which shows as faint lines across the picture.
         // (New Paints are anti-aliased by default.)
         val p = if (paint == null) PLAIN else if (paint.isAntiAlias) Paint(paint).apply { isAntiAlias = false } else paint
+        // Zoomed out on screen: smaller copies of the tiles (the GPU holds far less, so big
+        // pictures with many layers stay smooth)
+        val level = TileLod.level()
+        var scaled: Paint? = null
+        val dst = if (level > 0) RectF() else null
         for ((k, bmp) in tiles) {
             val x = dx + tx(k) * SIZE
             val y = dy + ty(k) * SIZE
             if (visible != null && (x > visible.right || y > visible.bottom || x + SIZE < visible.left || y + SIZE < visible.top)) continue
-            canvas.drawBitmap(bmp, x, y, p)
+            val small = if (level > 0) TileLod.get(bmp, level) else null
+            if (small != null && dst != null) {
+                val sp = scaled ?: (if (p.isFilterBitmap) p else Paint(p).apply { isFilterBitmap = true }).also { scaled = it }
+                dst.set(x, y, x + SIZE, y + SIZE)
+                canvas.drawBitmap(small, null, dst, sp)
+            } else {
+                canvas.drawBitmap(bmp, x, y, p)
+            }
         }
     }
 
@@ -168,4 +180,86 @@ class TileGrid(val alphaOnly: Boolean) {
             }
         }
     }
+}
+
+/**
+ * Half- and quarter-size copies of tiles, drawn instead of the full tiles when the picture is
+ * zoomed out on screen. A 3000×4000 layer is 48 MB of full-size tiles; at the half size it's 12 MB,
+ * so many layers fit in the GPU's memory at once instead of being sent again every frame.
+ *
+ * Only the screen's draw pass uses them ([drawing] sets the zoom for the main thread); exports,
+ * merges and everything else always draw the full tiles. Copies follow their tile's pixels
+ * ([Bitmap.getGenerationId]) and go away with it.
+ */
+object TileLod {
+    private val zoom = ThreadLocal<Float?>()
+
+    /** Copies made in this frame so far, and whether some were left for the next one. */
+    private var madeThisFrame = 0
+    private var leftOver = false
+
+    /** At most this many copies are made in one frame, so zooming out never stalls (the rest follow). */
+    private const val PER_FRAME = 24
+
+    private class Copy(val generation: Int, val bitmap: Bitmap)
+
+    // Main thread only (the only thread that sets a zoom)
+    private val copies = java.util.WeakHashMap<Bitmap, Array<Copy?>>()
+
+    /** Runs the screen's draw with [scale] screen pixels per canvas pixel. Returns true when some copies are still to come (draw again). */
+    fun drawing(scale: Float, block: () -> Unit): Boolean {
+        val old = zoom.get()
+        zoom.set(scale)
+        madeThisFrame = 0
+        leftOver = false
+        try {
+            block()
+        } finally {
+            zoom.set(old)
+        }
+        return leftOver
+    }
+
+    /** 0 = full tiles, 1 = half size, 2 = quarter size. */
+    fun level(): Int {
+        val s = zoom.get() ?: return 0
+        return when {
+            s <= 0.3f -> 2
+            s <= 0.6f -> 1
+            else -> 0
+        }
+    }
+
+    /** [tile]'s copy at [level] (1 or 2), or null when it isn't made yet (draw the tile itself). */
+    fun get(tile: Bitmap, level: Int): Bitmap? {
+        if (tile.isRecycled) return null
+        val slots = copies.getOrPut(tile) { arrayOfNulls(2) }
+        val gen = tile.generationId
+        slots[level - 1]?.let { if (it.generation == gen && !it.bitmap.isRecycled) return it.bitmap }
+        // The quarter size comes from the half size
+        val from = if (level == 1) tile else (get(tile, 1) ?: return null)
+        if (madeThisFrame >= PER_FRAME) {
+            leftOver = true
+            return null
+        }
+        madeThisFrame++
+        val size = from.width / 2
+        if (size < 1) return null
+        val small = try {
+            val config = if (tile.config == Bitmap.Config.ALPHA_8) Bitmap.Config.ALPHA_8 else Bitmap.Config.ARGB_8888
+            Bitmap.createBitmap(size, size, config).also { b ->
+                if (config != Bitmap.Config.ALPHA_8) {
+                    b.setHasAlpha(true)
+                    b.setHasMipMap(true)
+                }
+                Canvas(b).drawBitmap(from, null, Rect(0, 0, size, size), FILTER)
+            }
+        } catch (e: OutOfMemoryError) {
+            return null
+        }
+        slots[level - 1] = Copy(gen, small)
+        return small
+    }
+
+    private val FILTER = Paint(Paint.FILTER_BITMAP_FLAG)
 }

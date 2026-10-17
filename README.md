@@ -23,7 +23,7 @@ Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pe
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
-  saving), **Image** (Rotate, Flip, Flatten), **View** (Snap, Checkerboard, Modifier button, **Grid** and
+  saving), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **View** (Snap, Checkerboard, Modifier button, **Grid** and
   **Rulers and guides** pages), and Settings. Tap a page to open it; ← goes back.
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view). While moving
@@ -47,6 +47,11 @@ the list; the button shows the one you used last.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
 - **Crop** (hold the Transform button) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
+- **Image size** (Menu → Image → Image size…) — shows the picture's size, layer count and memory, and
+  scales everything to a new size: width and height (linked or not), 25/50/75% or a long side of
+  2048/2560/3000 px. Every layer, mask, shape, text (still editable), smart layer and guide scales; "Scale
+  layer styles" keeps stroke widths, shadows and glows looking the same. Shrinking a lot is done in
+  halving steps, so it stays smooth. One undo step.
 - **Perspective crop** (hold the Transform button) — drag the four corners onto the corners of something
   slanted (a sign, a window, a screen, a photo of a flyer); the grid follows. Apply straightens it into a flat,
   square-on picture (its size is the average of opposite sides). Shapes and text stay editable; guides and
@@ -140,6 +145,9 @@ the list; the button shows the one you used last.
   and flip.
 - **History** (the page button next to undo/redo): every step, oldest first; tap one to go back (or
   forward) to it.
+- **Zoomed out** (below about 60%), the picture is drawn from half- or quarter-size copies of each layer,
+  made as needed and kept up to date, so big pictures with many layers stay smooth; exports, merges and
+  everything else always use full size.
 - **Quick pinch inward** fits the picture to the screen (or use the fit button at the top right).
 - **Grid** (menu → Show grid, or Ctrl+'): evenly spaced lines from the canvas's top-left corner. Grid
   settings: spacing in pixels (or split the canvas into 2–12 equal parts), subdivisions, color, and Snap to

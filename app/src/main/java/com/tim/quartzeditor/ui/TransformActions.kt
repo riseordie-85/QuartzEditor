@@ -266,19 +266,24 @@ fun EditorViewModel.flipImage(horizontal: Boolean) {
  * [perspective]: the matrix bends lines (Perspective crop), so guides and the selection are
  * cleared and what's kept around the new canvas is limited to a margin.
  */
-internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int, perspective: Boolean = false, onDone: (() -> Unit)? = null, build: (Matrix) -> Unit) {
+internal fun EditorViewModel.canvasTransform(
+    label: String, newW: Int, newH: Int, perspective: Boolean = false, onDone: (() -> Unit)? = null,
+    /** Image size: layer styles scale by this too (null = they stay as they are). */
+    styleScale: Float? = null,
+    build: (Matrix) -> Unit,
+) {
     val d = doc ?: return
-    if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, build) }) return
+    if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }) return
     val fonts = d.layers.mapNotNull { it.props.text?.fontKey }.filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
-        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, build) }
+        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }
         return
     }
     val layers = d.layers.toList()
     val snaps = layers.map { Triple(it, HashMap(it.tiles.tiles), it.mask?.let { m -> HashMap(m.tiles) }) }
     val oldProps = layers.associateWith { it.props }
     val newProps = HashMap<Layer, LayerProps>()
-    runBusy("Turning…", onDone = onDone) {
+    runBusy(if (styleScale != null) "Resizing…" else "Turning…", onDone = onDone) {
         val results = withContext(Dispatchers.Default) {
             // Beyond a perspective's horizon pixels run off to infinity: keep only a margin
             val everywhere = if (perspective) Transformer.limitFor(newW, newH) else Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
@@ -309,7 +314,8 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
         if (doc !== d) return@runBusy
         stackEdit(label) {
             for ((l, grid, maskGrid) in results) {
-                newProps[l]?.let { l.props = it }
+                val p = newProps[l] ?: l.props
+                l.props = if (styleScale != null && p.style.any) p.copy(style = p.style.scaled(styleScale)) else p
                 l.tiles = grid
                 l.x = 0
                 l.y = 0
@@ -317,6 +323,8 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
             }
             d.width = newW
             d.height = newH
+            // A selection would no longer line up with the picture
+            d.selection = null
             if (perspective) {
                 // Straight guides don't stay straight through a perspective
                 d.guidesX.clear()
@@ -341,4 +349,19 @@ internal fun EditorViewModel.canvasTransform(label: String, newW: Int, newH: Int
         }
         fit()
     }
+}
+
+/**
+ * Image › Image size: scales the whole picture (every layer, mask, shape, text, smart layer and
+ * guide) to [w]×[h] canvas pixels, as one undo step. [scaleStyles]: stroke widths, shadows and glows
+ * scale with it, so the picture looks the same.
+ */
+fun EditorViewModel.resizeImage(w: Int, h: Int, scaleStyles: Boolean) {
+    val d = doc ?: return
+    val nw = w.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    val nh = h.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    if (nw == d.width && nh == d.height) return
+    val sx = nw.toFloat() / d.width
+    val sy = nh.toFloat() / d.height
+    canvasTransform("Image size", nw, nh, styleScale = if (scaleStyles) kotlin.math.sqrt(sx * sy) else 1f) { m -> m.postScale(sx, sy) }
 }

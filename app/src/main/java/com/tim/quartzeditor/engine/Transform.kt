@@ -344,12 +344,29 @@ object Transformer {
             translate(-src.left.toFloat(), -src.top.toFloat())
             for ((k, tile) in grid) drawBitmap(tile, (TileGrid.tx(k) * TileGrid.SIZE).toFloat(), (TileGrid.ty(k) * TileGrid.SIZE).toFloat(), null)
         }
+        // Shrinking to less than half: halve the source first (each halving averages 2×2 pixels), so
+        // the result is smooth instead of grainy (one filtered draw only looks at nearby pixels)
+        var small = source
+        if (m.isAffine) {
+            val v = FloatArray(9).also { m.getValues(it) }
+            val shrink = kotlin.math.sqrt(kotlin.math.abs(v[0] * v[4] - v[1] * v[3]))
+            var at = 1f
+            while (shrink * at < 0.5f && small.width >= 4 && small.height >= 4) {
+                val half = Bitmap.createScaledBitmap(small, small.width / 2, small.height / 2, true)
+                if (small !== source) small.recycle()
+                small = half
+                at = source.width.toFloat() / small.width
+            }
+        }
         val bmp = Bitmap.createBitmap(out.width(), out.height(), config)
         if (!alphaOnly) bmp.setHasAlpha(true)
         val c = Canvas(bmp)
         c.translate(-out.left.toFloat(), -out.top.toFloat())
         c.concat(m)
-        c.drawBitmap(source, src.left.toFloat(), src.top.toFloat(), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        c.translate(src.left.toFloat(), src.top.toFloat())
+        c.scale(source.width.toFloat() / small.width, source.height.toFloat() / small.height)
+        c.drawBitmap(small, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        if (small !== source) small.recycle()
         source.recycle()
         return bmp to out
     }
