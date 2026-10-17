@@ -169,8 +169,9 @@ fun EditorViewModel.duplicateLayer() {
         }.map { (src, id) ->
             val parent = ids[src.props.parent] ?: src.props.parent
             val name = if (src === l) "${src.props.name} copy" else src.props.name
-            // A smart layer's copy gets contents of its own (editing one doesn't change the other)
-            val smart = src.props.smart?.let { sp -> com.tim.quartzeditor.engine.SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf()) }
+            // A smart layer's copy is linked to it, like Photoshop's: they share their contents, so
+            // editing one changes both ("Unlink from copies" gives one contents of its own)
+            val smart = src.props.smart?.let { sp -> com.tim.quartzeditor.engine.SmartSpec(sp.contents, sp.quad.copyOf()) }
             Layer(id, src.props.copy(name = name, locked = false, parent = parent, smart = smart), src.tiles.copy(), src.x, src.y, src.mask?.copy(), src.kind)
         }
         d.layers.addAll(range.last + 1, copies)

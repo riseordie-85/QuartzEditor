@@ -20,6 +20,7 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 // Shape and text layers. They keep what they are (a star with 5 points, a line of text in a font)
@@ -52,11 +53,13 @@ enum class ShapeKind(val label: String) {
     ELLIPSE("Ellipse"),
     STAR("Star"),
     /** Drawn with the shape pen. */
-    PATH("Custom"),
+    PATH("Pen shape"),
     TRIANGLE("Triangle"),
     POLYGON("Polygon"),
     /** Drawn from where the drag starts to where it ends. */
     ARROW("Arrow"),
+    /** A shape from the library, an .svg or a Photoshop file: outlines ([ShapeSpec.parts]) stretched to the box. */
+    CUSTOM("Custom shape"),
     ;
 
     /** The next shape when the Shape tool is tapped again (custom shapes come from the pen). */
@@ -66,14 +69,22 @@ enum class ShapeKind(val label: String) {
         TRIANGLE -> POLYGON
         POLYGON -> STAR
         STAR -> ARROW
+        ARROW -> CUSTOM
         else -> RECT
     }
 
     companion object {
         /** The shapes the Shape tool draws, in menu order. */
-        val TOOL_SHAPES = listOf(RECT, ELLIPSE, TRIANGLE, POLYGON, STAR, ARROW)
+        val TOOL_SHAPES = listOf(RECT, ELLIPSE, TRIANGLE, POLYGON, STAR, ARROW, CUSTOM)
     }
 }
+
+/**
+ * One outline of a custom shape. [op] says how it joins the outlines before it, like Photoshop's
+ * path operations: 1 add, 2 subtract, 3 keep only the overlap, 0 keep where they don't overlap;
+ * -1 is part of one outline with the others, filled by the shape's fill rule (SVG files).
+ */
+data class ShapePart(val points: List<PenPoint>, val closed: Boolean = true, val op: Int = -1)
 
 enum class StrokeAlign(val label: String) { INSIDE("Inside"), CENTER("Center"), OUTSIDE("Outside") }
 
@@ -125,6 +136,14 @@ data class ShapeSpec(
     val shaftWidth: Float = 0.38f,
     val path: List<PenPoint> = emptyList(),
     val closed: Boolean = true,
+    /** Custom shape: its outlines, in a box [viewW] × [viewH] that's stretched to [w] × [h]. */
+    val parts: List<ShapePart> = emptyList(),
+    val viewW: Float = 0f,
+    val viewH: Float = 0f,
+    /** Custom shape: holes by the even-odd rule (otherwise outlines going the other way make the holes). */
+    val evenOdd: Boolean = false,
+    /** Custom shape: what it's called in the library. */
+    val shapeName: String = "",
     /** Fill color, or null for no fill. */
     val fill: Int? = Color.BLACK,
     /** Outline color, or null for none. */
@@ -154,6 +173,18 @@ data class ShapeSpec(
             }
         })
         .put("closed", closed)
+        .also { o ->
+            if (parts.isNotEmpty()) {
+                o.put("parts", JSONArray().also { a ->
+                    parts.forEach { part ->
+                        a.put(JSONObject().put("closed", part.closed).put("op", part.op).put("pts", JSONArray().also { pa ->
+                            part.points.forEach { pt -> pa.put(pt.x.toDouble()).put(pt.y.toDouble()).put(pt.hx.toDouble()).put(pt.hy.toDouble()).put(pt.ix.toDouble()).put(pt.iy.toDouble()) }
+                        }))
+                    }
+                })
+                o.put("viewW", viewW.toDouble()).put("viewH", viewH.toDouble()).put("evenOdd", evenOdd).put("shapeName", shapeName)
+            }
+        }
         .put("fill", fill?.toLong()?.and(0xFFFFFFFFL) ?: JSONObject.NULL)
         .put("stroke", stroke?.toLong()?.and(0xFFFFFFFFL) ?: JSONObject.NULL)
         .put("strokeWidth", strokeWidth.toDouble())
@@ -182,6 +213,24 @@ data class ShapeSpec(
                     PenPoint(p.optDouble(0).toFloat(), p.optDouble(1).toFloat(), hx, hy, p.optDouble(4, -hx.toDouble()).toFloat(), p.optDouble(5, -hy.toDouble()).toFloat())
                 },
                 closed = o.optBoolean("closed", true),
+                parts = o.optJSONArray("parts")?.let { a ->
+                    List(a.length()) { i ->
+                        val po = a.getJSONObject(i)
+                        val pa = po.optJSONArray("pts")
+                        val n = (pa?.length() ?: 0) / 6
+                        ShapePart(
+                            List(n) { j ->
+                                fun v(k: Int) = pa!!.optDouble(j * 6 + k, 0.0).toFloat()
+                                PenPoint(v(0), v(1), v(2), v(3), v(4), v(5))
+                            },
+                            po.optBoolean("closed", true), po.optInt("op", -1),
+                        )
+                    }
+                } ?: emptyList(),
+                viewW = o.optDouble("viewW", 0.0).toFloat(),
+                viewH = o.optDouble("viewH", 0.0).toFloat(),
+                evenOdd = o.optBoolean("evenOdd", false),
+                shapeName = o.optString("shapeName", ""),
                 fill = if (o.isNull("fill")) null else o.optLong("fill").toInt(),
                 stroke = if (o.isNull("stroke")) null else o.optLong("stroke").toInt(),
                 strokeWidth = o.optDouble("strokeWidth", 6.0).toFloat(),
@@ -207,6 +256,49 @@ data class ShapeSpec(
                 close()
             }
             ShapeKind.ARROW -> arrowPath(s)
+            ShapeKind.CUSTOM -> customPath(s.parts, s.evenOdd, if (s.viewW > 0f && s.viewH > 0f) RectF(0f, 0f, s.viewW, s.viewH) else null).apply {
+                if (s.viewW > 0f && s.viewH > 0f) transform(Matrix().apply { setScale(s.w / s.viewW, s.h / s.viewH) })
+            }
+        }
+
+        /**
+         * A custom shape's outlines joined into one (in their own box). Outlines with [ShapePart.op]
+         * -1 belong to the one before them (filled together by [evenOdd] or by direction); the
+         * groups are then joined by their ops like Photoshop's path operations, where subtracting
+         * or intersecting first starts from [full] (the whole area) rather than from nothing.
+         */
+        fun customPath(parts: List<ShapePart>, evenOdd: Boolean, full: RectF? = null): Path {
+            val rule = if (evenOdd) Path.FillType.EVEN_ODD else Path.FillType.WINDING
+            val groups = ArrayList<Pair<Int, Path>>()
+            for (part in parts) {
+                if (part.points.isEmpty()) continue
+                val p = penPath(part.points, part.closed)
+                if (part.op < 0 && groups.isNotEmpty()) groups.last().second.addPath(p)
+                else groups.add((if (part.op < 0) 1 else part.op) to Path().apply { fillType = rule; addPath(p) })
+            }
+            if (groups.isEmpty()) return Path()
+            if (groups.size == 1 && (groups[0].first == 1 || groups[0].first == 0 || full == null)) return groups[0].second
+            var out: Path? = null
+            for ((i, g) in groups.withIndex()) {
+                val (op, p) = g
+                if (i == 0) {
+                    if ((op == 2 || op == 3) && full != null) {
+                        out = Path().apply { addRect(full, Path.Direction.CW) }
+                    } else {
+                        out = Path(p)
+                        continue
+                    }
+                }
+                val o = out ?: continue
+                val mode = when (op) {
+                    2 -> Path.Op.DIFFERENCE
+                    3 -> Path.Op.INTERSECT
+                    0 -> Path.Op.XOR
+                    else -> Path.Op.UNION
+                }
+                if (!o.op(p, mode)) o.addPath(p)
+            }
+            return out ?: Path()
         }
 
         /** An arrow pointing right along the box: a shaft, then a triangular head. */
@@ -302,6 +394,74 @@ enum class TextAlignOption(val label: String, val anchor: Float) { LEFT("Left", 
  * by [align]) of the first line's baseline; for box text ([boxWidth] > 0) the box's top-left
  * corner, with lines wrapping to the box. [matrix] places it on the layer.
  */
+/**
+ * Part of a text layer styled differently from the rest (from Photoshop): characters [start] until
+ * [end] of the text, with whatever isn't null here instead of the layer's own setting.
+ */
+data class TextRun(
+    val start: Int,
+    val end: Int,
+    val fontKey: String? = null,
+    val size: Float? = null,
+    val color: Int? = null,
+    val fauxBold: Boolean? = null,
+    val fauxItalic: Boolean? = null,
+    val underline: Boolean? = null,
+) {
+    fun toJson(): JSONObject = JSONObject().put("s", start).put("e", end).also { o ->
+        fontKey?.let { o.put("font", it) }
+        size?.let { o.put("size", it.toDouble()) }
+        color?.let { o.put("color", it.toLong() and 0xFFFFFFFFL) }
+        fauxBold?.let { o.put("bold", it) }
+        fauxItalic?.let { o.put("italic", it) }
+        underline?.let { o.put("underline", it) }
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject) = TextRun(
+            o.optInt("s"), o.optInt("e"),
+            if (o.has("font")) o.optString("font") else null,
+            if (o.has("size")) o.optDouble("size").toFloat() else null,
+            if (o.has("color")) o.optLong("color").toInt() else null,
+            if (o.has("bold")) o.optBoolean("bold") else null,
+            if (o.has("italic")) o.optBoolean("italic") else null,
+            if (o.has("underline")) o.optBoolean("underline") else null,
+        )
+
+        /**
+         * [runs] of text [old] moved to fit its edited version [new]: typing inside or right after
+         * a run carries its style on, deleting shortens it.
+         */
+        fun adjust(runs: List<TextRun>, old: String, new: String): List<TextRun> {
+            if (runs.isEmpty() || old == new) return runs
+            var p = 0
+            val maxP = min(old.length, new.length)
+            while (p < maxP && old[p] == new[p]) p++
+            var q = 0
+            while (q < min(old.length, new.length) - p && old[old.length - 1 - q] == new[new.length - 1 - q]) q++
+            val oldEnd = old.length - q
+            val newEnd = new.length - q
+            val delta = new.length - old.length
+            return runs.mapNotNull { r ->
+                // Before the edit stays, after it moves; text typed in takes the style of the character before it
+                val s = when {
+                    r.start < p -> r.start
+                    r.start >= oldEnd -> r.start + delta
+                    r.start == p -> p
+                    else -> newEnd
+                }
+                val e = when {
+                    r.end < p -> r.end
+                    r.end == p -> if (r.start < p) newEnd else p
+                    r.end < oldEnd -> newEnd
+                    else -> r.end + delta
+                }
+                if (e > s) r.copy(start = s, end = e) else null
+            }
+        }
+    }
+}
+
 data class TextSpec(
     val text: String,
     val fontKey: String = TextFont.BOLD.key,
@@ -325,7 +485,33 @@ data class TextSpec(
     val boxWidth: Float = 0f,
     /** From Photoshop: the font it used, until the text is first edited (then it's said whether it's here). */
     val psdFont: String? = null,
+    /** Parts styled differently (several fonts, sizes or colors in one layer, from Photoshop). */
+    val runs: List<TextRun> = emptyList(),
 ) {
+    /** Every font it uses. */
+    val fonts: Set<String> get() = if (runs.isEmpty()) setOf(fontKey) else setOf(fontKey) + runs.mapNotNull { it.fontKey }
+
+    /**
+     * After a change made to the whole layer from [before] (a new font, size or color in
+     * Properties): parts styled differently follow it. A new size scales every part's size; a new
+     * font, color or style replaces the parts' own.
+     */
+    fun runsFollow(before: TextSpec): TextSpec {
+        if (runs.isEmpty()) return this
+        val k = if (before.size > 0f && size != before.size) size / before.size else 1f
+        val next = runs.map { r ->
+            r.copy(
+                fontKey = if (fontKey != before.fontKey) null else r.fontKey,
+                size = r.size?.let { it * k },
+                color = if (color != before.color) null else r.color,
+                fauxBold = if (fauxBold != before.fauxBold) null else r.fauxBold,
+                fauxItalic = if (fauxItalic != before.fauxItalic) null else r.fauxItalic,
+                underline = if (underline != before.underline) null else r.underline,
+            )
+        }.filter { it.fontKey != null || it.size != null || it.color != null || it.fauxBold != null || it.fauxItalic != null || it.underline != null }
+        return if (next == runs) this else copy(runs = next)
+    }
+
     fun toJson(): JSONObject = JSONObject()
         .put("text", text)
         .put("font", fontKey)
@@ -342,6 +528,7 @@ data class TextSpec(
         .put("matrix", matrix.toJson())
         .put("box", boxWidth.toDouble())
         .also { o -> psdFont?.let { o.put("psdFont", it) } }
+        .also { o -> if (runs.isNotEmpty()) o.put("runs", JSONArray().also { a -> runs.forEach { a.put(it.toJson()) } }) }
 
     /** Shown in the Layers panel. */
     val title: String get() = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40) ?: "Text"
@@ -363,6 +550,7 @@ data class TextSpec(
             matrix = affineFrom(o.optJSONArray("matrix")),
             boxWidth = o.optDouble("box", 0.0).toFloat(),
             psdFont = if (o.has("psdFont")) o.optString("psdFont") else null,
+            runs = o.optJSONArray("runs")?.let { a -> List(a.length()) { TextRun.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
     }
 }
@@ -437,7 +625,23 @@ object VectorArt {
             b.inset(-slack, -slack)
             return TextBuilt(paint, null, path, text, 0f, 0f, b)
         }
-        val widest = text.split('\n').maxOf { paint.measureText(it) }
+        // Parts styled differently: laid out with spans
+        val styled: CharSequence = if (t.runs.isEmpty()) text else android.text.SpannableString(text).also { sp ->
+            for (r in t.runs) {
+                val a = r.start.coerceIn(0, text.length)
+                val b = r.end.coerceIn(a, text.length)
+                if (b <= a) continue
+                val flags = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                r.size?.let { sp.setSpan(android.text.style.AbsoluteSizeSpan(it.coerceIn(1f, 4000f).roundToInt()), a, b, flags) }
+                r.color?.let { sp.setSpan(android.text.style.ForegroundColorSpan(it), a, b, flags) }
+                r.fontKey?.let { sp.setSpan(android.text.style.TypefaceSpan(Fonts.resolve(it)), a, b, flags) }
+                if (r.fauxBold != null || r.fauxItalic != null || r.underline != null) sp.setSpan(RunLook(r.fauxBold, r.fauxItalic, r.underline), a, b, flags)
+            }
+        }
+        val widest = if (styled === text) text.split('\n').maxOf { paint.measureText(it) } else {
+            val probe = StaticLayout.Builder.obtain(styled, 0, styled.length, paint, 1_000_000).setIncludePad(false).build()
+            (0 until probe.lineCount).maxOf { probe.getLineWidth(it) }
+        }
         val box = t.boxWidth > 0f
         // Box text wraps to its box; otherwise as wide as the widest line
         val width = if (box) ceil(t.boxWidth.toDouble()).toInt().coerceAtLeast(1) else ceil(widest.toDouble()).toInt().coerceAtLeast(1) + 1
@@ -446,7 +650,7 @@ object VectorArt {
             TextAlignOption.CENTER -> Layout.Alignment.ALIGN_CENTER
             TextAlignOption.RIGHT -> Layout.Alignment.ALIGN_OPPOSITE
         }
-        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+        val layout = StaticLayout.Builder.obtain(styled, 0, styled.length, paint, width)
             .setAlignment(alignment)
             .setIncludePad(false)
             .setLineSpacing(0f, t.leading.coerceIn(0.5f, 3f))
@@ -563,4 +767,16 @@ object VectorArt {
         val m = max(w, h).toFloat()
         return RectF(-m - x, -m - y, w + m - x, h + m - y)
     }
+}
+
+/** Faux bold, faux italic and underline for part of a text layer. */
+private class RunLook(val bold: Boolean?, val italic: Boolean?, val underline: Boolean?) : android.text.style.MetricAffectingSpan() {
+    private fun apply(tp: TextPaint) {
+        bold?.let { tp.isFakeBoldText = it }
+        italic?.let { tp.textSkewX = if (it) -0.22f else 0f }
+        underline?.let { tp.isUnderlineText = it }
+    }
+
+    override fun updateDrawState(tp: TextPaint) = apply(tp)
+    override fun updateMeasureState(tp: TextPaint) = apply(tp)
 }

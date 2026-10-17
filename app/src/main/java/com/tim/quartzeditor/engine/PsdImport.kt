@@ -27,10 +27,11 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Turns a Photoshop file into a document: pixel layers, folders (any depth), masks, blend modes,
- * opacity and fill, clipping, hidden layers, names, the layer styles we have, and fill and shape
- * layers (drawn from their color, gradient and outline). Text and smart objects come in as their
- * pixels. Adjustment layers and effects we don't have are listed in [Result.notes].
+ * Turns a Photoshop file into a document: pixel layers, folders (any depth, with their styles),
+ * masks, blend modes, opacity and fill, clipping (to layers and folders), hidden layers, names,
+ * layer styles, adjustment layers, shape layers (as shapes), fill layers, text (with its styles)
+ * and smart objects (linked copies stay linked). What doesn't come across exactly is listed in
+ * [Result.notes].
  */
 object PsdImport {
 
@@ -64,12 +65,10 @@ object PsdImport {
         val skippedAdjustments = ArrayList<String>()
         val unsupportedFx = LinkedHashSet<String>()
         val approxBlends = LinkedHashSet<String>()
-        var groupFx = 0
 
         /** How the layer clipped to it should be treated, per folder: what its base was. */
         private enum class Base { LAYER, FOLDER, SKIPPED }
         private val lastBase = HashMap<Long, Base>()
-        var clippedToFolder = 0
 
         fun build(): Result {
             if (s < 1f) notes.add("Shrunk from ${f.width} × ${f.height} to ${doc.width} × ${doc.height} px (the biggest the app works with).")
@@ -88,15 +87,15 @@ object PsdImport {
             doc.activeId = doc.layers.lastOrNull { !it.isGroup }?.id ?: doc.layers.last().id
             if (skippedAdjustments.isNotEmpty()) {
                 val kinds = skippedAdjustments.groupingBy { it }.eachCount().entries.joinToString { (k, n) -> if (n > 1) "$k ×$n" else k }
-                notes.add("Adjustment layers aren't brought in yet, so the colors may look different: $kinds.")
+                notes.add("Adjustment layers we don't have were left out, so the colors may look different: $kinds.")
             }
             if (unsupportedFx.isNotEmpty()) notes.add("Layer effects not brought in: ${unsupportedFx.joinToString()}.")
-            if (groupFx > 0) notes.add("Layer effects on folders aren't supported ($groupFx folder${if (groupFx > 1) "s" else ""}).")
-            if (clippedToFolder > 0) notes.add("Clipping to a folder isn't supported: $clippedToFolder layer${if (clippedToFolder > 1) "s show" else " shows"} unclipped.")
             if (approxBlends.isNotEmpty()) notes.add("Blend modes shown as the nearest one we have: ${approxBlends.joinToString()}.")
             if (unsupportedColors > 0) notes.add("Some colors were saved as book (Pantone) colors and came in as black.")
             if (textAsPixels > 0) notes.add("$textAsPixels text layer${if (textAsPixels > 1) "s" else ""} with a warp (or no text) came in as pixels.")
-            if (mixedText > 0) notes.add("$mixedText text layer${if (mixedText > 1) "s have" else " has"} several fonts, sizes or colors: when edited, the first one is used for all of it.")
+            if (mixedText > 0) notes.add("$mixedText text layer${if (mixedText > 1) "s have" else " has"} several styles that couldn't be read separately: the first one is used for all of it.")
+            if (approxAdjust.isNotEmpty()) notes.add("Adjustment settings shown as close as we can: ${approxAdjust.joinToString()}.")
+            if (shapesAsPixels > 0) notes.add("$shapesAsPixels shape${if (shapesAsPixels > 1) "s" else ""} with a gradient or pattern fill (or a dashed outline) came in as pixels.")
             if (smartFromPixels.isNotEmpty()) notes.add("${smartFromPixels.size} smart object${if (smartFromPixels.size > 1) "s" else ""} kept as smart layers, using what you see as their contents (${smartFromPixels.distinct().joinToString()}).")
             if (fonts.isNotEmpty()) notes.add("Fonts not on this device are shown as the original pixels until you edit the text; then a close match is used: ${fonts.joinToString()}.")
             return Result(doc, notes)
@@ -133,7 +132,7 @@ object PsdImport {
                         val outer = open.lastOrNull() ?: 0L
                         if (pl.clipping != 1) lastBase[outer] = Base.FOLDER
                         val pass = pl.blendKey == "pass" || pl.sectionBlend == "pass"
-                        if (pl.effects != null && hasEnabledFx(pl.effects!!)) groupFx++
+                        val style = style(pl)
                         val props = LayerProps(
                             name = pl.name.ifBlank { "Folder" },
                             visible = !pl.hidden,
@@ -141,6 +140,7 @@ object PsdImport {
                             blend = if (pass) Blend.NORMAL else blend(pl.sectionBlend ?: pl.blendKey),
                             parent = outer,
                             passThrough = pass,
+                            style = if (s < 1f) style.scaled(s) else style,
                         )
                         val mask = pixelMask(pl, isFolder = true)
                         val g = Layer(id, props.copy(maskDisabled = mask?.second ?: false), TileGrid(alphaOnly = false), mask = mask?.first, kind = LayerKind.GROUP)
@@ -148,21 +148,18 @@ object PsdImport {
                         doc.layers.add(g)
                     }
                     pl.adjustment != null -> {
-                        skippedAdjustments.add(pl.adjustment!!)
+                        // Clipped to something we can't use as a base: shown as it is
+                        var clip = pl.clipping == 1
+                        if (clip && lastBase[parent] == Base.SKIPPED) clip = false
+                        // An adjustment layer can't be a clipping base here
                         if (pl.clipping != 1) lastBase[parent] = Base.SKIPPED
+                        adjustment(pl, parent, clip)?.let { doc.layers.add(it) } ?: skippedAdjustments.add(pl.adjustment!!)
                     }
                     else -> {
                         // Clipped to something we can't use as a base: shown as it is
                         var clip = pl.clipping == 1
                         if (clip) {
-                            when (lastBase[parent]) {
-                                Base.SKIPPED -> clip = false
-                                Base.FOLDER -> {
-                                    clip = false
-                                    clippedToFolder++
-                                }
-                                else -> Unit
-                            }
+                            if (lastBase[parent] == Base.SKIPPED) clip = false
                         } else {
                             lastBase[parent] = Base.LAYER
                         }
@@ -186,9 +183,12 @@ object PsdImport {
 
         fun layer(pl: PsdLayer, parent: Long, clip: Boolean): Layer? {
             val vector = pl.vectorMask?.takeIf { !it.disabled && it.paths.isNotEmpty() }
+            // A shape layer stays a shape (drawn here from its outline)
+            val shape = if (vector != null && pl.isFill) shapeSpec(pl, vector) else null
             val grid: TileGrid = when {
+                shape != null -> VectorArt.rasterize(LayerProps("", shape = shape), VectorArt.clipFor(0, 0, doc.width, doc.height))
                 pl.hasPixels -> pixels(pl)
-                pl.solidColor != null || pl.gradientFill != null -> synthesizedFill(pl, vector)
+                pl.solidColor != null || pl.gradientFill != null || pl.patternFill != null -> synthesizedFill(pl, vector)
                 else -> TileGrid(alphaOnly = false)
             }
             // The pixel mask, and for a pixel layer its vector mask too (a shape's outline is already in its pixels)
@@ -213,7 +213,246 @@ object PsdImport {
             // Text stays text, and smart objects stay smart (showing Photoshop's pixels until changed)
             pl.text?.let { t -> textProps(pl, t, props)?.let { return Layer(doc.newId(), it, grid, mask = mask?.first, kind = LayerKind.TEXT) } }
             if (pl.isSmart) smartProps(pl, props, grid)?.let { return Layer(doc.newId(), it, grid, mask = mask?.first, kind = LayerKind.SMART) }
+            if (shape != null) return Layer(doc.newId(), props.copy(shape = shape), grid, mask = mask?.first, kind = LayerKind.SHAPE)
             return Layer(doc.newId(), props, grid, mask = mask?.first)
+        }
+
+        // ------------------------------------------------------------ shape layers
+
+        var shapesAsPixels = 0
+
+        /** A vector mask's outlines in document pixels, as points (Photoshop keeps them as fractions of the canvas). */
+        fun parts(vm: PsdVectorMask): List<ShapePart> {
+            val w = f.width * s
+            val h = f.height * s
+            return vm.paths.filter { it.knots.isNotEmpty() }.map { sp ->
+                ShapePart(sp.knots.map { k ->
+                    val x = (k.x * w).toFloat()
+                    val y = (k.y * h).toFloat()
+                    PenPoint(x, y, (k.outX * w).toFloat() - x, (k.outY * h).toFloat() - y, (k.inX * w).toFloat() - x, (k.inY * h).toFloat() - y)
+                }, sp.closed, sp.op)
+            }
+        }
+
+        /**
+         * A Photoshop shape layer (a color fill inside a vector outline) as our shape: a rectangle,
+         * rounded rectangle or ellipse when it was drawn as one, its points when it's one outline,
+         * or a custom shape for several (joined like Photoshop's path operations). Null keeps it as
+         * pixels (gradient and pattern fills, dashed outlines).
+         */
+        fun shapeSpec(pl: PsdLayer, vm: PsdVectorMask): ShapeSpec? {
+            val solid = pl.solidColor
+            val stroke = pl.vectorStroke
+            val strokeOn = stroke?.get("strokeEnabled") == true
+            val fillOn = stroke?.get("fillEnabled") != false
+            if ((solid == null && fillOn) || vm.invert) {
+                shapesAsPixels++
+                return null
+            }
+            // The outline: a color only (gradient and pattern outlines stay pixels), solid lines only
+            var strokeColor: Int? = null
+            var strokeWidth = 0f
+            var align = StrokeAlign.CENTER
+            if (strokeOn && stroke != null) {
+                val content = stroke["strokeStyleContent"] as? Map<*, *>
+                val dashed = (stroke["strokeStyleLineDashSet"] as? List<*>)?.isNotEmpty() == true
+                if (content?.get("Clr ") == null || dashed) {
+                    shapesAsPixels++
+                    return null
+                }
+                val op = opacity(stroke["strokeStyleOpacity"])
+                strokeWidth = px(stroke["strokeStyleLineWidth"], s.toDouble())
+                // A zero-width outline draws nothing
+                if (strokeWidth > 0.01f) strokeColor = (color(content["Clr "]) and 0xFFFFFF) or ((op * 255).roundToInt() shl 24)
+                align = when ((stroke["strokeStyleLineAlignment"] as? PsdEnum)?.value) {
+                    "strokeStyleAlignInside" -> StrokeAlign.INSIDE
+                    "strokeStyleAlignOutside" -> StrokeAlign.OUTSIDE
+                    else -> StrokeAlign.CENTER
+                }
+            }
+            val fill = if (fillOn && solid != null) color(solid["Clr "]) or 0xFF000000.toInt() else null
+            val ps = parts(vm)
+            if (ps.isEmpty()) return null
+            val all = ShapeSpec.customPath(ps, evenOdd = true)
+            val b = RectF().also { all.computeBounds(it, true) }
+            if (b.width() <= 0f && b.height() <= 0f) return null
+            val base = ShapeSpec(ShapeKind.RECT, fill = fill, stroke = strokeColor, strokeWidth = if (strokeColor != null) strokeWidth else 6f, strokeAlign = align)
+            // Drawn as a rectangle, rounded rectangle or ellipse (and not turned): kept as one
+            val origin = (pl.vectorOrigin?.get("keyDescriptorList") as? List<*>)?.singleOrNull() as? Map<*, *>
+            val type = (origin?.get("keyOriginType") as? Number)?.toInt()
+            if (ps.size == 1 && ps[0].closed && ps[0].op != 2 && type != null) {
+                val m = translation(b.left, b.top)
+                val pts = ps[0].points
+                when (type) {
+                    1 -> if (pts.size == 4 && pts.all { onEdges(it, b, 0f, 0f) }) {
+                        return base.copy(kind = ShapeKind.RECT, w = b.width(), h = b.height(), matrix = m)
+                    }
+                    2 -> {
+                        val radii = (origin["keyOriginRRectRadii"] as? Map<*, *>)?.let { r ->
+                            listOf("topRight", "topLeft", "bottomLeft", "bottomRight").map { px(r[it], s.toDouble()) }
+                        }
+                        if (radii != null && radii.max() - radii.min() < 0.5f) {
+                            val r = radii.first().coerceIn(0f, min(b.width(), b.height()) / 2f)
+                            if (pts.all { onEdges(it, b, r, 0f) || onEdges(it, b, 0f, r) }) {
+                                return base.copy(kind = ShapeKind.RECT, w = b.width(), h = b.height(), radius = r, matrix = m)
+                            }
+                        }
+                    }
+                    5 -> if (pts.size == 4 && pts.all { onEdges(it, b, b.width() / 2f, 0f) || onEdges(it, b, 0f, b.height() / 2f) }) {
+                        return base.copy(kind = ShapeKind.ELLIPSE, w = b.width(), h = b.height(), matrix = m)
+                    }
+                }
+            }
+            val left = b.left
+            val top = b.top
+            fun local(pts: List<PenPoint>) = pts.map { it.copy(x = it.x - left, y = it.y - top) }
+            // One outline: its points can be edited with the pen
+            if (ps.size == 1 && ps[0].op != 2) {
+                return base.copy(kind = ShapeKind.PATH, w = b.width(), h = b.height(), path = local(ps[0].points), closed = ps[0].closed, matrix = translation(left, top))
+            }
+            // Several: a custom shape in its own box. Subtracting first starts from the whole canvas.
+            val firstOp = ps.firstOrNull { it.op >= 0 }?.op ?: 1
+            val box = if (firstOp == 2) RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()) else b
+            return base.copy(
+                kind = ShapeKind.CUSTOM, w = box.width(), h = box.height(), viewW = box.width(), viewH = box.height(),
+                parts = ps.map { it.copy(points = it.points.map { p -> p.copy(x = p.x - box.left, y = p.y - box.top) }) },
+                evenOdd = true, shapeName = pl.name, matrix = translation(box.left, box.top),
+            )
+        }
+
+        /**
+         * Whether point [p] is where an upright shape in box [b] has its points: on a left or right
+         * edge [inY] in from a corner (vertically), and on a top or bottom edge [inX] in from one
+         * (a rectangle's corners are 0 in; a rounded one's are the radius in; an ellipse's are halfway).
+         */
+        fun onEdges(p: PenPoint, b: RectF, inX: Float, inY: Float): Boolean {
+            val tol = max(0.75f, max(b.width(), b.height()) * 0.003f)
+            fun near(a: Float, v: Float) = abs(a - v) < tol
+            val xOk = near(p.x, b.left + inX) || near(p.x, b.right - inX)
+            val yOk = near(p.y, b.top + inY) || near(p.y, b.bottom - inY)
+            return xOk && yOk
+        }
+
+        // ------------------------------------------------------------ adjustment layers
+
+        val approxAdjust = LinkedHashSet<String>()
+
+        /** A Photoshop adjustment layer as ours, or null for kinds we don't have. */
+        fun adjustment(pl: PsdLayer, parent: Long, clip: Boolean): Layer? {
+            val a = PsdAdjust.parse(pl) ?: return null
+            val fx: FxParams = when (a) {
+                is PsdAdjust.Levels -> {
+                    fun ch(i: Int): LevelsChannel {
+                        val r = a.records.getOrNull(i) ?: return LevelsChannel()
+                        return LevelsChannel(r[0] / 255f, r[1].coerceAtLeast(r[0] + 1) / 255f, (r[4] / 100f).coerceIn(0.1f, 9.99f), r[2] / 255f, r[3] / 255f)
+                    }
+                    FxParams(kind = FxKind.LEVELS, levels = if (f.mode != 3) Levels(listOf(ch(0), LevelsChannel(), LevelsChannel(), LevelsChannel())) else Levels(List(4) { ch(it) }))
+                }
+                is PsdAdjust.Curves -> {
+                    val chans = List(4) { i ->
+                        a.channels[i]?.map { (x, y) -> CurvePoint(x / 255f, y / 255f) }?.sortedBy { it.x }?.takeIf { it.size >= 2 } ?: Curves.LINE
+                    }
+                    FxParams(kind = FxKind.CURVES, curves = Curves(if (f.mode != 3) listOf(chans[0], Curves.LINE, Curves.LINE, Curves.LINE) else chans))
+                }
+                is PsdAdjust.BrightnessContrast -> {
+                    if (a.legacy) approxAdjust.add("legacy Brightness/Contrast")
+                    FxParams(adjust = mapOf(
+                        Adjust.BRIGHTNESS to (a.brightness / 100f).coerceIn(-1f, 1f),
+                        Adjust.CONTRAST to (a.contrast / 100f).coerceIn(-1f, 1f),
+                    ))
+                }
+                is PsdAdjust.Exposure -> {
+                    if (abs(a.offset) > 0.005f || abs(a.gamma - 1f) > 0.01f) approxAdjust.add("Exposure's offset and gamma")
+                    FxParams(adjust = mapOf(Adjust.EXPOSURE to (a.exposure / 2f).coerceIn(-1f, 1f)))
+                }
+                is PsdAdjust.Vibrance -> FxParams(kind = FxKind.VIBRANCE, adjust = mapOf(
+                    Adjust.VIBRANCE to (a.vibrance / 100f).coerceIn(-1f, 1f),
+                    Adjust.SATURATION to (a.saturation / 100f).coerceIn(-1f, 1f),
+                ))
+                is PsdAdjust.HueSat -> {
+                    fun shift(v: IntArray, off: Int) = HueShift((v[off] / 180f).coerceIn(-1f, 1f), (v[off + 1] / 100f).coerceIn(-1f, 1f), (v[off + 2] / 100f).coerceIn(-1f, 1f))
+                    val defaults = listOf(intArrayOf(315, 345, 15, 45), intArrayOf(15, 45, 75, 105), intArrayOf(75, 105, 135, 165), intArrayOf(135, 165, 195, 225), intArrayOf(195, 225, 255, 285), intArrayOf(255, 285, 315, 345))
+                    if (a.ranges.withIndex().any { (i, r) -> !(0 until 4).all { k -> r[k] == defaults[i][k] } && (r[4] != 0 || r[5] != 0 || r[6] != 0) }) approxAdjust.add("Hue/Saturation color ranges (the standard ranges are used)")
+                    FxParams(kind = FxKind.HUE_SAT, hueSat = HueSat(
+                        master = if (a.colorize) HueShift(0f, 0f, (a.colorization[2] / 100f).coerceIn(-1f, 1f)) else shift(a.master, 0),
+                        bands = a.ranges.map { shift(it, 4) },
+                        colorize = a.colorize,
+                        colorHue = ((a.colorization[0] % 360 + 360) % 360).toFloat(),
+                        colorSat = (a.colorization[1] / 100f).coerceIn(0f, 1f),
+                    ))
+                }
+                is PsdAdjust.ColorBalance -> {
+                    fun cs(v: IntArray) = ColorShift(v[0] / 100f, v[1] / 100f, v[2] / 100f)
+                    FxParams(kind = FxKind.COLOR_BALANCE, colorBalance = ColorBalance(cs(a.shadows), cs(a.midtones), cs(a.highlights), a.preserve))
+                }
+                is PsdAdjust.BlackWhite -> FxParams(kind = FxKind.BLACK_WHITE, blackWhite = BlackWhite(
+                    weights = a.weights.map { it / 100f },
+                    tint = a.tint,
+                    tintColor = a.tintColor?.let { color(it) } ?: 0xFFE1D3B3.toInt(),
+                ))
+                is PsdAdjust.PhotoFilter -> {
+                    val c = a.xyz?.let { xyz(it) } ?: a.components?.let { comps ->
+                        when (a.space) {
+                            0 -> Color.rgb(comps[0] shr 8, comps[1] shr 8, comps[2] shr 8)
+                            1 -> Color.HSVToColor(floatArrayOf(comps[0] * 360f / 65536f, comps[1] / 65535f, comps[2] / 65535f))
+                            7 -> lab(comps[0] / 100.0, comps[1].toShort() / 100.0, comps[2].toShort() / 100.0)
+                            else -> 0xFFEC8A00.toInt()
+                        }
+                    } ?: 0xFFEC8A00.toInt()
+                    FxParams(kind = FxKind.PHOTO_FILTER, photoFilter = PhotoFilter(c or 0xFF000000.toInt(), (a.density / 100f).coerceIn(0f, 1f), a.preserve))
+                }
+                is PsdAdjust.GradientMap -> {
+                    if (a.stops.size < 2) return null
+                    val sorted = a.stops.sortedBy { it.first }
+                    FxParams(kind = FxKind.GRADIENT_MAP, gradientMap = GradientMap(
+                        colors = sorted.map { (_, c) -> Color.rgb(c[0] shr 8, c[1] shr 8, c[2] shr 8) },
+                        positions = sorted.map { (it.first / 4096f).coerceIn(0f, 1f) },
+                        reverse = a.reversed,
+                    ))
+                }
+                is PsdAdjust.Invert -> FxParams(kind = FxKind.CURVES, curves = Curves(listOf(listOf(CurvePoint(0f, 1f), CurvePoint(1f, 0f)), Curves.LINE, Curves.LINE, Curves.LINE)))
+                else -> return null
+            }
+            val mask = pixelMask(pl, isFolder = false)
+            val props = LayerProps(
+                name = pl.name.ifBlank { pl.adjustment ?: "Adjustment" },
+                visible = !pl.hidden,
+                opacity = pl.opacity / 255f,
+                blend = exact(blend(pl.blendKey), "an adjustment layer"),
+                maskDisabled = mask?.second ?: false,
+                parent = parent,
+                clip = clip,
+                adjust = fx,
+            )
+            return Layer(doc.newId(), props, TileGrid(alphaOnly = false), mask = mask?.first ?: TileGrid(alphaOnly = true), kind = LayerKind.ADJUSTMENT)
+        }
+
+        /** CIE XYZ (Y 0..1, or percent) to sRGB. */
+        fun xyz(v: DoubleArray): Int {
+            val k = if (v[1] > 2.0) 100.0 else 1.0
+            val x = v[0] / k
+            val y = v[1] / k
+            val z = v[2] / k
+            val rl = 3.2406 * x - 1.5372 * y - 0.4986 * z
+            val gl = -0.9689 * x + 1.8758 * y + 0.0415 * z
+            val bl = 0.0557 * x - 0.2040 * y + 1.0570 * z
+            fun gamma(c: Double): Int {
+                val g = if (c <= 0.0031308) 12.92 * c else 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+                return (g * 255).roundToInt().coerceIn(0, 255)
+            }
+            return Color.rgb(gamma(rl), gamma(gl), gamma(bl))
+        }
+
+        // ------------------------------------------------------------ patterns
+
+        /** A pattern used by an effect or fill ("Ptrn" with its id), added to your patterns; its key. */
+        fun patternKey(ptrn: Map<*, *>?): String? {
+            val id = (ptrn?.get("Idnt") as? String)?.trim('\u0000') ?: return null
+            val p = f.patterns[id] ?: f.patterns.entries.firstOrNull { it.key.trim('\u0000') == id }?.value ?: return null
+            return Patterns.imported(id, p.name) {
+                val (w, h, px) = PsdReader.patternPixels(f, p) ?: return@imported null
+                Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+            }
         }
 
         // ------------------------------------------------------------ text and smart objects
@@ -253,7 +492,7 @@ object PsdImport {
                 textAsPixels++
                 return null
             }
-            if (t.mixed) mixedText++
+            if (t.mixed && t.runs.isEmpty()) mixedText++
             val font = PsdFonts.map(t.fontName)
             val tf = t.transform
             val m = Matrix()
@@ -285,7 +524,39 @@ object PsdImport {
                 boxWidth = if (box != null) (box[2] - box[0]).toFloat().coerceAtLeast(1f) else 0f,
                 psdFont = t.fontName ?: "",
             )
-            return props.copy(text = spec)
+            return props.copy(text = spec.copy(runs = textRuns(t, spec)))
+        }
+
+        /** The parts of [t] styled differently from its first style (kept as runs on [base]). */
+        fun textRuns(t: PsdText, base: TextSpec): List<TextRun> {
+            if (t.runs.size < 2) return emptyList()
+            val first = t.runs.first()
+            val out = ArrayList<TextRun>()
+            var at = 0
+            for (r in t.runs) {
+                val start = at
+                at += r.length
+                val end = min(at, base.text.length)
+                if (end <= start) continue
+                val font = if (r.fontName != first.fontName) PsdFonts.map(r.fontName).also { f ->
+                    if (!f.exact) r.fontName?.let { fonts.add("$it → ${f.label}") }
+                }.key else null
+                val run = TextRun(
+                    start, end,
+                    fontKey = font,
+                    size = if (r.fontSize != first.fontSize) r.fontSize.toFloat().coerceIn(1f, 4000f) else null,
+                    color = if (r.color != first.color) r.color else null,
+                    fauxBold = if (r.fauxBold != first.fauxBold) r.fauxBold else null,
+                    fauxItalic = if (r.fauxItalic != first.fauxItalic) r.fauxItalic else null,
+                    underline = if (r.underline != first.underline) r.underline else null,
+                )
+                if (run.fontKey == null && run.size == null && run.color == null && run.fauxBold == null && run.fauxItalic == null && run.underline == null) continue
+                // Next to an identical one: one run
+                val last = out.lastOrNull()
+                if (last != null && last.end == start && last.copy(start = 0, end = 0) == run.copy(start = 0, end = 0)) out[out.lastIndex] = last.copy(end = end)
+                else out.add(run)
+            }
+            return out
         }
 
         /**
@@ -322,8 +593,9 @@ object PsdImport {
                 // The contents' own width ÷ height, as Photoshop has it
                 val size = so?.get("Sz  ") as? Map<*, *>
                 val expect = (size?.get("Wdth") as? Number)?.toFloat()?.let { w -> (size["Hght"] as? Number)?.toFloat()?.takeIf { it > 0f }?.let { w / it } }
-                // The same smart object used more than once: read it once, each copy its own document
-                contents = contentsCache[linked.id]?.shallowCopy() ?: try {
+                // The same smart object used more than once: read once, and the copies stay linked
+                // (they share their contents, so editing one changes them all, like Photoshop)
+                contents = contentsCache[linked.id] ?: try {
                     embedded(linked, expect)?.also { contentsCache[linked.id] = it }
                 } catch (e: OutOfMemoryError) {
                     null
@@ -619,29 +891,13 @@ object PsdImport {
             return grid to m.disabled
         }
 
-        /** The outline of a vector mask, in document pixels. */
+        /**
+         * The outline of a vector mask, in document pixels: its outlines joined by their path
+         * operations (older files: holes by the even-odd rule, like the hole in an O).
+         */
         fun path(vm: PsdVectorMask): Path {
-            val w = f.width * s
-            val h = f.height * s
-            val p = Path()
-            for (sp in vm.paths) {
-                val k = sp.knots
-                if (k.isEmpty()) continue
-                p.moveTo((k[0].x * w).toFloat(), (k[0].y * h).toFloat())
-                for (i in 1 until k.size) {
-                    val a = k[i - 1]
-                    val b = k[i]
-                    p.cubicTo((a.outX * w).toFloat(), (a.outY * h).toFloat(), (b.inX * w).toFloat(), (b.inY * h).toFloat(), (b.x * w).toFloat(), (b.y * h).toFloat())
-                }
-                if (sp.closed) {
-                    val a = k.last()
-                    val b = k[0]
-                    p.cubicTo((a.outX * w).toFloat(), (a.outY * h).toFloat(), (b.inX * w).toFloat(), (b.inY * h).toFloat(), (b.x * w).toFloat(), (b.y * h).toFloat())
-                    p.close()
-                }
-            }
-            // Shapes cut out of others (like the hole in an O)
-            p.fillType = if (vm.invert) Path.FillType.INVERSE_EVEN_ODD else Path.FillType.EVEN_ODD
+            val p = ShapeSpec.customPath(parts(vm), evenOdd = true, full = RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()))
+            if (vm.invert) p.toggleInverseFillType()
             return p
         }
 
@@ -685,8 +941,15 @@ object PsdImport {
             if (outline != null && vector?.invert != true) area.set(bounds)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
             val solid = pl.solidColor
+            val pattern = pl.patternFill
             if (solid != null) {
                 paint.color = color(solid["Clr "]) or 0xFF000000.toInt()
+            } else if (pattern != null) {
+                val bmp = patternKey(pattern["Ptrn"] as? Map<*, *>)?.let { Patterns.bitmapFor(it, Color.BLACK, Color.WHITE) } ?: return grid
+                val k = (num(pattern["Scl "], 100.0) / 100.0).toFloat() * s
+                paint.shader = android.graphics.BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).apply {
+                    setLocalMatrix(Matrix().apply { setScale(k, k) })
+                }
             } else {
                 val g = pl.gradientFill!!
                 val fx = gradient(g, g["Opct"]?.let { opacity(it) } ?: 1f, Blend.NORMAL)
@@ -728,63 +991,77 @@ object PsdImport {
 
         fun blend(key: String): Blend = when (key) {
             "norm", "pass" -> Blend.NORMAL
+            "diss" -> Blend.DISSOLVE
             "dark" -> Blend.DARKEN
             "mul " -> Blend.MULTIPLY
             "idiv" -> Blend.COLOR_BURN
+            "lbrn" -> Blend.LINEAR_BURN
+            "dkCl" -> Blend.DARKER_COLOR
             "lite" -> Blend.LIGHTEN
             "scrn" -> Blend.SCREEN
             "div " -> Blend.COLOR_DODGE
             "lddg" -> Blend.LINEAR_DODGE
+            "lgCl" -> Blend.LIGHTER_COLOR
             "over" -> Blend.OVERLAY
             "sLit" -> Blend.SOFT_LIGHT
             "hLit" -> Blend.HARD_LIGHT
+            "vLit" -> Blend.VIVID_LIGHT
+            "lLit" -> Blend.LINEAR_LIGHT
+            "pLit" -> Blend.PIN_LIGHT
+            "hMix" -> Blend.HARD_MIX
             "diff" -> Blend.DIFFERENCE
             "smud" -> Blend.EXCLUSION
+            "fsub" -> Blend.SUBTRACT
+            "fdiv" -> Blend.DIVIDE
             "hue " -> Blend.HUE
             "sat " -> Blend.SATURATION
             "colr" -> Blend.COLOR
             "lum " -> Blend.LUMINOSITY
             else -> {
-                val (name, near) = when (key) {
-                    "diss" -> "Dissolve" to Blend.NORMAL
-                    "lbrn" -> "Linear Burn" to Blend.MULTIPLY
-                    "dkCl" -> "Darker Color" to Blend.DARKEN
-                    "lgCl" -> "Lighter Color" to Blend.LIGHTEN
-                    "vLit" -> "Vivid Light" to Blend.HARD_LIGHT
-                    "lLit" -> "Linear Light" to Blend.HARD_LIGHT
-                    "pLit" -> "Pin Light" to Blend.HARD_LIGHT
-                    "hMix" -> "Hard Mix" to Blend.HARD_LIGHT
-                    "fsub" -> "Subtract" to Blend.DIFFERENCE
-                    "fdiv" -> "Divide" to Blend.COLOR_DODGE
-                    else -> key.trim() to Blend.NORMAL
-                }
-                approxBlends.add("$name → ${near.label}")
-                near
+                approxBlends.add("${key.trim()} → Normal")
+                Blend.NORMAL
             }
         }
 
+        /** A blend mode for an effect or adjustment layer: those use Android's own, so others become the nearest. */
+        fun exact(b: Blend, where: String): Blend {
+            if (b.exact) return b
+            val near = Blend.entries.first { it.exact && it.mode == b.mode }
+            approxBlends.add("${b.label} on $where → ${near.label}")
+            return near
+        }
+
         /** A blend mode from a layer style's descriptor ("Md  "). */
-        fun fxBlend(v: Any?): Blend = when ((v as? PsdEnum)?.value) {
+        fun fxBlend(v: Any?): Blend = exact(when ((v as? PsdEnum)?.value) {
             null, "Nrml" -> Blend.NORMAL
+            "Dslv" -> Blend.DISSOLVE
             "Drkn" -> Blend.DARKEN
             "Mltp" -> Blend.MULTIPLY
             "CBrn" -> Blend.COLOR_BURN
+            "linearBurn" -> Blend.LINEAR_BURN
+            "darkerColor" -> Blend.DARKER_COLOR
             "Lghn" -> Blend.LIGHTEN
             "Scrn" -> Blend.SCREEN
             "CDdg" -> Blend.COLOR_DODGE
             "linearDodge" -> Blend.LINEAR_DODGE
+            "lighterColor" -> Blend.LIGHTER_COLOR
             "Ovrl" -> Blend.OVERLAY
             "SftL" -> Blend.SOFT_LIGHT
             "HrdL" -> Blend.HARD_LIGHT
+            "vividLight" -> Blend.VIVID_LIGHT
+            "linearLight" -> Blend.LINEAR_LIGHT
+            "pinLight" -> Blend.PIN_LIGHT
+            "hardMix" -> Blend.HARD_MIX
             "Dfrn" -> Blend.DIFFERENCE
             "Xclu" -> Blend.EXCLUSION
+            "blendSubtraction" -> Blend.SUBTRACT
+            "blendDivide" -> Blend.DIVIDE
             "H   " -> Blend.HUE
             "Strt" -> Blend.SATURATION
             "Clr " -> Blend.COLOR
             "Lmns" -> Blend.LUMINOSITY
-            "linearBurn" -> Blend.MULTIPLY
             else -> Blend.NORMAL
-        }
+        }, "an effect")
 
         var unsupportedColors = 0
 
@@ -983,10 +1260,34 @@ object PsdImport {
                     highlightBlend = fxBlend(d["hglM"]), shadowBlend = fxBlend(d["sdwM"]),
                 ))
             }
-            // Effects we don't have
-            for ((key, label) in listOf("IrGl" to "Inner Glow", "ChFX" to "Satin", "patternFill" to "Pattern Overlay")) {
-                val d = (single?.get(key) ?: multi?.get(key)) as? Map<*, *>
-                if (d?.get("enab") == true) unsupportedFx.add(label)
+            pick("IrGl", "innerGlowMulti")?.let { d ->
+                val c = if (d["Clr "] != null) color(d["Clr "]) else {
+                    (d["Grad"] as? Map<*, *>)?.let { unsupportedFx.add("gradient glows (the first color is used)") }
+                    gradient(d, 1f, Blend.NORMAL).colors.firstOrNull() ?: Color.WHITE
+                }
+                st = st.copy(innerGlow = InnerGlowFx(
+                    on = d["enab"] == true, color = c, opacity = opacity(d["Opct"]), size = px(d["blur"], blurK),
+                    choke = (num(d["Ckmt"], 0.0) / 100.0).toFloat().coerceIn(0f, 1f),
+                    center = (d["glwS"] as? PsdEnum)?.value == "SrcC", blend = fxBlend(d["Md  "]),
+                ))
+            }
+            pick("ChFX", "satinMulti")?.let { d ->
+                st = st.copy(satin = SatinFx(
+                    on = d["enab"] == true, color = color(d["Clr "]), opacity = opacity(d["Opct"]),
+                    angle = num(d["lagl"], 19.0).toFloat(), distance = px(d["Dstn"], k), size = px(d["blur"], blurK),
+                    invert = d["Invr"] != false, blend = fxBlend(d["Md  "]),
+                ))
+            }
+            pick("patternFill", "patternFillMulti")?.let { d ->
+                val key = patternKey(d["Ptrn"] as? Map<*, *>)
+                if (key == null) {
+                    if (d["enab"] == true) unsupportedFx.add("Pattern Overlay (its pattern isn't saved in the file)")
+                } else {
+                    st = st.copy(patternOverlay = PatternFx(
+                        on = d["enab"] == true, key = key, scale = (num(d["Scl "], 100.0) / 100.0).toFloat().coerceIn(0.05f, 8f),
+                        opacity = opacity(d["Opct"]), blend = fxBlend(d["Md  "]),
+                    ))
+                }
             }
             return st
         }

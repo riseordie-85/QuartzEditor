@@ -16,6 +16,7 @@ import com.tim.quartzeditor.engine.SmartContentsChange
 import com.tim.quartzeditor.engine.SmartSpec
 import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.placedAfterResize
+import com.tim.quartzeditor.engine.linkedCopies
 import com.tim.quartzeditor.engine.Transformer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -166,6 +167,20 @@ fun EditorViewModel.convertToSmart() {
     }
 }
 
+/** Gives linked smart layer [layerId] contents of its own, so editing it no longer changes its copies. */
+fun EditorViewModel.unlinkSmart(layerId: Long) {
+    val d = doc ?: return
+    if (pendingFirst { unlinkSmart(layerId) }) return
+    val l = d.layer(layerId) ?: return
+    val sp = l.props.smart ?: return
+    if (linkedCopies(d, l).isEmpty()) {
+        toast("This smart layer isn't linked to any others")
+        return
+    }
+    stackEdit("Unlink smart layer") { l.props = l.props.copy(smart = SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf())) }
+    toast("\"${l.props.name}\" has contents of its own now")
+}
+
 // ===================================================================== tabs
 
 /** Opens smart layer [layerId]'s contents in a tab (or goes to it if it's open already). */
@@ -175,7 +190,8 @@ fun EditorViewModel.openSmartContents(layerId: Long) {
     val l = d.layer(layerId) ?: return
     val spec = l.props.smart ?: return
     val here = currentTab ?: return
-    val open = tabs.indexOfFirst { it.parent === here && it.layerId == layerId && it.doc === spec.contents }
+    // Linked copies share their contents: one tab for all of them
+    val open = tabs.indexOfFirst { it.parent === here && it.doc === spec.contents }
     if (open >= 0) {
         switchTab(open)
         return
@@ -263,6 +279,7 @@ private suspend fun EditorViewModel.commitNow(t: EditorTab) {
     val parent = t.parent ?: return
     val pd = parent.doc
     val l = pd.layer(t.layerId)?.takeIf { it.props.smart?.contents === t.doc }
+        ?: pd.layers.firstOrNull { it.props.smart?.contents === t.doc }
     if (l == null) {
         t.committedVersion = t.history.version
         return
@@ -274,6 +291,14 @@ private suspend fun EditorViewModel.commitNow(t: EditorTab) {
     val clip = Transformer.limitFor(pd.width, pd.height).apply { offset(-l.x, -l.y) }
     val version = t.doc.renderVersion
     val grid = withContext(Dispatchers.Default) { SmartArt.rasterize(spec, clip, version = version) }
+    // Linked copies (the same contents) are drawn again too, each where it is
+    val others = linkedCopies(pd, l).map { o ->
+        val os = o.props.smart!!
+        val ospec = os.withQuad(placedAfterResize(os.quad, before, t.doc))
+        val oclip = Transformer.limitFor(pd.width, pd.height).apply { offset(-o.x, -o.y) }
+        val og = withContext(Dispatchers.Default) { SmartArt.rasterize(ospec, oclip, version = version) }
+        SmartContentsChange.LinkedRedraw(o, o.props, if (ospec === os) o.props else o.props.copy(smart = ospec), o.tiles, og)
+    }
     val after = ContentsSnap.of(t.doc)
     val beforeProps = l.props
     val afterProps = if (spec === oldSpec) beforeProps else beforeProps.copy(smart = spec)
@@ -281,7 +306,12 @@ private suspend fun EditorViewModel.commitNow(t: EditorTab) {
     l.props = afterProps
     l.tiles = grid
     pd.touched(l)
-    parent.history.record(SmartContentsChange(l, t.doc, before, after, beforeProps, afterProps, beforeTiles, grid))
+    for (o in others) {
+        o.layer.props = o.afterProps
+        o.layer.tiles = o.afterTiles
+        pd.touched(o.layer)
+    }
+    parent.history.record(SmartContentsChange(l, t.doc, before, after, beforeProps, afterProps, beforeTiles, grid, others))
     t.baseline = after
     t.committedVersion = t.history.version
 }
@@ -364,7 +394,7 @@ private fun EditorViewModel.enterTab(i: Int, force: Boolean = false) {
     if (!force && i == tabIndex && doc === t.doc) return
     // A smart layer that was deleted (or undone away) meanwhile: its tab goes
     val p = t.parent
-    if (p != null && p.doc.layer(t.layerId)?.props?.smart?.contents !== t.doc) {
+    if (p != null && p.doc.layers.none { it.props.smart?.contents === t.doc }) {
         tabs = tabs.filter { it !== t && !isInside(it, t) }
         toast("That smart layer isn't there any more")
         enterTab(tabs.indexOf(p).coerceAtLeast(0), force = true)

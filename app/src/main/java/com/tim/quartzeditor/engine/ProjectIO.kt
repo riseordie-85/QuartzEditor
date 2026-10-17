@@ -115,6 +115,9 @@ object ProjectIO {
      */
     private fun writeDoc(zip: ZipOutputStream, doc: Doc, prefix: String, canvasColor: Int, buf: ByteBuffer) {
         val layers = JSONArray()
+        // Linked smart layers: the contents are written once, with the first of them
+        val firstWith = java.util.IdentityHashMap<Doc, Long>()
+        for (l in doc.layers) l.props.smart?.let { sp -> firstWith.putIfAbsent(sp.contents, l.id) }
         for (l in doc.layers) {
             val p = l.props
             layers.put(
@@ -140,7 +143,13 @@ object ProjectIO {
                     .also { o -> p.adjust?.let { o.put("adjust", it.toJson()) } }
                     .also { o -> p.shape?.let { o.put("shape", it.toJson()) } }
                     .also { o -> p.text?.let { o.put("text", it.toJson()) } }
-                    .also { o -> p.smart?.let { o.put("smart", it.toJson()) } }
+                    .also { o ->
+                        p.smart?.let { sp ->
+                            val js = sp.toJson()
+                            firstWith[sp.contents]?.takeIf { it != l.id }?.let { js.put("linkTo", it) }
+                            o.put("smart", js)
+                        }
+                    }
             )
         }
         // Settings first, then the pixels
@@ -164,7 +173,7 @@ object ProjectIO {
             for ((k, b) in l.tiles.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}L${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf)
             l.mask?.let { m -> for ((k, b) in m.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}M${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf) }
         }
-        for (l in doc.layers) l.props.smart?.let { writeDoc(zip, it.contents, "${prefix}S${l.id}/", canvasColor, buf) }
+        for (l in doc.layers) l.props.smart?.let { if (firstWith[it.contents] == l.id) writeDoc(zip, it.contents, "${prefix}S${l.id}/", canvasColor, buf) }
     }
 
     private fun putTile(zip: ZipOutputStream, name: String, b: Bitmap, buf: ByteBuffer) {
@@ -248,8 +257,12 @@ object ProjectIO {
             // A smart layer's contents, read like a picture of its own
             if (kind == LayerKind.SMART) {
                 val sp = "${prefix}S$id/"
-                val quad = o.optJSONObject("smart")?.optJSONArray("quad")?.let { a -> FloatArray(8) { a.optDouble(it).toFloat() } }
-                if (quad != null && jsons.containsKey(sp)) props = props.copy(smart = SmartSpec(buildDoc(jsons, tiles, sp), quad))
+                val so = o.optJSONObject("smart")
+                val quad = so?.optJSONArray("quad")?.let { a -> FloatArray(8) { a.optDouble(it).toFloat() } }
+                // A linked copy shares the contents of the layer they were written with
+                val linked = so?.optLong("linkTo", -1L)?.takeIf { it >= 0 }?.let { doc.layer(it)?.props?.smart?.contents }
+                if (quad != null && linked != null) props = props.copy(smart = SmartSpec(linked, quad))
+                else if (quad != null && jsons.containsKey(sp)) props = props.copy(smart = SmartSpec(buildDoc(jsons, tiles, sp), quad))
                 else kind = LayerKind.PIXELS
             }
             doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask, kind).also { it.collapsed = o.optBoolean("collapsed") })

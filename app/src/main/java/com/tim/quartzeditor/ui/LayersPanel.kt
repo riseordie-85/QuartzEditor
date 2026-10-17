@@ -630,6 +630,10 @@ private fun LayerRow(
             Text(p.name, color = if (p.visible) Q.text else Q.textDim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val notes = buildList {
                 if (layer.isShape) add("Shape")
+                if (layer.isSmart) {
+                    val n = vm.doc?.let { com.tim.quartzeditor.engine.linkedCopies(it, layer).size } ?: 0
+                    if (n > 0) add("Linked to $n other${if (n > 1) "s" else ""}")
+                }
                 if (clipBase != null) add("Clipped to ${clipBase.props.name}")
                 if (p.blend != Blend.NORMAL && !(layer.isGroup && p.passThrough)) add(p.blend.label)
                 if (layer.isGroup && !p.passThrough && p.blend == Blend.NORMAL) add("Normal")
@@ -664,6 +668,9 @@ private fun LayerRow(
         }
         if (layer.isSmart || !layer.isAdjustment || layer.needsRaster) Page("Convert") {
             if (layer.isSmart) Item("Edit contents") { vm.openSmartContents(layer.id) }
+            if (layer.isSmart && vm.doc?.let { com.tim.quartzeditor.engine.linkedCopies(it, layer).isNotEmpty() } == true) {
+                Item("Unlink from copies") { vm.unlinkSmart(layer.id) }
+            }
             if (!layer.isAdjustment) Item(if (ids.size > 1) "Convert ${ids.size} to smart layer" else "Convert to smart layer") {
                 if (ids.size > 1) vm.convertToSmart() else vm.onLayer(layer.id) { convertToSmart() }
             }

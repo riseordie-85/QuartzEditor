@@ -372,11 +372,15 @@ class Doc(width: Int, height: Int, name: String) {
      */
     fun shallowCopy(): Doc {
         val d = Doc(width, height, name)
+        // Linked smart layers (sharing contents) share them in the copy too
+        val contentsCopies = java.util.IdentityHashMap<Doc, Doc>()
         for (l in layers) {
             val t = TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }
             val m = l.mask?.let { src -> TileGrid(alphaOnly = true).also { it.tiles.putAll(src.tiles) } }
             // A smart layer's contents are copied the same way (they may be edited meanwhile)
-            val props = l.props.smart?.let { sp -> l.props.copy(smart = SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf())) } ?: l.props
+            val props = l.props.smart?.let { sp ->
+                l.props.copy(smart = SmartSpec(contentsCopies.getOrPut(sp.contents) { sp.contents.shallowCopy() }, sp.quad.copyOf()))
+            } ?: l.props
             d.layers.add(Layer(l.id, props, t, l.x, l.y, m, l.kind).also { it.collapsed = l.collapsed })
         }
         d.activeId = activeId

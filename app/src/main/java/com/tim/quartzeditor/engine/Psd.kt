@@ -31,8 +31,14 @@ class PsdMask(val top: Int, val left: Int, val bottom: Int, val right: Int, val 
 /** One point of a vector path, in fractions of the canvas (0..1): the curve handles before and after, and the point. */
 class PsdKnot(val inX: Double, val inY: Double, val x: Double, val y: Double, val outX: Double, val outY: Double)
 
-/** A shape outline from a vector mask: its points, and whether it closes. */
-class PsdSubpath(val knots: List<PsdKnot>, val closed: Boolean)
+/**
+ * A shape outline from a vector mask: its points, whether it closes, and how it joins the ones
+ * before it ([op]: 1 add, 2 subtract, 3 intersect, 0 exclude; -1 not saved, older files).
+ */
+class PsdSubpath(val knots: List<PsdKnot>, val closed: Boolean, val op: Int = -1)
+
+/** A pattern saved in the file (used by pattern overlays and pattern fill layers): where its pixels are. */
+class PsdPattern(val id: String, val name: String, val mode: Int, val offset: Long, val end: Long)
 
 /** A smart object's embedded file: where its bytes are in the .psd. */
 class PsdLinked(val id: String, val name: String, val type: String, val offset: Long, val length: Long)
@@ -77,6 +83,16 @@ class PsdLayer {
     var placedQuad: DoubleArray? = null
     /** Text layer: what it says and how it looks ("TySh"). */
     var text: PsdText? = null
+    /** Shape layer: the live shape it was drawn as (rectangle, ellipse…; "vogk"). */
+    var vectorOrigin: Map<String, Any?>? = null
+    /** Shape layer: its outline and whether it's filled ("vstk"). */
+    var vectorStroke: Map<String, Any?>? = null
+    /** Pattern fill layer ("PtFl"). */
+    var patternFill: Map<String, Any?>? = null
+    /** Adjustment layer: its settings block (key, bytes), read by [PsdAdjust.parse]. */
+    var adjustData: Pair<String, ByteArray>? = null
+    /** Newer adjustment settings (Brightness/Contrast keeps its real values here: "CgEd"). */
+    var adjustDesc: Map<String, Any?>? = null
 
     val width: Int get() = right - left
     val height: Int get() = bottom - top
@@ -85,7 +101,7 @@ class PsdLayer {
     val isGroupEnd: Boolean get() = section == 3
     val isText: Boolean get() = "TySh" in keys
     val isSmart: Boolean get() = "SoLd" in keys || "PlLd" in keys || "SoLE" in keys
-    val isFill: Boolean get() = solidColor != null || gradientFill != null || "PtFl" in keys
+    val isFill: Boolean get() = solidColor != null || gradientFill != null || patternFill != null || "PtFl" in keys
     /** Photoshop's name for an adjustment layer's kind, or null when it isn't one. */
     val adjustment: String? get() = ADJUSTMENTS.entries.firstOrNull { it.key in keys }?.value
 
@@ -122,6 +138,8 @@ class PsdFile(
     val mergedAlpha: Boolean = false,
     /** Smart objects' embedded files, by id. */
     val linked: Map<String, PsdLinked> = emptyMap(),
+    /** Patterns, by id. */
+    val patterns: Map<String, PsdPattern> = emptyMap(),
 ) {
     val psb: Boolean get() = version == 2
 }
@@ -173,6 +191,7 @@ object PsdReader {
         var layers: List<PsdLayer> = emptyList()
         var mergedAlpha = false
         val linked = HashMap<String, PsdLinked>()
+        val patterns = HashMap<String, PsdPattern>()
         if (lmLen > 0) {
             val infoLen = if (psb) r.u64() else r.u32()
             val infoEnd = r.pos + infoLen
@@ -194,6 +213,12 @@ object PsdReader {
                     mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
                     layers = readLayerInfo(r, psb, depth)
                 }
+                if (key == "Patt" || key == "Pat2" || key == "Pat3") {
+                    try {
+                        readPatterns(r, at + len, patterns)
+                    } catch (e: Exception) {
+                    }
+                }
                 if (key == "lnk2" || key == "lnkD" || key == "lnk3") {
                     try {
                         readLinked(r, at + len, linked)
@@ -207,7 +232,115 @@ object PsdReader {
             }
         }
         r.pos = lmEnd
-        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha, linked)
+        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha, linked, patterns)
+    }
+
+    /** The patterns block: each pattern's name, id and where its pixels are (read later by [patternPixels]). */
+    private fun readPatterns(r: Reader, end: Long, out: MutableMap<String, PsdPattern>) {
+        while (r.pos + 4 < end) {
+            val len = r.u32()
+            val start = r.pos
+            if (len <= 0 || start + len > end) break
+            r.skip(4) // version
+            val mode = r.i32()
+            r.skip(4) // size (also in the pixel data)
+            val name = r.unicode().trimEnd('\u0000')
+            val id = r.latin1(r.u8())
+            if (mode == 2) r.skip(256 * 3 + 4) // indexed colors: palette
+            out[id] = PsdPattern(id, name, mode, r.pos, start + len)
+            r.pos = start + len
+            while ((r.pos - start) % 4 != 0L) r.pos++
+        }
+    }
+
+    /**
+     * A pattern's pixels as ARGB (width, height, pixels), or null when they can't be read.
+     * Patterns are saved as a "virtual memory array": a rectangle, then each channel raw or RLE.
+     */
+    fun patternPixels(file: PsdFile, p: PsdPattern): Triple<Int, Int, IntArray>? = try {
+        val r = Reader(file.buffer.duplicate().order(ByteOrder.BIG_ENDIAN))
+        r.pos = p.offset
+        r.skip(4) // version (3)
+        val vmaLen = r.u32()
+        val vmaEnd = r.pos + vmaLen
+        val top = r.i32(); val left = r.i32(); val bottom = r.i32(); val right = r.i32()
+        val w = right - left
+        val h = bottom - top
+        if (w <= 0 || h <= 0 || w.toLong() * h > 16_000_000L) throw PsdException("Bad pattern")
+        val nch = r.i32()
+        val planes = ArrayList<ByteArray?>()
+        // Up to 24 channels plus the user and sheet masks; only "written" ones have data
+        for (c in 0 until nch + 2) {
+            if (r.pos + 8 > vmaEnd) break
+            val written = r.i32()
+            if (written == 0) {
+                planes.add(null)
+                continue
+            }
+            val clen = r.u32()
+            val cEnd = r.pos + clen
+            if (clen == 0L) {
+                planes.add(null)
+                continue
+            }
+            r.skip(4) // depth
+            r.skip(16) // rectangle
+            val depth = r.u16()
+            val comp = r.u8()
+            val plane = ByteArray(w * h)
+            val bpp = if (depth == 16) 2 else 1
+            if (comp == 1) {
+                val counts = IntArray(h) { r.u16() }
+                val row = ByteArray(w * bpp)
+                for (y in 0 until h) {
+                    val rowEnd = r.pos + counts[y]
+                    var i = 0
+                    while (r.pos < rowEnd && i < row.size) {
+                        val n = r.u8().toByte().toInt()
+                        if (n >= 0) {
+                            for (k in 0..n) if (i < row.size) row[i++] = r.u8().toByte() else r.u8()
+                        } else if (n != -128) {
+                            val v = r.u8().toByte()
+                            for (k in 0 until 1 - n) if (i < row.size) row[i++] = v
+                        }
+                    }
+                    r.pos = rowEnd
+                    for (x in 0 until w) plane[y * w + x] = row[x * bpp]
+                }
+            } else {
+                for (i in 0 until w * h) {
+                    plane[i] = r.u8().toByte()
+                    if (bpp == 2) r.skip(1)
+                }
+            }
+            r.pos = cEnd
+            planes.add(plane)
+        }
+        val px = IntArray(w * h)
+        fun ch(i: Int): ByteArray? = planes.getOrNull(i)
+        when (p.mode) {
+            1 -> { // grayscale
+                val g = ch(0) ?: throw PsdException("Bad pattern")
+                val a = ch(1)
+                for (i in px.indices) {
+                    val v = g[i].toInt() and 0xFF
+                    px[i] = ((a?.get(i)?.toInt()?.and(0xFF) ?: 255) shl 24) or (v shl 16) or (v shl 8) or v
+                }
+            }
+            else -> { // RGB (CMYK patterns are rare: read as RGB)
+                val rr = ch(0) ?: throw PsdException("Bad pattern")
+                val gg = ch(1) ?: rr
+                val bb = ch(2) ?: rr
+                val a = ch(3)
+                for (i in px.indices) {
+                    px[i] = ((a?.get(i)?.toInt()?.and(0xFF) ?: 255) shl 24) or ((rr[i].toInt() and 0xFF) shl 16) or
+                        ((gg[i].toInt() and 0xFF) shl 8) or (bb[i].toInt() and 0xFF)
+                }
+            }
+        }
+        Triple(w, h, px)
+    } catch (e: Exception) {
+        null
     }
 
     /** Smart objects' files: embedded ones ("liFD") keep their bytes here, found by the smart object's id. */
@@ -352,6 +485,40 @@ object PsdReader {
                 l.multiEffects = Descriptors.read(r)
             }
             "vmsk", "vsms" -> l.vectorMask = readVectorMask(r, len)
+            "vogk" -> {
+                r.skip(8) // version, descriptor version
+                l.vectorOrigin = Descriptors.read(r)
+            }
+            "vstk" -> {
+                r.skip(4)
+                l.vectorStroke = Descriptors.read(r)
+            }
+            "PtFl" -> {
+                r.skip(4)
+                l.patternFill = Descriptors.read(r)
+            }
+            // Newer shape layers keep their fill here: which kind, then its settings
+            "vscg" -> {
+                val kind = r.ascii(4)
+                r.skip(4)
+                val d = Descriptors.read(r)
+                when (kind) {
+                    "SoCo" -> l.solidColor = d
+                    "GdFl" -> l.gradientFill = d
+                    "PtFl" -> l.patternFill = d
+                }
+            }
+            "CgEd" -> {
+                r.skip(4)
+                l.adjustDesc = Descriptors.read(r)
+            }
+            in PsdLayer.ADJUSTMENTS.keys -> {
+                if (len in 0..1_000_000) {
+                    val b = ByteArray(len.toInt())
+                    for (i in b.indices) b[i] = r.u8().toByte()
+                    l.adjustData = key to b
+                }
+            }
             "SoLd", "SoLE" -> {
                 r.skip(12) // "soLD", version, descriptor version
                 l.smart = Descriptors.read(r)
@@ -392,14 +559,17 @@ object PsdReader {
         val paths = ArrayList<PsdSubpath>()
         var knots: ArrayList<PsdKnot>? = null
         var closed = true
+        var op = -1
         fun fixed(): Double = r.i32() / 16777216.0
         while (r.pos + 26 <= end) {
             val at = r.pos
             when (val selector = r.u16()) {
-                // A new outline starts (0 closed, 3 open)
+                // A new outline starts (0 closed, 3 open), with how it joins the ones before it
                 0, 3 -> {
-                    knots?.let { if (it.isNotEmpty()) paths.add(PsdSubpath(it, closed)) }
+                    knots?.let { if (it.isNotEmpty()) paths.add(PsdSubpath(it, closed, op)) }
                     closed = selector == 0
+                    r.skip(2) // number of points
+                    op = r.i16()
                     knots = ArrayList()
                 }
                 // A point on it
@@ -412,7 +582,7 @@ object PsdReader {
             }
             r.pos = at + 26
         }
-        knots?.let { if (it.isNotEmpty()) paths.add(PsdSubpath(it, closed)) }
+        knots?.let { if (it.isNotEmpty()) paths.add(PsdSubpath(it, closed, op)) }
         return PsdVectorMask(paths, invert = flags and 1 != 0, disabled = flags and 4 != 0)
     }
 
@@ -807,6 +977,8 @@ class PsdText(
     val warped: Boolean,
     /** Arc warp: −1 … 1 like our curve. */
     val arc: Double,
+    /** Each style run (how many characters, and how they look), in order. */
+    val runs: List<PsdTextRun> = emptyList(),
 ) {
     companion object {
         fun from(tf: DoubleArray, desc: Map<String, Any?>, warpStyle: String?, warpValue: Double, warpHorizontal: Boolean): PsdText {
@@ -848,6 +1020,27 @@ class PsdText(
             val isBox = (shape.m("ShapeType") as? Number)?.toInt() == 1
             val box = if (isBox) (shape.m("Cookie").m("Photoshop").m("BoxBounds") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }?.takeIf { it.size == 4 }?.toDoubleArray() else null
             val arc = warpStyle == "warpArc" && warpHorizontal
+            // Every run, for text with several styles
+            val lengths = (dict.m("StyleRun").m("RunLengthArray") as? List<*>)?.map { (it as? Number)?.toInt() ?: 0 }
+            fun colorOf(st: Map<*, *>?): Int {
+                val vals = ((st?.get("FillColor") ?: normal?.get("FillColor")).m("Values") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }
+                if (vals == null || vals.size < 4) return color
+                fun c(x: Double) = (x.coerceIn(0.0, 1.0) * 255 + 0.5).toInt()
+                return (c(vals[0]) shl 24) or (c(vals[1]) shl 16) or (c(vals[2]) shl 8) or c(vals[3])
+            }
+            val styleRuns = if (runs != null && lengths != null && lengths.size == runs.size) runs.indices.map { i ->
+                val st = styleOf(runs[i])
+                fun rv(key: String): Any? = st?.get(key) ?: normal?.get(key)
+                PsdTextRun(
+                    length = lengths[i],
+                    fontName = fonts?.getOrNull((rv("Font") as? Number)?.toInt() ?: 0).m("Name") as? String,
+                    fontSize = (rv("FontSize") as? Number)?.toDouble() ?: num("FontSize", 12.0),
+                    color = colorOf(st),
+                    fauxBold = (rv("FauxBold") as? Boolean) ?: false,
+                    fauxItalic = (rv("FauxItalic") as? Boolean) ?: false,
+                    underline = (rv("Underline") as? Boolean) ?: false,
+                )
+            } else emptyList()
             return PsdText(
                 text = txt,
                 transform = tf,
@@ -866,10 +1059,22 @@ class PsdText(
                 mixed = mixed,
                 warped = warpStyle != null && warpStyle != "warpNone" && !(arc && box == null),
                 arc = if (arc) (warpValue / 100.0).coerceIn(-1.0, 1.0) else 0.0,
+                runs = styleRuns,
             )
         }
     }
 }
+
+/** One style run of a text layer: [length] characters in this font, size, color and style. */
+class PsdTextRun(
+    val length: Int,
+    val fontName: String?,
+    val fontSize: Double,
+    val color: Int,
+    val fauxBold: Boolean,
+    val fauxItalic: Boolean,
+    val underline: Boolean,
+)
 
 /**
  * Photoshop's text "EngineData": a PostScript-like listing (<< /Key value >>, [ arrays ],
@@ -1006,6 +1211,164 @@ object EngineData {
                 "false" -> false
                 else -> w.toDoubleOrNull() ?: w
             }
+        }
+    }
+}
+
+/** An adjustment layer's settings, as Photoshop saved them (turned into ours by the importer). */
+sealed class PsdAdjust {
+    /** Per channel (0 = all, 1 red, 2 green, 3 blue): input black, input white, output black, output white (0..255), gamma ×100. */
+    class Levels(val records: List<IntArray>) : PsdAdjust()
+    /** Per channel (0 = all, 1 red…): points as (input, output), 0..255. */
+    class Curves(val channels: Map<Int, List<Pair<Int, Int>>>) : PsdAdjust()
+    class BrightnessContrast(val brightness: Int, val contrast: Int, val legacy: Boolean) : PsdAdjust()
+    class Exposure(val exposure: Float, val offset: Float, val gamma: Float) : PsdAdjust()
+    class Vibrance(val vibrance: Int, val saturation: Int) : PsdAdjust()
+    /** [colorization] and [master]: hue, saturation, lightness; [ranges]: 4 range values + hue, saturation, lightness. */
+    class HueSat(val colorize: Boolean, val colorization: IntArray, val master: IntArray, val ranges: List<IntArray>) : PsdAdjust()
+    /** Each: cyan–red, magenta–green, yellow–blue (-100..100). */
+    class ColorBalance(val shadows: IntArray, val midtones: IntArray, val highlights: IntArray, val preserve: Boolean) : PsdAdjust()
+    /** Reds, yellows, greens, cyans, blues, magentas (percent). */
+    class BlackWhite(val weights: IntArray, val tint: Boolean, val tintColor: Map<*, *>?) : PsdAdjust()
+    /** The filter's color: CIE XYZ ([xyz], newer files) or a color space and four components. */
+    class PhotoFilter(val xyz: DoubleArray?, val space: Int, val components: IntArray?, val density: Int, val preserve: Boolean) : PsdAdjust()
+    /** Stops: location 0..4096 and RGB 0..65535 (alpha from the transparency stops). */
+    class GradientMap(val reversed: Boolean, val stops: List<Pair<Int, IntArray>>, val alpha: List<Pair<Int, Int>>) : PsdAdjust()
+    object Invert : PsdAdjust()
+    class Posterize(val levels: Int) : PsdAdjust()
+    class Threshold(val level: Int) : PsdAdjust()
+
+    companion object {
+        /** The settings of [l], or null when they can't be read (or aren't a kind we turn into ours). */
+        fun parse(l: PsdLayer): PsdAdjust? {
+            val (key, data) = l.adjustData ?: return if ("brit" in l.keys || l.adjustDesc != null) brightness(l, null) else null
+            return try {
+                val b = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+                when (key) {
+                    "levl" -> {
+                        b.short // version
+                        Levels(List(29) { IntArray(5) { b.short.toInt() and 0xFFFF } })
+                    }
+                    "curv" -> curves(b)
+                    "brit" -> brightness(l, b)
+                    "expA" -> {
+                        b.short
+                        Exposure(b.float, b.float, b.float)
+                    }
+                    "vibA" -> {
+                        b.int
+                        val d = Descriptors.read(PsdReader.Reader(b).also { it.pos = b.position().toLong() })
+                        Vibrance(num(d["vibrance"]), num(d["Strt"]))
+                    }
+                    "hue2", "hue " -> {
+                        b.short
+                        val colorize = b.get().toInt() != 0
+                        b.get()
+                        val cz = IntArray(3) { b.short.toInt() }
+                        val master = IntArray(3) { b.short.toInt() }
+                        val ranges = List(6) { IntArray(7) { b.short.toInt() } }
+                        HueSat(colorize, cz, master, ranges)
+                    }
+                    "blnc" -> {
+                        val sh = IntArray(3) { b.short.toInt() }
+                        val mid = IntArray(3) { b.short.toInt() }
+                        val hi = IntArray(3) { b.short.toInt() }
+                        ColorBalance(sh, mid, hi, b.get().toInt() != 0)
+                    }
+                    "blwh" -> {
+                        b.int
+                        val d = Descriptors.read(PsdReader.Reader(b).also { it.pos = b.position().toLong() })
+                        BlackWhite(
+                            intArrayOf(num(d["Rd  "], 40), num(d["Yllw"], 60), num(d["Grn "], 40), num(d["Cyn "], 60), num(d["Bl  "], 20), num(d["Mgnt"], 80)),
+                            d["useTint"] == true, d["tintColor"] as? Map<*, *>,
+                        )
+                    }
+                    "phfl" -> {
+                        val version = b.short.toInt()
+                        var xyz: DoubleArray? = null
+                        var space = 0
+                        var comps: IntArray? = null
+                        if (version == 3) xyz = DoubleArray(3) { b.int / 65536.0 } else {
+                            space = b.short.toInt()
+                            comps = IntArray(4) { b.short.toInt() and 0xFFFF }
+                        }
+                        PhotoFilter(xyz, space, comps, b.int, b.get().toInt() != 0)
+                    }
+                    "grdm" -> gradientMap(b)
+                    "nvrt" -> Invert
+                    "post" -> Posterize(b.short.toInt())
+                    "thrs" -> Threshold(b.short.toInt())
+                    else -> null
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        private fun num(v: Any?, def: Int = 0): Int = (v as? Number)?.toInt() ?: (v as? PsdUnit)?.value?.toInt() ?: def
+
+        private fun brightness(l: PsdLayer, b: ByteBuffer?): PsdAdjust {
+            // Newer files keep the real values in their own block
+            l.adjustDesc?.let { d -> return BrightnessContrast(num(d["Brgh"]), num(d["Cntr"]), d["useLegacy"] == true) }
+            if (b == null) return BrightnessContrast(0, 0, false)
+            return BrightnessContrast(b.short.toInt(), b.short.toInt(), true)
+        }
+
+        private fun curves(b: ByteBuffer): PsdAdjust? {
+            val isMap = b.get().toInt() != 0
+            if (isMap) return null
+            val version = b.short.toInt()
+            val countMap = b.int
+            val out = LinkedHashMap<Int, List<Pair<Int, Int>>>()
+            val ids = if (version == 1) (0 until 32).filter { countMap and (1 shl it) != 0 } else (0 until countMap).toList()
+            for (id in ids) {
+                val n = b.short.toInt() and 0xFFFF
+                if (n !in 2..19) return null
+                // Saved as (output, input)
+                out[id] = List(n) { val o = b.short.toInt() and 0xFFFF; val i = b.short.toInt() and 0xFFFF; i to o }
+            }
+            // Newer files repeat the curves with their channel numbers
+            if (version == 1 && b.remaining() >= 10) {
+                val sig = ByteArray(4).also { b.get(it) }
+                if (String(sig, Charsets.ISO_8859_1) == "Crv ") {
+                    b.short
+                    val count = b.int
+                    val extra = LinkedHashMap<Int, List<Pair<Int, Int>>>()
+                    repeat(count) {
+                        val id = b.short.toInt() and 0xFFFF
+                        val n = b.short.toInt() and 0xFFFF
+                        if (n !in 2..19) return Curves(out)
+                        extra[id] = List(n) { val o = b.short.toInt() and 0xFFFF; val i = b.short.toInt() and 0xFFFF; i to o }
+                    }
+                    if (extra.isNotEmpty()) return Curves(extra)
+                }
+            }
+            return Curves(out)
+        }
+
+        private fun gradientMap(b: ByteBuffer): PsdAdjust {
+            val version = b.short.toInt()
+            val reversed = b.get().toInt() != 0
+            b.get() // dithered
+            if (version == 3) b.int // method
+            val nameLen = b.int
+            b.position(b.position() + nameLen * 2)
+            val n = b.short.toInt() and 0xFFFF
+            val stops = List(n) {
+                val loc = b.int
+                b.int // midpoint
+                b.short // color space
+                val c = IntArray(4) { b.short.toInt() and 0xFFFF }
+                b.short
+                loc to c
+            }
+            val m = b.short.toInt() and 0xFFFF
+            val alpha = List(m) {
+                val loc = b.int
+                b.int
+                loc to (b.short.toInt() and 0xFFFF)
+            }
+            return GradientMap(reversed, stops, alpha)
         }
     }
 }

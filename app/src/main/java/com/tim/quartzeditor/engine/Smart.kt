@@ -235,14 +235,19 @@ class SmartContentsChange(
     private val afterProps: LayerProps,
     private val beforeTiles: TileGrid,
     private val afterTiles: TileGrid,
+    /** Linked copies (the same contents) drawn again along with it. */
+    private val others: List<LinkedRedraw> = emptyList(),
 ) : Change {
+    /** A linked copy's settings and pixels before and after. */
+    class LinkedRedraw(val layer: Layer, val beforeProps: LayerProps, val afterProps: LayerProps, val beforeTiles: TileGrid, val afterTiles: TileGrid)
+
     override val label = "Edit smart layer"
     override val cost: Long = run {
         val a = before.bitmaps()
         val b = after.bitmaps()
         a.filter { it !in b }.sumOf { it.allocationByteCount.toLong() } +
             b.filter { it !in a }.sumOf { it.allocationByteCount.toLong() } +
-            beforeTiles.bytes() + afterTiles.bytes()
+            beforeTiles.bytes() + afterTiles.bytes() + others.sumOf { it.beforeTiles.bytes() + it.afterTiles.bytes() }
     }
 
     override fun undo(doc: Doc) {
@@ -250,6 +255,11 @@ class SmartContentsChange(
         layer.props = beforeProps
         layer.tiles = beforeTiles
         doc.touched(layer)
+        for (o in others) {
+            o.layer.props = o.beforeProps
+            o.layer.tiles = o.beforeTiles
+            doc.touched(o.layer)
+        }
     }
 
     override fun redo(doc: Doc) {
@@ -257,5 +267,16 @@ class SmartContentsChange(
         layer.props = afterProps
         layer.tiles = afterTiles
         doc.touched(layer)
+        for (o in others) {
+            o.layer.props = o.afterProps
+            o.layer.tiles = o.afterTiles
+            doc.touched(o.layer)
+        }
     }
+}
+
+/** Smart layers in [doc] showing the same contents as [l] (linked copies), not counting [l]. */
+fun linkedCopies(doc: Doc, l: Layer): List<Layer> {
+    val c = l.props.smart?.contents ?: return emptyList()
+    return doc.layers.filter { it !== l && it.props.smart?.contents === c }
 }

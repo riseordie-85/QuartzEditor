@@ -100,6 +100,27 @@ object Patterns {
         return "u:${file.name}"
     }
 
+    /**
+     * A pattern from a Photoshop file ([id] is Photoshop's own), added to your patterns the first
+     * time it's seen; returns its key, or null when it can't be saved. [pixels] makes its picture.
+     */
+    fun imported(id: String, name: String, pixels: () -> Bitmap?): String? {
+        val context = app ?: return null
+        val tag = Integer.toHexString(id.hashCode())
+        dir(context).listFiles()?.firstOrNull { it.name.startsWith("psd$tag-") }?.let { return "u:${it.name}" }
+        val bmp = pixels() ?: return null
+        val safe = name.substringAfterLast('=').replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "Pattern" }.take(40)
+        val file = File(dir(context), "psd$tag-${System.currentTimeMillis()}_$safe.png")
+        return try {
+            file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            "u:${file.name}"
+        } catch (e: Exception) {
+            null
+        } finally {
+            bmp.recycle()
+        }
+    }
+
     fun delete(context: Context, key: String) {
         if (!key.startsWith("u:")) return
         File(dir(context), key.removePrefix("u:")).delete()

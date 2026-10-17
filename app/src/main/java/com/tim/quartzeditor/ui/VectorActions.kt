@@ -121,7 +121,7 @@ internal fun Doc.vectorClip(l: Layer): RectF = VectorArt.clipFor(l.x, l.y, width
  * keeps its pixels until then.)
  */
 internal fun vectorClipped(l: Layer, x: Int, y: Int, w: Int, h: Int): Boolean {
-    if (!l.isVector || !fontReady(l.props.text?.fontKey)) return false
+    if (!l.isVector || l.props.text?.fonts?.all { fontReady(it) } == false) return false
     val b = VectorArt.bounds(l.props) ?: return false
     return !VectorArt.clipFor(x, y, w, h).contains(b)
 }
@@ -227,7 +227,7 @@ private fun EditorViewModel.fetchFont(key: String?) {
 
 /** Loads the fonts a document's text layers use, so editing them later doesn't wait. */
 internal fun EditorViewModel.preloadFonts(d: Doc) {
-    for (k in d.layers.mapNotNull { it.props.text?.fontKey }.toSet()) fetchFont(k)
+    for (k in d.layers.flatMap { it.props.text?.fonts.orEmpty() }.toSet()) fetchFont(k)
 }
 
 // ===================================================================== editing shape and text layers
@@ -240,21 +240,30 @@ fun EditorViewModel.editVector(id: Long, label: String, change: (LayerProps) -> 
         toast("\"${l.props.name}\" is locked")
         return
     }
-    val next = change(l.props)
+    val next = withRuns(l.props, change(l.props))
     if (next == l.props) return
-    withFont(next.text?.fontKey) {
-        val cur = d.layer(id)?.takeIf { it.isVector && doc === d } ?: return@withFont
+    withFonts(next.text?.fonts ?: emptySet()) {
+        val cur = d.layer(id)?.takeIf { it.isVector && doc === d } ?: return@withFonts
         // While typing, changes join the text edit (one undo step for all of it)
         if (textEdit?.layerId == id) {
-            cur.props = leavePsdPixels(change(cur.props), cur.props.text?.fontKey)
+            cur.props = leavePsdPixels(withRuns(cur.props, change(cur.props)), cur.props.text?.fontKey)
             redrawVectorSoon(cur)
-            return@withFont
+            return@withFonts
         }
         stackEdit(label) {
-            cur.props = leavePsdPixels(change(cur.props), cur.props.text?.fontKey)
+            cur.props = leavePsdPixels(withRuns(cur.props, change(cur.props)), cur.props.text?.fontKey)
             redrawVectorNow(cur)
         }
     }
+}
+
+/** [next] (a change to text layer settings [before]) with its differently styled parts following the change. */
+private fun withRuns(before: LayerProps, next: LayerProps): LayerProps {
+    val b = before.text ?: return next
+    val n = next.text ?: return next
+    if (n.runs.isEmpty()) return next
+    val f = n.runsFollow(b)
+    return if (f === n) next else next.copy(text = f)
 }
 
 /** A change while a slider moves; [commitVector] makes it one undo step when the finger lifts. */
@@ -263,9 +272,9 @@ fun EditorViewModel.editVectorLive(id: Long, change: (LayerProps) -> LayerProps)
     val l = d.layer(id)?.takeIf { it.isVector } ?: return
     if (l.props.locked) return
     // A font still on its way: wait for it (the slider stays put for that moment)
-    val key = l.props.text?.fontKey
-    if (!fontReady(key)) {
-        fetchFont(key)
+    val waiting = l.props.text?.fonts?.filter { !fontReady(it) }.orEmpty()
+    if (waiting.isNotEmpty()) {
+        waiting.forEach { fetchFont(it) }
         return
     }
     if (vectorBefore != null && vectorBeforeId != id) commitVector("Change layer")
@@ -273,7 +282,7 @@ fun EditorViewModel.editVectorLive(id: Long, change: (LayerProps) -> LayerProps)
         vectorBefore = d.snapshot()
         vectorBeforeId = id
     }
-    l.props = leavePsdPixels(change(l.props), l.props.text?.fontKey)
+    l.props = leavePsdPixels(withRuns(l.props, change(l.props)), l.props.text?.fontKey)
     redrawVectorSoon(l)
     d.invalidate()
 }
@@ -474,8 +483,8 @@ fun EditorViewModel.beginTextEdit(l: Layer) {
     val spec0 = l.props.text
     val swapTo = spec0?.psdFont?.takeIf { it.isNotEmpty() }?.let { com.tim.quartzeditor.engine.PsdFonts.map(it) }
         ?.takeIf { it.exact && it.key != spec0.fontKey }?.key
-    withFont(swapTo ?: l.props.text?.fontKey) {
-        if (doc !== d || d.layer(l.id) !== l || textEdit != null) return@withFont
+    withFonts(setOfNotNull(swapTo ?: l.props.text?.fontKey) + (l.props.text?.runs?.mapNotNull { it.fontKey } ?: emptyList())) {
+        if (doc !== d || d.layer(l.id) !== l || textEdit != null) return@withFonts
         // Typing happens with the Text tool (its settings show in Properties)
         if (tool != Tool.TEXT) onToolButton(Tool.TEXT)
         if (d.activeId != l.id) selectLayer(l.id)
@@ -495,7 +504,7 @@ fun EditorViewModel.typeText(s: String) {
     val t = textEdit ?: return
     val l = doc?.layer(t.layerId) ?: return
     val spec = l.props.text ?: return
-    val next = spec.copy(text = s)
+    val next = spec.copy(text = s, runs = com.tim.quartzeditor.engine.TextRun.adjust(spec.runs, spec.text, s))
     // The layer is named after its text until you rename it
     val autoName = l.props.name == spec.title || l.props.name == "Text"
     l.props = l.props.copy(text = next, name = if (autoName) next.title else l.props.name)
