@@ -182,7 +182,7 @@ object DocRenderer {
         canvas.save()
         canvas.clipRect(area)
         // Blend modes mix with the layers below, not with whatever is behind the canvas (the checkerboard)
-        val isolate = doc.layers.any { it.props.visible && it.props.blend != Blend.NORMAL }
+        val isolate = doc.layers.any { it.props.visible && (it.props.blend != Blend.NORMAL || it.props.style.anyBlend) }
         if (isolate) canvas.saveLayer(bounds, null)
         val ctx = Ctx(doc, w, h, bounds, Paint().apply { isFilterBitmap = smooth }, stroke, preview, smooth, effects, view, viewW, viewH, pixelScale)
         drawList(canvas, doc.children(0L), ctx)
@@ -545,14 +545,21 @@ object DocRenderer {
 
         // With effects: opacity covers everything, fill only the layer's own pixels (like Photoshop)
         if (p.opacity <= 0f) return
+        val op = p.opacity.coerceIn(0f, 1f)
+        if (built != null) {
+            // Effects behind the layer with a blend mode of their own blend with what's below it
+            if (style.longShadow.on && style.longShadow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity * op, style.longShadow.blend.mode)
+            if (style.dropShadow.on && style.dropShadow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity * op, style.dropShadow.blend.mode)
+            if (style.outerGlow.on && style.outerGlow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity * op, style.outerGlow.blend.mode)
+        }
         canvas.saveLayer(bounds, Paint().apply {
-            alpha = (p.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+            alpha = (op * 255).roundToInt()
             blendMode = p.blend.mode
         })
         if (built != null) {
-            if (style.longShadow.on) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity)
-            if (style.dropShadow.on) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity)
-            if (style.outerGlow.on) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity)
+            if (style.longShadow.on && style.longShadow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity)
+            if (style.dropShadow.on && style.dropShadow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity)
+            if (style.outerGlow.on && style.outerGlow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity)
         }
         // Fill fades the pixels only
         if (p.fill > 0f) {
@@ -562,7 +569,10 @@ object DocRenderer {
         }
         if (pattern != null) {
             // The layer's shape, filled with the pattern (it moves with the layer)
-            canvas.saveLayer(bounds, Paint().apply { alpha = (pattern.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+            canvas.saveLayer(bounds, Paint().apply {
+                alpha = (pattern.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+                blendMode = pattern.blend.mode
+            })
             drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
             Effects.drawPatternOverlay(canvas, pattern, dx, dy)
             canvas.restore()
@@ -572,7 +582,10 @@ object DocRenderer {
             // The layer's shape, filled with the gradient across where its pixels are
             val area = (built?.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }
             if (area != null) {
-                canvas.saveLayer(bounds, Paint().apply { alpha = (gradient.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+                canvas.saveLayer(bounds, Paint().apply {
+                    alpha = (gradient.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+                    blendMode = gradient.blend.mode
+                })
                 drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
                 Effects.drawGradientFill(canvas, gradient, area)
                 canvas.restore()
@@ -580,7 +593,10 @@ object DocRenderer {
         }
         if (overlay != null && overlay.opacity > 0f) {
             // The layer's shape, colored (at full strength, whatever the fill)
-            canvas.saveLayer(bounds, Paint().apply { alpha = (overlay.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+            canvas.saveLayer(bounds, Paint().apply {
+                alpha = (overlay.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+                blendMode = overlay.blend.mode
+            })
             drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
             canvas.drawPaint(Paint().apply {
                 color = overlay.color or 0xFF000000.toInt()
@@ -590,12 +606,12 @@ object DocRenderer {
         }
         if (built != null && style.innerShadow.on) {
             // Already limited to the layer's shape
-            Effects.drawImage(canvas, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity)
+            Effects.drawImage(canvas, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity, style.innerShadow.blend.mode)
         }
         if (built != null && style.bevel.on) {
-            // Highlights lighten, shadows darken (like Photoshop's Screen and Multiply)
-            Effects.drawImage(canvas, built, built.bevelLight, dx, dy, style.bevel.highlight, style.bevel.highlightOpacity, android.graphics.BlendMode.SCREEN)
-            Effects.drawImage(canvas, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, android.graphics.BlendMode.MULTIPLY)
+            // Highlights lighten, shadows darken (Screen and Multiply unless changed, like Photoshop)
+            Effects.drawImage(canvas, built, built.bevelLight, dx, dy, style.bevel.highlight, style.bevel.highlightOpacity, style.bevel.highlightBlend.mode)
+            Effects.drawImage(canvas, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, style.bevel.shadowBlend.mode)
         }
         if (built != null && style.stroke.on) {
             val area = (built.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }

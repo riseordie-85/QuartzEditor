@@ -7,7 +7,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -198,16 +200,13 @@ fun Workspace(vm: EditorViewModel) {
                 TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).widthIn(max = 420.dp))
 
                 // Panels folded away: the layers as a small stack at the edge
-                if (!panelsOpen) {
-                    LayerStrip(
-                        vm,
-                        onExpand = {
-                            vm.toggleSection(PanelSection.LAYERS, open = true)
-                            panelsOpen = true
-                        },
-                        onPlaceImage = requestPlace,
-                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
-                    )
+                androidx.compose.animation.AnimatedVisibility(
+                    !panelsOpen,
+                    enter = fadeIn() + slideInHorizontally { it / 2 },
+                    exit = fadeOut() + slideOutHorizontally { it / 2 },
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
+                ) {
+                    LayerStrip(vm, onPlaceImage = requestPlace)
                 }
 
                 // Show / hide panels
@@ -217,7 +216,13 @@ fun Workspace(vm: EditorViewModel) {
                     modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp),
                 ) { panelsOpen = !panelsOpen }
             }
-            if (docked) {
+            // Docked panels slide in and out from the side
+            AnimatedVisibility(
+                docked,
+                enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
+                exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
+            ) {
+              Row {
                 Spacer(Modifier.width(12.dp))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
@@ -235,6 +240,7 @@ fun Workspace(vm: EditorViewModel) {
                         )
                     }
                 }
+              }
             }
         }
 

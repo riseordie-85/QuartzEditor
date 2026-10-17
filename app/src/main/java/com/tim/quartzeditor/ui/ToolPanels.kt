@@ -155,6 +155,8 @@ fun ToolOptions(vm: EditorViewModel) {
                 SmallButton("Background") { vm.selectSubject(background = true) }
                 SmallButton("Invert") { vm.invertSelection() }
             }
+            Spacer(Modifier.height(8.dp))
+            GrowRow(vm)
             Text("Finds the main subject on your device (it may download once through Google Play services).", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.height(10.dp))
         }
@@ -312,6 +314,15 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                     }
                 }
+                Text("Expand / shrink (pixels)", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(-10, -5, -2, 2, 5, 10).forEach { g ->
+                        SmallButton(if (g > 0) "+$g" else "$g") {
+                            menu = false
+                            vm.growSelection(g.toFloat())
+                        }
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text("Select subject") }, onClick = { menu = false; vm.selectSubject(background = false) })
@@ -348,5 +359,24 @@ fun CropBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         ) {
             Icon(Icons.Outlined.Check, contentDescription = "Apply crop", tint = Color.White)
         }
+    }
+}
+
+/** Expand or shrink the selection by a typed number of pixels. */
+@Composable
+private fun GrowRow(vm: EditorViewModel) {
+    var px by remember { mutableStateOf(5f) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SmallButton("Shrink") { vm.growSelection(-px) }
+        SmallButton("Expand") { vm.growSelection(px) }
+        Spacer(Modifier.width(4.dp))
+        Text("by", color = Q.textDim, fontSize = 13.sp)
+        PanelField(
+            "${px.roundToInt()}",
+            onCommit = { t -> t.trim().toFloatOrNull()?.takeIf { it.isFinite() && it >= 1f }?.let { px = it.coerceAtMost(500f) } },
+            modifier = Modifier.width(56.dp),
+            numeric = true,
+        )
+        Text("px", color = Q.textDim, fontSize = 13.sp)
     }
 }

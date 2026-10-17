@@ -39,6 +39,7 @@ data class StrokeFx(
     /** Filled with [gradient] (across the layer, like Gradient Fill) instead of [color]. */
     val useGradient: Boolean = false,
     val gradient: GradientFx = GradientFx(on = true),
+    val blend: Blend = Blend.NORMAL,
 )
 
 /**
@@ -52,6 +53,7 @@ data class PatternFx(
     val colorB: Int = Color.WHITE,
     val scale: Float = 1f,
     val opacity: Float = 1f,
+    val blend: Blend = Blend.NORMAL,
 )
 
 /** Bevel & Emboss gloss contour: how the light and shade are spread across the bevel. */
@@ -71,6 +73,7 @@ data class ShadowFx(
     val angle: Float = 120f,
     val distance: Float = 12f,
     val size: Float = 16f,
+    val blend: Blend = Blend.NORMAL,
 ) {
     /** Shadow offset: away from the light. */
     val dx: Float get() = -cos(angle * PI / 180.0).toFloat() * distance
@@ -82,12 +85,14 @@ data class GlowFx(
     val color: Int = 0xFFFFE27A.toInt(),
     val opacity: Float = 0.8f,
     val size: Float = 24f,
+    val blend: Blend = Blend.NORMAL,
 )
 
 data class OverlayFx(
     val on: Boolean = false,
     val color: Int = 0xFFE53935.toInt(),
     val opacity: Float = 1f,
+    val blend: Blend = Blend.NORMAL,
 )
 
 enum class BevelStyle(val label: String) {
@@ -116,6 +121,9 @@ data class BevelFx(
     val shadow: Int = Color.BLACK,
     val shadowOpacity: Float = 0.75f,
     val gloss: GlossContour = GlossContour.LINEAR,
+    /** How the light and shade are blended (Photoshop's Highlight Mode and Shadow Mode). */
+    val highlightBlend: Blend = Blend.SCREEN,
+    val shadowBlend: Blend = Blend.MULTIPLY,
 )
 
 /**
@@ -133,6 +141,8 @@ data class GradientFx(
     val opacity: Float = 1f,
     /** Where each color sits, 0..1 (null: evenly spaced). */
     val positions: List<Float>? = null,
+    /** As Gradient Fill: how it blends with the layer (a stroke's gradient uses the stroke's). */
+    val blend: Blend = Blend.NORMAL,
 )
 
 /**
@@ -147,6 +157,7 @@ data class LongShadowFx(
     val angle: Float = 135f,
     val length: Float = 200f,
     val fade: Boolean = true,
+    val blend: Blend = Blend.NORMAL,
 ) {
     val ux: Float get() = -cos(angle * PI / 180.0).toFloat()
     val uy: Float get() = sin(angle * PI / 180.0).toFloat()
@@ -164,6 +175,14 @@ data class LayerStyle(
     val longShadow: LongShadowFx = LongShadowFx(),
     val patternOverlay: PatternFx = PatternFx(),
 ) {
+    /**
+     * An effect behind the layer (drop shadow, outer glow, long shadow) has a blend mode of its own:
+     * it's drawn straight onto what's below the layer.
+     */
+    val anyBlend: Boolean
+        get() = (dropShadow.on && dropShadow.blend != Blend.NORMAL) || (outerGlow.on && outerGlow.blend != Blend.NORMAL) ||
+            (longShadow.on && longShadow.blend != Blend.NORMAL)
+
     val any: Boolean get() = stroke.on || dropShadow.on || innerShadow.on || outerGlow.on || colorOverlay.on || bevel.on || gradientFill.on || longShadow.on || patternOverlay.on
 
     /**
@@ -205,27 +224,28 @@ data class LayerStyle(
 
     fun toJson(): JSONObject = JSONObject()
         .put("stroke", JSONObject().put("on", stroke.on).put("size", stroke.size.toDouble()).put("position", stroke.position.name).put("color", stroke.color).put("opacity", stroke.opacity.toDouble())
-            .put("useGradient", stroke.useGradient).put("gradient", gradientJson(stroke.gradient)))
+            .put("useGradient", stroke.useGradient).put("gradient", gradientJson(stroke.gradient)).put("blend", stroke.blend.name))
         .put("dropShadow", shadowJson(dropShadow))
         .put("innerShadow", shadowJson(innerShadow))
-        .put("outerGlow", JSONObject().put("on", outerGlow.on).put("color", outerGlow.color).put("opacity", outerGlow.opacity.toDouble()).put("size", outerGlow.size.toDouble()))
-        .put("colorOverlay", JSONObject().put("on", colorOverlay.on).put("color", colorOverlay.color).put("opacity", colorOverlay.opacity.toDouble()))
+        .put("outerGlow", JSONObject().put("on", outerGlow.on).put("color", outerGlow.color).put("opacity", outerGlow.opacity.toDouble()).put("size", outerGlow.size.toDouble()).put("blend", outerGlow.blend.name))
+        .put("colorOverlay", JSONObject().put("on", colorOverlay.on).put("color", colorOverlay.color).put("opacity", colorOverlay.opacity.toDouble()).put("blend", colorOverlay.blend.name))
         .put("bevel", JSONObject().put("on", bevel.on).put("style", bevel.style.name).put("depth", bevel.depth.toDouble()).put("up", bevel.up)
             .put("size", bevel.size.toDouble()).put("soften", bevel.soften.toDouble()).put("angle", bevel.angle.toDouble()).put("altitude", bevel.altitude.toDouble())
             .put("highlight", bevel.highlight).put("highlightOpacity", bevel.highlightOpacity.toDouble())
-            .put("shadow", bevel.shadow).put("shadowOpacity", bevel.shadowOpacity.toDouble()).put("gloss", bevel.gloss.name))
+            .put("shadow", bevel.shadow).put("shadowOpacity", bevel.shadowOpacity.toDouble()).put("gloss", bevel.gloss.name)
+            .put("highlightBlend", bevel.highlightBlend.name).put("shadowBlend", bevel.shadowBlend.name))
         .put("gradientFill", gradientJson(gradientFill))
         .put("patternOverlay", JSONObject().put("on", patternOverlay.on).put("key", patternOverlay.key)
             .put("colorA", patternOverlay.colorA).put("colorB", patternOverlay.colorB)
-            .put("scale", patternOverlay.scale.toDouble()).put("opacity", patternOverlay.opacity.toDouble()))
+            .put("scale", patternOverlay.scale.toDouble()).put("opacity", patternOverlay.opacity.toDouble()).put("blend", patternOverlay.blend.name))
         .put("longShadow", JSONObject().put("on", longShadow.on).put("color", longShadow.color).put("opacity", longShadow.opacity.toDouble())
-            .put("angle", longShadow.angle.toDouble()).put("length", longShadow.length.toDouble()).put("fade", longShadow.fade))
+            .put("angle", longShadow.angle.toDouble()).put("length", longShadow.length.toDouble()).put("fade", longShadow.fade).put("blend", longShadow.blend.name))
 
     companion object {
         private fun gradientJson(g: GradientFx) = JSONObject().put("on", g.on)
             .put("colors", org.json.JSONArray().also { a -> g.colors.forEach { a.put(it.toLong() and 0xFFFFFFFFL) } })
             .put("type", g.type.name).put("angle", g.angle.toDouble()).put("scale", g.scale.toDouble())
-            .put("reverse", g.reverse).put("opacity", g.opacity.toDouble())
+            .put("reverse", g.reverse).put("opacity", g.opacity.toDouble()).put("blend", g.blend.name)
             .also { o -> g.positions?.let { ps -> o.put("positions", org.json.JSONArray().also { a -> ps.forEach { a.put(it.toDouble()) } }) } }
 
         private fun gradientFrom(gf: JSONObject?, dg: GradientFx): GradientFx = if (gf == null) dg else GradientFx(
@@ -234,15 +254,20 @@ data class LayerStyle(
             GradientType.entries.firstOrNull { it.name == gf.optString("type") } ?: GradientType.LINEAR,
             gf.f("angle", dg.angle), gf.f("scale", dg.scale), gf.optBoolean("reverse"), gf.f("opacity", dg.opacity),
             gf.optJSONArray("positions")?.let { a -> List(a.length()) { a.optDouble(it).toFloat() } },
+            blendOf(gf, dg.blend),
         ).let { g -> if (g.positions != null && g.positions.size != g.colors.size) g.copy(positions = null) else g }
 
         private fun shadowJson(s: ShadowFx) = JSONObject().put("on", s.on).put("color", s.color).put("opacity", s.opacity.toDouble())
-            .put("angle", s.angle.toDouble()).put("distance", s.distance.toDouble()).put("size", s.size.toDouble())
+            .put("angle", s.angle.toDouble()).put("distance", s.distance.toDouble()).put("size", s.size.toDouble()).put("blend", s.blend.name)
+
+        /** A saved blend mode (or [def] for files from before they could be set). */
+        private fun blendOf(o: JSONObject, def: Blend): Blend = if (o.has("blend")) Blend.byName(o.optString("blend")) else def
 
         private fun JSONObject.f(name: String, def: Float) = optDouble(name, def.toDouble()).toFloat()
 
         private fun shadowFrom(o: JSONObject?, def: ShadowFx): ShadowFx = if (o == null) def else ShadowFx(
             o.optBoolean("on"), o.optInt("color", def.color), o.f("opacity", def.opacity), o.f("angle", def.angle), o.f("distance", def.distance), o.f("size", def.size),
+            blendOf(o, def.blend),
         )
 
         fun fromJson(o: JSONObject?): LayerStyle {
@@ -263,11 +288,12 @@ data class LayerStyle(
                     StrokePosition.entries.firstOrNull { it.name == st.optString("position") } ?: StrokePosition.OUTSIDE,
                     st.optInt("color", d.stroke.color), st.f("opacity", d.stroke.opacity),
                     st.optBoolean("useGradient"), gradientFrom(st.optJSONObject("gradient"), d.stroke.gradient),
+                    blendOf(st, d.stroke.blend),
                 ),
                 dropShadow = shadowFrom(o.optJSONObject("dropShadow"), d.dropShadow),
                 innerShadow = shadowFrom(o.optJSONObject("innerShadow"), d.innerShadow),
-                outerGlow = if (gl == null) d.outerGlow else GlowFx(gl.optBoolean("on"), gl.optInt("color", d.outerGlow.color), gl.f("opacity", d.outerGlow.opacity), gl.f("size", d.outerGlow.size)),
-                colorOverlay = if (ov == null) d.colorOverlay else OverlayFx(ov.optBoolean("on"), ov.optInt("color", d.colorOverlay.color), ov.f("opacity", d.colorOverlay.opacity)),
+                outerGlow = if (gl == null) d.outerGlow else GlowFx(gl.optBoolean("on"), gl.optInt("color", d.outerGlow.color), gl.f("opacity", d.outerGlow.opacity), gl.f("size", d.outerGlow.size), blendOf(gl, d.outerGlow.blend)),
+                colorOverlay = if (ov == null) d.colorOverlay else OverlayFx(ov.optBoolean("on"), ov.optInt("color", d.colorOverlay.color), ov.f("opacity", d.colorOverlay.opacity), blendOf(ov, d.colorOverlay.blend)),
                 bevel = if (bv == null) db else BevelFx(
                     bv.optBoolean("on"),
                     BevelStyle.entries.firstOrNull { it.name == bv.optString("style") } ?: BevelStyle.INNER,
@@ -276,18 +302,20 @@ data class LayerStyle(
                     bv.optInt("highlight", db.highlight), bv.f("highlightOpacity", db.highlightOpacity),
                     bv.optInt("shadow", db.shadow), bv.f("shadowOpacity", db.shadowOpacity),
                     GlossContour.entries.firstOrNull { it.name == bv.optString("gloss") } ?: GlossContour.LINEAR,
+                    if (bv.has("highlightBlend")) Blend.byName(bv.optString("highlightBlend")) else db.highlightBlend,
+                    if (bv.has("shadowBlend")) Blend.byName(bv.optString("shadowBlend")) else db.shadowBlend,
                 ),
                 gradientFill = gradientFrom(gf, dg),
                 patternOverlay = o.optJSONObject("patternOverlay")?.let { po ->
                     val dp = d.patternOverlay
                     PatternFx(
                         po.optBoolean("on"), po.optString("key", dp.key), po.optInt("colorA", dp.colorA), po.optInt("colorB", dp.colorB),
-                        po.f("scale", dp.scale), po.f("opacity", dp.opacity),
+                        po.f("scale", dp.scale), po.f("opacity", dp.opacity), blendOf(po, dp.blend),
                     )
                 } ?: d.patternOverlay,
                 longShadow = if (lsh == null) dl else LongShadowFx(
                     lsh.optBoolean("on"), lsh.optInt("color", dl.color), lsh.f("opacity", dl.opacity),
-                    lsh.f("angle", dl.angle), lsh.f("length", dl.length), lsh.optBoolean("fade", true),
+                    lsh.f("angle", dl.angle), lsh.f("length", dl.length), lsh.optBoolean("fade", true), blendOf(lsh, dl.blend),
                 ),
             )
         }
@@ -328,7 +356,11 @@ object Effects {
         layer.props.style.let { st ->
             st.copy(
                 colorOverlay = OverlayFx(), gradientFill = GradientFx(on = st.gradientFill.on), patternOverlay = PatternFx(),
-                stroke = st.stroke.copy(color = Color.BLACK, opacity = 1f, gradient = GradientFx(on = true)),
+                stroke = st.stroke.copy(color = Color.BLACK, opacity = 1f, gradient = GradientFx(on = true), blend = Blend.NORMAL),
+                // Blend modes only change how the images are drawn
+                dropShadow = st.dropShadow.copy(blend = Blend.NORMAL), innerShadow = st.innerShadow.copy(blend = Blend.NORMAL),
+                outerGlow = st.outerGlow.copy(blend = Blend.NORMAL), longShadow = st.longShadow.copy(blend = Blend.NORMAL),
+                bevel = st.bevel.copy(highlightBlend = Blend.SCREEN, shadowBlend = Blend.MULTIPLY),
             )
         }, layer.props.maskDisabled,
     )
@@ -663,12 +695,15 @@ half4 main(float2 p) {
     fun drawStroke(canvas: Canvas, fx: BuiltEffects, s: StrokeFx, dx: Float, dy: Float, area: RectF?) {
         val img = fx.stroke ?: return
         if (!s.useGradient || area == null) {
-            drawImage(canvas, fx, img, dx, dy, s.color, s.opacity)
+            drawImage(canvas, fx, img, dx, dy, s.color, s.opacity, s.blend.mode)
             return
         }
         val a = fx.area
         val dst = RectF(dx + a.left, dy + a.top, dx + a.right, dy + a.bottom)
-        canvas.saveLayer(dst, Paint().apply { alpha = (s.opacity.coerceIn(0f, 1f) * 255).roundToInt() })
+        canvas.saveLayer(dst, Paint().apply {
+            alpha = (s.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+            blendMode = s.blend.mode
+        })
         canvas.drawBitmap(img, null, dst, Paint().apply { isFilterBitmap = true; color = Color.WHITE })
         canvas.drawRect(dst, Paint().apply {
             shader = gradientShader(s.gradient, area)

@@ -5,19 +5,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Folder
@@ -29,33 +30,28 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.tim.quartzeditor.engine.FxKind
 import com.tim.quartzeditor.engine.Layer
-import kotlin.math.abs
 
 /**
- * The Layers panel folded away: a small stack of layer pictures at the edge of the picture (like
- * Photoshop on phones). The picked layer sits in the middle with its neighbours peeking out above
- * and below. Swipe up or down to go through the layers, tap one that peeks out to pick it, hold the
- * middle one to hide or show it. ⌃ opens the full panel; + adds a layer.
+ * The Layers panel folded away: a short column of layer pictures at the edge of the picture (like
+ * Photoshop on phones). Three show at a time; scroll for the rest. Tap one to pick it, hold one to
+ * hide or show it, + adds a layer. (The arrow at the bottom corner opens the full panels.)
  */
 @Composable
-fun LayerStrip(vm: EditorViewModel, onExpand: () -> Unit, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
+fun LayerStrip(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
     val d = vm.doc ?: return
     @Suppress("UNUSED_VARIABLE") val v = d.renderVersion
     // Top layer first, as in the panel (what's inside folded folders stays inside)
@@ -78,76 +74,44 @@ fun LayerStrip(vm: EditorViewModel, onExpand: () -> Unit, onPlaceImage: () -> Un
         }
     }
     at = at.coerceAtLeast(0)
-    val current by rememberUpdatedState(at)
-    val list by rememberUpdatedState(shown)
-    val density = LocalDensity.current
-    val step = with(density) { 30.dp.toPx() }
-    fun pick(i: Int) {
-        val l = list.getOrNull(i) ?: return
-        if (l.id != vm.doc?.activeId) vm.selectLayer(l.id)
+    val list = rememberLazyListState()
+    // Keep the picked layer in view (centered when there's room)
+    LaunchedEffect(shown[at].id) {
+        val first = list.firstVisibleItemIndex
+        if (at < first || at > first + 2) list.animateScrollToItem((at - 1).coerceAtLeast(0))
     }
 
     Column(modifier.width(64.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        StripButton(Icons.Filled.KeyboardArrowUp, "Open the Layers panel", onExpand)
         Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .width(64.dp)
-                .height(150.dp)
-                .pointerInput(Unit) {
-                    // Swiping goes through the layers: up for the ones below, down for the ones above
-                    var travel = 0f
-                    detectVerticalDragGestures(onDragStart = { travel = 0f }) { change, dy ->
-                        change.consume()
-                        travel += dy
-                        while (travel <= -step) {
-                            travel += step
-                            pick((current + 1).coerceAtMost(list.lastIndex))
-                        }
-                        while (travel >= step) {
-                            travel -= step
-                            pick((current - 1).coerceAtLeast(0))
-                        }
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { o ->
-                            // Above the middle card: the layer above; below it: the layer below
-                            val mid = size.height / 2f
-                            val half = with(density) { 27.dp.toPx() }
-                            when {
-                                o.y < mid - half -> pick(current - 1)
-                                o.y > mid + half -> pick(current + 1)
-                            }
-                        },
-                        onLongPress = { o ->
-                            val mid = size.height / 2f
-                            if (abs(o.y - mid) < with(density) { 27.dp.toPx() }) {
-                                list.getOrNull(current)?.let { l ->
-                                    val wasVisible = l.props.visible
-                                    vm.setProps(l.id, if (wasVisible) "Hide layer" else "Show layer") { it.copy(visible = !wasVisible) }
-                                    vm.toast(if (wasVisible) "\"${l.props.name}\" hidden" else "\"${l.props.name}\" shown")
-                                }
-                            }
-                        },
-                    )
-                },
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(Q.toolbar.copy(alpha = 0.75f))
+                .padding(vertical = 5.dp),
         ) {
-            // Farthest first, so nearer cards sit on top
-            for (dist in 3 downTo 1) {
-                for (dir in listOf(-1, 1)) {
-                    val l = shown.getOrNull(at + dir * dist) ?: continue
+            LazyColumn(
+                state = list,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.width(64.dp).height(CARD * 3 + 6.dp * 2),
+            ) {
+                items(shown, key = { it.id }) { l ->
                     Card(
-                        vm, l, picked = false,
+                        vm, l, picked = l === shown[at],
                         modifier = Modifier
-                            .offset(y = (dir * (20 + dist * 9)).dp)
-                            .scale(1f - dist * 0.08f)
-                            .alpha(1f - dist * 0.22f),
+                            .animateItem()
+                            .pointerInput(l.id) {
+                                detectTapGestures(
+                                    onTap = { if (l.id != vm.doc?.activeId) vm.selectLayer(l.id) },
+                                    onLongPress = {
+                                        val wasVisible = l.props.visible
+                                        vm.setProps(l.id, if (wasVisible) "Hide layer" else "Show layer") { it.copy(visible = !wasVisible) }
+                                        vm.toast(if (wasVisible) "\"${l.props.name}\" hidden" else "\"${l.props.name}\" shown")
+                                    },
+                                )
+                            },
                     )
                 }
             }
-            Card(vm, shown[at], picked = true)
         }
         Box {
             var menu by remember { mutableStateOf(false) }
@@ -168,6 +132,8 @@ fun LayerStrip(vm: EditorViewModel, onExpand: () -> Unit, onPlaceImage: () -> Un
     }
 }
 
+private val CARD = 54.dp
+
 /** One layer's card in the stack. */
 @Composable
 private fun Card(vm: EditorViewModel, l: Layer, picked: Boolean, modifier: Modifier = Modifier) {
@@ -175,7 +141,7 @@ private fun Card(vm: EditorViewModel, l: Layer, picked: Boolean, modifier: Modif
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(54.dp)
+            .size(CARD)
             .clip(shape)
             .background(Q.field)
             .then(if (l.hasContent) Modifier.checker(6f) else Modifier)
@@ -186,7 +152,7 @@ private fun Card(vm: EditorViewModel, l: Layer, picked: Boolean, modifier: Modif
             l.isAdjustment -> Icon(fxKindIcon(l.props.adjust?.kind ?: FxKind.ADJUST), contentDescription = l.props.name, tint = Q.text, modifier = Modifier.size(26.dp))
             else -> l.thumb?.let { Image(it, contentDescription = l.props.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
         }
-        if (picked && !l.props.visible) {
+        if (!l.props.visible) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Outlined.VisibilityOff, contentDescription = "Hidden", tint = Color.White, modifier = Modifier.size(22.dp))
             }

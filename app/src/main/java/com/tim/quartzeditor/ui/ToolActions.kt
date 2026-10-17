@@ -340,6 +340,20 @@ fun EditorViewModel.featherSelection(px: Float) {
     setSelection("Feather", s.withFeather(px))
 }
 
+/** Makes the selection [px] pixels bigger (or smaller, when negative). */
+fun EditorViewModel.growSelection(px: Float) {
+    val d = doc ?: return
+    val s = d.selection ?: run {
+        toast("Select something first")
+        return
+    }
+    val w = d.width
+    val h = d.height
+    setSelectionComputed(if (px > 0f) "Expand selection" else "Shrink selection") {
+        com.tim.quartzeditor.engine.SelectionOps.grown(s, px, w, h)
+    }
+}
+
 /** Polygonal lasso: adds a corner; tapping near the first one closes the shape. */
 fun EditorViewModel.polygonTap(x: Float, y: Float, closeRadius: Float) {
     val first = polygonPoints.firstOrNull()

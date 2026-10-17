@@ -113,6 +113,7 @@ fun StylePanel(vm: EditorViewModel) {
                             FxSlider(vm, "Angle", ls.angle, -180f..180f, "${ls.angle.roundToInt()}°") { v -> lsh { copy(angle = v.roundToInt().toFloat()) } }
                             FxSlider(vm, "Length", ls.length, 1f..2000f, "${ls.length.roundToInt()} px") { v -> lsh { copy(length = v.roundToInt().toFloat()) } }
                             ToggleRow("Fade out", ls.fade) { f -> vm.setStyle("Long shadow fade") { it.lsh { copy(fade = f) } } }
+                            FxBlend(ls.blend) { b -> vm.setStyle("Long shadow blend") { it.lsh { copy(blend = b) } } }
                         }
                         StyleFx.STROKE -> StrokeControls(vm, st)
                         StyleFx.DROP_SHADOW -> ShadowControls(vm, st.dropShadow, inner = false)
@@ -122,11 +123,13 @@ fun StylePanel(vm: EditorViewModel) {
                             FxColor(vm, g.color) { c -> vm.setStyle("Glow color") { it.copy(outerGlow = it.outerGlow.copy(color = c, on = true)) } }
                             FxSlider(vm, "Opacity", g.opacity, 0f..1f, "${(g.opacity * 100).roundToInt()}%") { v -> copy(outerGlow = outerGlow.copy(opacity = v, on = true)) }
                             FxSlider(vm, "Size", g.size, 1f..150f, "${g.size.roundToInt()} px") { v -> copy(outerGlow = outerGlow.copy(size = v, on = true)) }
+                            FxBlend(g.blend) { b -> vm.setStyle("Glow blend") { it.copy(outerGlow = it.outerGlow.copy(blend = b, on = true)) } }
                         }
                         StyleFx.COLOR_OVERLAY -> {
                             val o = st.colorOverlay
                             FxColor(vm, o.color) { c -> vm.setStyle("Overlay color") { it.copy(colorOverlay = it.colorOverlay.copy(color = c, on = true)) } }
                             FxSlider(vm, "Opacity", o.opacity, 0f..1f, "${(o.opacity * 100).roundToInt()}%") { v -> copy(colorOverlay = colorOverlay.copy(opacity = v, on = true)) }
+                            FxBlend(o.blend) { b -> vm.setStyle("Overlay blend") { it.copy(colorOverlay = it.colorOverlay.copy(blend = b, on = true)) } }
                         }
                     }
                 }
@@ -163,6 +166,7 @@ private fun StrokeControls(vm: EditorViewModel, st: LayerStyle) {
     }
     FxSlider(vm, "Size", s.size, 1f..100f, "${s.size.roundToInt()} px") { v -> copy(stroke = stroke.copy(size = v.roundToInt().toFloat(), on = true)) }
     FxSlider(vm, "Opacity", s.opacity, 0f..1f, "${(s.opacity * 100).roundToInt()}%") { v -> copy(stroke = stroke.copy(opacity = v, on = true)) }
+    FxBlend(s.blend) { b -> vm.setStyle("Stroke blend") { it.copy(stroke = it.stroke.copy(blend = b, on = true)) } }
     Text("Position", color = Q.textDim, fontSize = 13.sp)
     Spacer(Modifier.height(4.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -197,14 +201,17 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
     Text("Highlight", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
     FxColor(vm, b.highlight) { c -> vm.setStyle("Bevel highlight") { it.bv { copy(highlight = c) } } }
     FxSlider(vm, "Opacity", b.highlightOpacity, 0f..1f, "${(b.highlightOpacity * 100).roundToInt()}%") { v -> bv { copy(highlightOpacity = v) } }
+    FxBlend(b.highlightBlend) { m -> vm.setStyle("Highlight blend") { it.bv { copy(highlightBlend = m) } } }
     Text("Shadow", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
     FxColor(vm, b.shadow) { c -> vm.setStyle("Bevel shadow") { it.bv { copy(shadow = c) } } }
     FxSlider(vm, "Opacity", b.shadowOpacity, 0f..1f, "${(b.shadowOpacity * 100).roundToInt()}%") { v -> bv { copy(shadowOpacity = v) } }
+    FxBlend(b.shadowBlend) { m -> vm.setStyle("Shadow blend") { it.bv { copy(shadowBlend = m) } } }
 }
 
 @Composable
 private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
     GradientFxControls(vm, st.gradientFill, "Gradient fill", showOpacity = true) { change -> copy(gradientFill = gradientFill.change().copy(on = true)) }
+    FxBlend(st.gradientFill.blend) { b -> vm.setStyle("Gradient fill blend") { it.copy(gradientFill = it.gradientFill.copy(blend = b, on = true)) } }
 }
 
 /**
@@ -274,6 +281,7 @@ private fun PatternOverlayControls(vm: EditorViewModel, st: LayerStyle) {
     }
     Spacer(Modifier.height(4.dp))
     FxSlider(vm, "Opacity", po.opacity, 0f..1f, "${(po.opacity * 100).roundToInt()}%") { v -> po { copy(opacity = v) } }
+    FxBlend(po.blend) { b -> vm.setStyle("Pattern blend") { it.po { copy(blend = b) } } }
     FxSlider(
         vm, "Size", kotlin.math.log2(po.scale.coerceIn(0.125f, 4f)), -3f..2f, "${(po.scale * 100).roundToInt()}%",
         fromTyped = { pct -> kotlin.math.log2((pct / 100f).coerceIn(0.125f, 4f)) },
@@ -289,6 +297,16 @@ private fun ShadowControls(vm: EditorViewModel, sh: ShadowFx, inner: Boolean) {
     FxSlider(vm, "Angle", sh.angle, -180f..180f, "${sh.angle.roundToInt()}°") { v -> set { copy(angle = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Distance", sh.distance, 0f..200f, "${sh.distance.roundToInt()} px") { v -> set { copy(distance = v.roundToInt().toFloat()) } }
     FxSlider(vm, "Size", sh.size, 0f..150f, "${sh.size.roundToInt()} px") { v -> set { copy(size = v.roundToInt().toFloat()) } }
+    FxBlend(sh.blend) { b -> vm.setStyle("Shadow blend") { it.set { copy(blend = b) } } }
+}
+
+/** "Blend mode: Multiply ▾" for one effect. */
+@Composable
+private fun FxBlend(current: com.tim.quartzeditor.engine.Blend, onPick: (com.tim.quartzeditor.engine.Blend) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+        Text("Blend mode", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(88.dp))
+        BlendMenu(current, Modifier.weight(1f), onPick = onPick)
+    }
 }
 
 /** A slider that changes the style live and records one undo step when you let go. */

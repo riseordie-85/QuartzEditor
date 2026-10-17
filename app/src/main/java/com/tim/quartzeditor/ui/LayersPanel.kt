@@ -350,13 +350,6 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     item("Fill with foreground color") { vm.fillLayer(vm.foreground) }()
                     item("Fill with pattern") { vm.fillWithPattern() }()
                     item(if (d.editMask) "Clear mask" else "Clear layer") { vm.clearLayer() }()
-                    if (active?.hasMask == true) {
-                        HorizontalDivider()
-                        item(if (active.props.maskDisabled) "Enable mask" else "Disable mask") { vm.toggleMaskEnabled() }()
-                        item("Invert mask") { vm.invertMask() }()
-                        item("Apply mask") { vm.applyMask() }()
-                        item("Delete mask") { vm.deleteMask() }()
-                    }
                     HorizontalDivider()
                     item("Rename layer…") { renaming = active }()
                 }
@@ -484,9 +477,31 @@ private fun LayerRow(
         if (layer.hasMask) {
             Spacer(Modifier.width(4.dp))
             Box {
-                Thumb(layer.maskThumb, outlined = maskSelected, plain = true) { vm.selectLayer(layer.id, mask = true) }
+                var maskMenu by remember { mutableStateOf(false) }
+                // Hold the mask for what you can do with it
+                Thumb(layer.maskThumb, outlined = maskSelected, plain = true, onLongPress = { maskMenu = true }) { vm.selectLayer(layer.id, mask = true) }
                 if (p.maskDisabled) {
                     Text("✕", color = Color(0xFFE53935), fontSize = 18.sp, modifier = Modifier.align(Alignment.Center))
+                }
+                DropdownMenu(expanded = maskMenu, onDismissRequest = { maskMenu = false }) {
+                    fun item(label: String, enabled: Boolean = true, action: EditorViewModel.() -> Unit) = @Composable {
+                        DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
+                            maskMenu = false
+                            vm.onLayer(layer.id) { action() }
+                        })
+                    }
+                    DropdownMenuItem(text = { Text("Mask as selection") }, onClick = {
+                        maskMenu = false
+                        vm.selectionFromMask(layer.id)
+                    })
+                    if (vm.doc?.selection != null) item("Replace with selection") { maskFromSelection() }()
+                    HorizontalDivider()
+                    item("Invert mask") { invertMask() }()
+                    item(if (p.maskDisabled) "Enable mask" else "Disable mask") { toggleMaskEnabled() }()
+                    item("Clear mask", enabled = layer.mask?.isEmpty == false) { clearMask() }()
+                    HorizontalDivider()
+                    item("Apply mask") { applyMask() }()
+                    item("Delete mask") { deleteMask() }()
                 }
             }
         }
@@ -628,7 +643,7 @@ private fun IconThumb(icon: ImageVector, outlined: Boolean, onClick: () -> Unit)
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onDoubleTap: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Boolean, plain: Boolean = false, onDoubleTap: (() -> Unit)? = null, onLongPress: (() -> Unit)? = null, onClick: () -> Unit) {
     Box(
         Modifier
             .size(44.dp)
@@ -636,7 +651,7 @@ private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Bool
             .padding(2.dp)
             .clip(RoundedCornerShape(3.dp))
             .then(if (plain) Modifier.background(Color.White) else Modifier.checker(6f))
-            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleTap),
+            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleTap, onLongClick = onLongPress),
     ) {
         if (img != null) Image(img, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
     }
@@ -674,7 +689,7 @@ private fun LockToggle(icon: ImageVector, label: String, on: Boolean, onClick: (
  * other layers.
  */
 @Composable
-private fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean? = null, onPassThrough: () -> Unit = {}, onPick: (Blend) -> Unit) {
+internal fun BlendMenu(current: Blend, modifier: Modifier, passThrough: Boolean? = null, onPassThrough: () -> Unit = {}, onPick: (Blend) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         Row(
