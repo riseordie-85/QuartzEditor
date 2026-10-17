@@ -36,7 +36,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlin.math.max
 import kotlin.math.min
 
-enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, SHAPE, PEN, TEXT, BRUSH, ERASER, WARP }
+enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIENT, SHAPE, PEN, TEXT, BRUSH, ERASER, WARP, RETOUCH }
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
@@ -326,6 +326,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var eraser by mutableStateOf(loadBrush("eraser", BrushSettings(size = 60f, softness = 0.1f)))
         private set
+    /** Size, softness and strength (as opacity) of the retouch brushes. */
+    var retouchBrush by mutableStateOf(loadBrush("retouch", BrushSettings(size = 50f, softness = 0.5f, opacity = 0.5f)))
+        private set
+
+    // ---------------------------------------------------------------- retouch brushes
+    var retouchKind by mutableStateOf(com.tim.quartzeditor.engine.RetouchKind.byName(prefs.getString("retouchKind", null)))
+    /** Clone Stamp and Spot Healing look at every layer (and paint onto the one you're on). */
+    var retouchAllLayers by mutableStateOf(prefs.getBoolean("retouchAll", false))
+    /** Clone Stamp: the source moves along with each new stroke (like Photoshop's Aligned). */
+    var cloneAligned by mutableStateOf(prefs.getBoolean("cloneAligned", true))
+    var dodgeRange by mutableStateOf(com.tim.quartzeditor.engine.ToneRange.entries.getOrElse(prefs.getInt("dodgeRange", 1)) { com.tim.quartzeditor.engine.ToneRange.MIDTONES })
+    /** Where the Clone Stamp copies from (canvas pixels). */
+    var cloneSource by mutableStateOf<android.graphics.PointF?>(null)
+    /** The next tap picks the clone source. */
+    var pickingCloneSource by mutableStateOf(false)
+    /** Source minus where the first stroke started (kept while Aligned). */
+    internal var cloneOffset: android.graphics.PointF? = null
+    var retouch: com.tim.quartzeditor.engine.RetouchSession? = null
+        internal set
 
     var foreground by mutableIntStateOf(prefs.getInt("fg", Color.BLACK))
         private set
@@ -594,13 +613,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         selectDraft = null
         when {
             t == Tool.MOVE && (tool == Tool.MOVE || tool == Tool.PAN) -> tool = if (tool == Tool.MOVE) Tool.PAN else Tool.MOVE
-            (t == Tool.BRUSH || t == Tool.ERASER) && tool == t -> brushColumnHidden = !brushColumnHidden
+            (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) && tool == t -> brushColumnHidden = !brushColumnHidden
             else -> {
                 tool = t
                 // The tool's settings show in Properties; other unpinned sections fold away
                 openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
                 brushPickerFor = null
-                if (t == Tool.BRUSH || t == Tool.ERASER) brushColumnHidden = false
+                if (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
                 if (t == Tool.WARP) beginWarp()
                 if (t == Tool.CROP) beginCrop()
@@ -609,10 +628,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Brush settings for the tool in use (eraser or brush). */
-    val currentBrush: BrushSettings get() = if (tool == Tool.ERASER) eraser else brush
+    val currentBrush: BrushSettings get() = when (tool) {
+        Tool.ERASER -> eraser
+        Tool.RETOUCH -> retouchBrush
+        else -> brush
+    }
 
     fun updateBrush(forTool: Tool, change: (BrushSettings) -> BrushSettings) {
-        if (forTool == Tool.ERASER) {
+        if (forTool == Tool.RETOUCH) {
+            retouchBrush = change(retouchBrush)
+            saveBrush("retouch", retouchBrush)
+        } else if (forTool == Tool.ERASER) {
             eraser = change(eraser)
             saveBrush("eraser", eraser)
         } else {
@@ -622,7 +648,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The size and softness sliders change whichever of brush/eraser is in use (the brush otherwise). */
-    val sliderTool: Tool get() = if (tool == Tool.ERASER) Tool.ERASER else Tool.BRUSH
+    val sliderTool: Tool get() = when (tool) {
+        Tool.ERASER -> Tool.ERASER
+        Tool.RETOUCH -> Tool.RETOUCH
+        else -> Tool.BRUSH
+    }
 
     fun setColor(slot: ColorSlot, color: Int) {
         val c = color or 0xFF000000.toInt()
@@ -877,7 +907,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.WARP, Tool.BUCKET, Tool.GRADIENT, Tool.SHAPE, Tool.PEN, Tool.TEXT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER)
+        val TOOLS_WITH_OPTIONS = setOf(Tool.SELECT, Tool.CROP, Tool.TRANSFORM, Tool.WARP, Tool.BUCKET, Tool.GRADIENT, Tool.SHAPE, Tool.PEN, Tool.TEXT, Tool.BRUSH, Tool.ERASER, Tool.EYEDROPPER, Tool.RETOUCH)
 
         /** Effect images on screen are at most this big (blur hides the difference). */
         const val SCREEN_FX_PX = 4400

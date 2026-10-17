@@ -48,6 +48,13 @@ import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Gradient
+import androidx.compose.material.icons.outlined.Details
+import androidx.compose.material.icons.outlined.BlurOn
+import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material.icons.outlined.LocalFireDepartment
+import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Approval
+import androidx.compose.material.icons.outlined.Healing
 import androidx.compose.material.icons.outlined.Polyline
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Circle
@@ -103,7 +110,7 @@ import kotlin.math.sin
 @Composable
 fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier) {
     val buttonSize = if (compact) 40.dp else 46.dp
-    val showBrush = (vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER) && !vm.brushColumnHidden
+    val showBrush = (vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden
     Row(
         modifier
             .fillMaxHeight()
@@ -125,7 +132,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
     BoxWithConstraints(Modifier.width(if (compact) 52.dp else 62.dp).fillMaxHeight()) {
         // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space) and the two
         // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
-        val fitted = (maxHeight - 124.dp) / 13.8f
+        val fitted = (maxHeight - 124.dp) / 14.8f
         val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
         val swatchSize = buttonSize * 0.9f
         val tight = fitted < MIN_TOOL_BUTTON
@@ -188,6 +195,12 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             ToolButton(Icons.Outlined.Title, "Text", t == Tool.TEXT, buttonSize) { vm.onToolButton(Tool.TEXT) }
             ToolButton(Icons.Outlined.Brush, "Brush (tap again to fold the brush column)", t == Tool.BRUSH, buttonSize, ring = true) { vm.onToolButton(Tool.BRUSH) }
             ToolButton(QIcons.Eraser, "Eraser (tap again to fold the brush column)", t == Tool.ERASER, buttonSize) { vm.onToolButton(Tool.ERASER) }
+            ToolButton(
+                retouchIcon(vm.retouchKind), "${vm.retouchKind.label} (hold for Clone Stamp, Dodge, Burn, Smudge, Blur, Sharpen)", t == Tool.RETOUCH, buttonSize,
+                options = com.tim.quartzeditor.engine.RetouchKind.entries.mapIndexed { i, k ->
+                    ToolOption(retouchIcon(k), k.label, t == Tool.RETOUCH && vm.retouchKind == k, divider = i == 2 || i == 4) { vm.chooseRetouch(k) }
+                },
+            ) { vm.onToolButton(Tool.RETOUCH) }
             if (!tight) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(12.dp))
             ColorSwatches(vm, swatchSize, onColorTap)
         }
@@ -195,6 +208,16 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
 }
 
 private val MIN_TOOL_BUTTON = 30.dp
+
+internal fun retouchIcon(k: com.tim.quartzeditor.engine.RetouchKind) = when (k) {
+    com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> Icons.Outlined.Healing
+    com.tim.quartzeditor.engine.RetouchKind.CLONE -> Icons.Outlined.Approval
+    com.tim.quartzeditor.engine.RetouchKind.DODGE -> Icons.Outlined.LightMode
+    com.tim.quartzeditor.engine.RetouchKind.BURN -> Icons.Outlined.LocalFireDepartment
+    com.tim.quartzeditor.engine.RetouchKind.SMUDGE -> Icons.Outlined.TouchApp
+    com.tim.quartzeditor.engine.RetouchKind.BLUR -> Icons.Outlined.BlurOn
+    com.tim.quartzeditor.engine.RetouchKind.SHARPEN -> Icons.Outlined.Details
+}
 
 internal fun warpIcon(k: com.tim.quartzeditor.engine.WarpKind) = when (k) {
     com.tim.quartzeditor.engine.WarpKind.WARP -> Icons.Outlined.GridOn
@@ -206,7 +229,12 @@ internal fun warpIcon(k: com.tim.quartzeditor.engine.WarpKind) = when (k) {
 @Composable
 private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
     val forTool = vm.sliderTool
-    val b = if (forTool == Tool.ERASER) vm.eraser else vm.brush
+    val b = when (forTool) {
+        Tool.ERASER -> vm.eraser
+        Tool.RETOUCH -> vm.retouchBrush
+        else -> vm.brush
+    }
+    val retouch = forTool == Tool.RETOUCH
     val preview: (Boolean) -> Unit = { vm.brushPreview = it }
     BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
         val tipsH = (if (compact) 40.dp else 46.dp) * 4 + 24.dp
@@ -219,7 +247,8 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 .then(if (tight) Modifier.verticalScroll(rememberScrollState()) else Modifier.fillMaxHeight())
                 .padding(vertical = 10.dp),
         ) {
-            BrushTip.entries.forEach { tip ->
+            // The retouch brushes are always round
+            if (!retouch) BrushTip.entries.forEach { tip ->
                 val img = remember(tip) { tipIcon(tip) }
                 val sel = tip == b.tip
                 Box(
@@ -255,12 +284,12 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
             )
             ToolLabel("${b.size.roundToInt()}px")
             Spacer(Modifier.height(6.dp))
-            SliderCaption("Opacity")
+            SliderCaption(if (retouch) "Strength" else "Opacity")
             VerticalSlider(
                 value = b.opacity,
                 onChange = { v -> vm.updateBrush(forTool) { it.copy(opacity = v.coerceAtLeast(0.01f)) } },
                 height = sliderH,
-                description = "Opacity",
+                description = if (retouch) "Strength" else "Opacity",
                 onActive = preview,
             )
             ToolLabel("${(b.opacity * 100).roundToInt()}%")

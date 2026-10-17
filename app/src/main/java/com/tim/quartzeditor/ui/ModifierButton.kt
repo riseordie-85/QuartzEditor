@@ -174,6 +174,9 @@ private fun modifierHint(vm: EditorViewModel): String? {
     val alt = vm.modAlt
     return when (vm.tool) {
         Tool.BRUSH, Tool.ERASER -> if (alt) null else "Straight lines (0°, 45°, 90°). Tap: a line from the last stroke"
+        Tool.RETOUCH -> if (alt) {
+            if (vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE) "Tap: copy from here" else null
+        } else "Straight lines (0°, 45°, 90°)"
         Tool.SHAPE -> if (alt) "Draw from the middle" else "Square, circle, 45° lines"
         Tool.TRANSFORM -> if (alt) "Resize from the middle" else "Keep proportions (or not); rotate in 15° steps"
         Tool.MOVE -> if (alt) "Move a copy" else "Straight across or up and down"

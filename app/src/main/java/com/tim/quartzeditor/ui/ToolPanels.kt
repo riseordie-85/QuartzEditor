@@ -160,6 +160,7 @@ fun ToolOptions(vm: EditorViewModel) {
             Text("Finds the main subject on your device (it may download once through Google Play services).", color = Q.textDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.height(10.dp))
         }
+        Tool.RETOUCH -> RetouchOptions(vm)
         Tool.BUCKET -> {
             Title(if (vm.bucketPattern) "Pattern fill" else "Paint bucket")
             ChipRow(listOf("Color", "Pattern"), if (vm.bucketPattern) 1 else 0) { vm.setBucketPattern(it == 1) }
@@ -378,5 +379,59 @@ private fun GrowRow(vm: EditorViewModel) {
             numeric = true,
         )
         Text("px", color = Q.textDim, fontSize = 13.sp)
+    }
+}
+
+/** The retouch brush in use, and its settings (size, softness and strength are in the brush column). */
+@Composable
+private fun RetouchOptions(vm: EditorViewModel) {
+    val k = vm.retouchKind
+    Title(k.label)
+    ChipRow(com.tim.quartzeditor.engine.RetouchKind.entries.map { it.label }, k.ordinal) { i -> vm.chooseRetouch(com.tim.quartzeditor.engine.RetouchKind.entries[i]) }
+    Spacer(Modifier.height(6.dp))
+    val help = when (k) {
+        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> "Paint over a spot, scratch or small thing; it's healed with texture from around it when you lift your finger. For big things, AI Remove does better."
+        com.tim.quartzeditor.engine.RetouchKind.CLONE -> "Pick where to copy from, then paint. Strength sets how strongly it covers."
+        com.tim.quartzeditor.engine.RetouchKind.DODGE -> "Lightens where you paint."
+        com.tim.quartzeditor.engine.RetouchKind.BURN -> "Darkens where you paint."
+        com.tim.quartzeditor.engine.RetouchKind.SMUDGE -> "Drags the colors along with your finger. Strength sets how far."
+        com.tim.quartzeditor.engine.RetouchKind.BLUR -> "Softens where you paint (paint over again for more)."
+        com.tim.quartzeditor.engine.RetouchKind.SHARPEN -> "Crisps up detail where you paint. Go easy: it builds up."
+    }
+    Text(help, color = Q.textDim, fontSize = 12.sp)
+    Spacer(Modifier.height(6.dp))
+    when (k) {
+        com.tim.quartzeditor.engine.RetouchKind.DODGE, com.tim.quartzeditor.engine.RetouchKind.BURN -> {
+            Text("Range", color = Q.textDim, fontSize = 13.sp)
+            ChipRow(com.tim.quartzeditor.engine.ToneRange.entries.map { it.label }, vm.dodgeRange.ordinal) { i ->
+                vm.dodgeRange = com.tim.quartzeditor.engine.ToneRange.entries[i]
+                vm.prefs.edit().putInt("dodgeRange", i).apply()
+            }
+        }
+        com.tim.quartzeditor.engine.RetouchKind.CLONE -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                SmallButton(if (vm.pickingCloneSource) "Tap the picture…" else "Pick source", primary = vm.pickingCloneSource) {
+                    vm.pickingCloneSource = !vm.pickingCloneSource
+                }
+                if (vm.cloneSource != null) Text("Source set", color = Q.textDim, fontSize = 12.sp)
+            }
+            ToggleRow("Aligned (the source follows each new stroke)", vm.cloneAligned) {
+                vm.cloneAligned = it
+                vm.cloneOffset = null
+                vm.prefs.edit().putBoolean("cloneAligned", it).apply()
+            }
+            SampleAllRow(vm)
+        }
+        com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL -> SampleAllRow(vm)
+        else -> Unit
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun SampleAllRow(vm: EditorViewModel) {
+    ToggleRow("Look at all layers (heal on an empty layer, keeping the photo as it is)", vm.retouchAllLayers) {
+        vm.retouchAllLayers = it
+        vm.prefs.edit().putBoolean("retouchAll", it).apply()
     }
 }

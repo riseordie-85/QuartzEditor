@@ -41,6 +41,13 @@ fun EditorViewModel.onBlockedStroke() {
 
 /** Starts a brush or eraser stroke at canvas point ([x], [y]). Returns false if painting isn't possible. */
 fun EditorViewModel.beginStroke(x: Float, y: Float): Boolean {
+    if (tool == Tool.RETOUCH) {
+        if (pendingFx != null) {
+            applyFx()
+            return false
+        }
+        return beginRetouch(x, y)
+    }
     val d = doc ?: return false
     if (pendingFx != null) {
         applyFx()
@@ -61,14 +68,28 @@ fun EditorViewModel.beginStroke(x: Float, y: Float): Boolean {
 }
 
 fun EditorViewModel.strokeTo(x: Float, y: Float) {
+    retouch?.let {
+        it.addPoint(x, y)
+        doc?.invalidate()
+        return
+    }
     val s = stroke ?: return
     s.addPoint(x, y)
     doc?.invalidate()
 }
 
 fun EditorViewModel.endStroke() {
+    if (retouch != null) {
+        endRetouch()
+        return
+    }
     val s = stroke ?: return
     val d = doc ?: return
+    if (tool == Tool.RETOUCH && retouchKind == com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL) {
+        s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
+        finishSpotHeal(s)
+        return
+    }
     s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
     val change = s.commit()
     stroke = null
@@ -82,6 +103,7 @@ fun EditorViewModel.endStroke() {
 
 /** Drops a stroke that turned out to be the start of a two-finger gesture. */
 fun EditorViewModel.cancelStroke() {
+    cancelRetouch()
     stroke = null
     doc?.invalidate()
 }

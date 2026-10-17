@@ -239,8 +239,15 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         // Where the stroke starts (Shift keeps it on a straight line from here)
                         var strokeOx = startCx
                         var strokeOy = startCy
-                        when (tool) {
-                            Tool.BRUSH, Tool.ERASER -> if (vm.isOnCanvas(start.x, start.y)) {
+                        // Clone Stamp: Alt + tap (or Pick source, then a tap) sets where it copies from
+                        if (tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE &&
+                            (vm.altOn || vm.pickingCloneSource) && vm.isOnCanvas(start.x, start.y)
+                        ) {
+                            vm.setCloneSource(startCx, startCy)
+                            mode = GestureMode.DONE
+                        }
+                        if (mode == GestureMode.PENDING) when (tool) {
+                            Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.isOnCanvas(start.x, start.y)) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
                                 // Shift and a tap: a straight line from where the last stroke ended (like Photoshop)
                                 val join = vm.lastStrokeEnd?.takeIf { vm.shiftOn && it.first == vm.doc?.activeId }
@@ -412,7 +419,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         Tool.PEN -> if (vm.penEditTarget != null) GestureMode.PAN else GestureMode.PEN
                                         // With the Text tool, dragging moves the text layer you're on
                                         Tool.TEXT -> if (vm.doc?.active?.isText == true && vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
-                                        Tool.BRUSH, Tool.ERASER -> {
+                                        Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> {
                                             // Started beside the canvas: paint from there
                                             val (sx, sy) = vm.screenToCanvas(start.x, start.y)
                                             if (vm.strokeBlockReason() != null) {
@@ -750,6 +757,22 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
             // Warp grid, puppet pins, Liquify brush
             vm.warp?.let { w -> drawWarpOverlay(vm, w, s, ox, oy) }
+
+            // Clone Stamp: where it copies from
+            if (vm.tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE) {
+                val at = vm.retouch?.at
+                val off = vm.cloneOffset
+                val p = if (at != null && off != null) android.graphics.PointF(at.x + off.x, at.y + off.y) else vm.cloneSource
+                if (p != null) {
+                    val c = Offset(p.x * s + ox, p.y * s + oy)
+                    val r = (vm.retouchBrush.size / 2f * s).coerceAtLeast(6.dp.toPx())
+                    drawCircle(Color.Black.copy(alpha = 0.6f), r, c, style = Stroke(3.dp.toPx()))
+                    drawCircle(Color.White, r, c, style = Stroke(1.5.dp.toPx()))
+                    val k = 7.dp.toPx()
+                    drawLine(Color.White, c - Offset(k, 0f), c + Offset(k, 0f), 1.5.dp.toPx())
+                    drawLine(Color.White, c - Offset(0f, k), c + Offset(0f, k), 1.5.dp.toPx())
+                }
+            }
 
             // Snap lines
             if (vm.snapGuidesX.isNotEmpty() || vm.snapGuidesY.isNotEmpty()) {
