@@ -50,7 +50,7 @@ right (the arrow button at the bottom right); on tablets and the unfolded Fold t
 and the same button hides them.
 
 ### Toolbar
-Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape, Text, Brush/Eraser,
+Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape, Custom shapes, Text, Brush/Eraser,
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
