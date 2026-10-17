@@ -138,7 +138,9 @@ fun ModifierButton(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                     },
             ) {
-                Text(if (vm.modAlt) "Alt" else "⇧", color = if (on) Color.White else Q.text, fontSize = if (vm.modAlt) 16.sp else 24.sp)
+                // Shift (or resting): the emblem; slid out to Alt: says so
+                if (vm.modAlt) Text("Alt", color = Color.White, fontSize = 16.sp)
+                else Icon(QIcons.ModifierKey, contentDescription = "Shift", tint = if (on) Color.White else Q.text, modifier = Modifier.size(btn * 0.86f))
             }
             // The grip: drag to move the button
             Box(

@@ -124,8 +124,8 @@ the list; the button shows the one you used last.
 
 ### On the picture
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
-- **Modifier button** (the floating ⇧; drag its grip to move it; ☰ → Modifier button turns it off): hold it
-  for **Shift**, slide out past its edge for **Alt**, double-tap to keep Shift on. A keyboard's Shift and
+- **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it
+  for **Shift** (it shows the Quartz emblem), slide out past its edge for **Alt**, double-tap to keep Shift on. A keyboard's Shift and
   Alt do the same. Brushes: straight lines at 0°/45°/90° (tap: a line from the last stroke). Shapes and
   rectangle/ellipse selections: square or circle (Alt: from the middle). Transform: keep proportions,
   rotation in 15° steps (Alt: resize from the middle). Move: straight across or up and down, snapping only
