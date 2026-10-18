@@ -222,6 +222,7 @@ internal fun EditorViewModel.refreshEnhance() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                android.util.Log.e("QuartzEnhance", "Preview failed", e)
                 toast(e.message ?: "Couldn't show that")
                 null
             }

@@ -320,7 +320,10 @@ half4 main(float2 p) {
                 else if (preset == SkyPreset.STORM || preset == SkyPreset.OVERCAST) 0xFFC8CCD2.toInt() else Color.WHITE
                 setFloatUniform("tint", Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f)
             }
-            c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = sh })
+            // (Shaders only run on the GPU: the clouds are made there, then laid over the sky)
+            val cl = shaded(w, h, sh)
+            c.drawBitmap(cl, 0f, 0f, null)
+            cl.recycle()
         }
         return out
     }

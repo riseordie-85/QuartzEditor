@@ -585,6 +585,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: CutoutException) {
                 toast(e.message ?: "Background removal failed")
             } catch (e: Exception) {
+                android.util.Log.e("Quartz", "$label failed", e)
                 toast(e.message ?: "Something went wrong")
             } finally {
                 busy = null
