@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -101,6 +102,7 @@ fun Workspace(vm: EditorViewModel) {
     var guideOpen by remember { mutableStateOf(false) }
     var editGuidesOpen by remember { mutableStateOf(false) }
     var imageSizeOpen by remember { mutableStateOf(false) }
+    var upscaleOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
 
@@ -177,6 +179,19 @@ fun Workspace(vm: EditorViewModel) {
                                 Divider()
                                 Item("Flatten image") { vm.flattenImage() }
                             }
+                            Page("Enhance", Icons.Outlined.AutoFixHigh) {
+                                Item("Auto enhance") { vm.autoEnhance() }
+                                Item("Upscale…") { upscaleOpen = true }
+                                Divider()
+                                Item("Denoise…") { vm.startEnhance(EnhanceKind.DENOISE) }
+                                Item("Sharpen…") { vm.startEnhance(EnhanceKind.SHARPEN) }
+                                Divider()
+                                Label("From depth (on-device AI)")
+                                Item("Depth blur…") { vm.startEnhance(EnhanceKind.DEPTH_BLUR) }
+                                Item("Depth fog…") { vm.startEnhance(EnhanceKind.FOG) }
+                                Item("Relight…") { vm.startEnhance(EnhanceKind.RELIGHT) }
+                                Item("Replace sky…") { vm.startEnhance(EnhanceKind.SKY) }
+                            }
                             Page("View", Icons.Outlined.Visibility) {
                                 Item("Snap to center, edges and guides", checked = vm.snapOn) { vm.toggleSnap() }
                                 Item("Checkerboard for see-through", checked = vm.showChecker) { vm.toggleChecker() }
@@ -221,7 +236,7 @@ fun Workspace(vm: EditorViewModel) {
                 ) {
                     val h = vm.history
                     @Suppress("UNUSED_VARIABLE") val v = h.version
-                    RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
+                    RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.enhance != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
                     RoundButton(Icons.AutoMirrored.Outlined.Redo, "Redo (three-finger tap)", enabled = h.canRedo) { vm.redo() }
                     HistoryButton(vm)
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen (or pinch in quickly)") { vm.fit() }
@@ -376,6 +391,28 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
     if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
+    if (upscaleOpen) {
+        val room = vm.upscaleRoom()
+        val d = vm.doc
+        AlertDialog(
+            onDismissRequest = { upscaleOpen = false },
+            title = { Text("Upscale") },
+            text = {
+                Text(
+                    if (room == 0) "This picture is already as big as the app can upscale (the result would be over ${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px). Crop it or use Image size to make it smaller first."
+                    else "Makes the whole picture bigger, with new detail from the on-device AI for photo layers (shapes and text are redrawn sharp). " +
+                        "It's ${d?.width ?: 0} × ${d?.height ?: 0} px now. This can take a minute or two."
+                )
+            },
+            confirmButton = {
+                Row {
+                    if (room >= 2) TextButton(onClick = { upscaleOpen = false; vm.upscaleImage(2) }) { Text("2× (${(d?.width ?: 0) * 2} px wide)") }
+                    if (room >= 4) TextButton(onClick = { upscaleOpen = false; vm.upscaleImage(4) }) { Text("4×") }
+                }
+            },
+            dismissButton = { TextButton(onClick = { upscaleOpen = false }) { Text("Cancel") } },
+        )
+    }
     BigPsdDialog(vm)
     if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
         editGuidesOpen = false

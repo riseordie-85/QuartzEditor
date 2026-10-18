@@ -60,7 +60,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, GUIDE, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, GUIDE, DEPTH, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -225,6 +225,16 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var warpMoved = false
                         if (tool == Tool.WARP && vm.warp != null && vm.warpDown(startCx, startCy, 26.dp.toPx() / vm.scale)) {
                             mode = GestureMode.WARP
+                        }
+                        // Enhance: tap what stays sharp / where fog starts, drag the light
+                        val enhanceKind = vm.enhance?.kind?.takeIf { it == EnhanceKind.DEPTH_BLUR || it == EnhanceKind.FOG || it == EnhanceKind.RELIGHT }
+                        var depthMoved = false
+                        if (mode == GestureMode.PENDING && enhanceKind != null) {
+                            mode = GestureMode.DEPTH
+                            if (enhanceKind == EnhanceKind.RELIGHT) vm.enhanceTouch(startCx, startCy)
+                        } else if (mode == GestureMode.PENDING && vm.enhance != null) {
+                            // The other Enhance effects: nothing to touch, so one finger moves the view (no painting under a preview)
+                            mode = GestureMode.PAN
                         }
                         var prevCx = startCx
                         var prevCy = startCy
@@ -638,6 +648,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.penEditDrag(penHit, cx, cy, startCx, startCy, 10.dp.toPx() / vm.scale)
                                     }
                                 }
+                                GestureMode.DEPTH -> if (main != null) {
+                                    if (!depthMoved && (main.position - start).getDistance() > slop) depthMoved = true
+                                    if (depthMoved || enhanceKind == EnhanceKind.RELIGHT) {
+                                        val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        vm.enhanceTouch(cx, cy)
+                                    }
+                                }
                                 GestureMode.WARP -> if (main != null) {
                                     if (!warpMoved && (main.position - start).getDistance() > slop) warpMoved = true
                                     if (warpMoved) {
@@ -722,6 +739,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
                             GestureMode.GRADIENT -> vm.endGradient()
                             GestureMode.WARP -> vm.warpUp(warpMoved)
+                            GestureMode.DEPTH -> if (!depthMoved && enhanceKind != EnhanceKind.RELIGHT) vm.enhanceTouch(startCx, startCy)
                             GestureMode.GUIDE -> {
                                 val g = movingGuide
                                 vm.guideDraft = null
@@ -820,6 +838,38 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
             // Warp grid, puppet pins, Liquify brush
             vm.warp?.let { w -> drawWarpOverlay(vm, w, s, ox, oy) }
+
+            // Enhance: the focus point (Depth blur) or the light (Relight)
+            vm.enhance?.let { e ->
+                val ep = vm.enhanceParams
+                val line = 1.5.dp.toPx()
+                if (e.kind == EnhanceKind.DEPTH_BLUR) ep.focusPoint?.let { f ->
+                    val c = Offset(f.x * s + ox, f.y * s + oy)
+                    val r = 16.dp.toPx()
+                    val k = 6.dp.toPx()
+                    for (col in listOf(Color.Black.copy(alpha = 0.6f) to 3.dp.toPx(), Color.White to line)) {
+                        drawCircle(col.first, r, c, style = Stroke(col.second))
+                        drawLine(col.first, c - Offset(r + k, 0f), c - Offset(r - k, 0f), col.second)
+                        drawLine(col.first, c + Offset(r - k, 0f), c + Offset(r + k, 0f), col.second)
+                        drawLine(col.first, c - Offset(0f, r + k), c - Offset(0f, r - k), col.second)
+                        drawLine(col.first, c + Offset(0f, r - k), c + Offset(0f, r + k), col.second)
+                    }
+                }
+                if (e.kind == EnhanceKind.RELIGHT) ep.light?.let { l ->
+                    val c = Offset(l.x * s + ox, l.y * s + oy)
+                    val r = 11.dp.toPx()
+                    // A little sun, in the light's color
+                    for (i in 0 until 8) {
+                        val a = i * Math.PI.toFloat() / 4f
+                        val d = Offset(kotlin.math.cos(a), kotlin.math.sin(a))
+                        drawLine(Color.Black.copy(alpha = 0.6f), c + d * (r + 3.dp.toPx()), c + d * (r + 10.dp.toPx()), 4.dp.toPx())
+                        drawLine(Color.White, c + d * (r + 3.dp.toPx()), c + d * (r + 10.dp.toPx()), 2.dp.toPx())
+                    }
+                    drawCircle(Color.Black.copy(alpha = 0.6f), r + line, c)
+                    drawCircle(Color.White, r, c)
+                    drawCircle(Color(l.color or 0xFF000000.toInt()), r - 2.5f * line, c)
+                }
+            }
 
             // Clone Stamp: where it copies from
             if (vm.tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE) {

@@ -165,7 +165,7 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
             .border(1.dp, Q.divider, RoundedCornerShape(22.dp)),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 6.dp)) {
-            Text(kind.title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
+            Text(if (kind == PopupKind.ENHANCE) vm.enhance?.kind?.label ?: kind.title else kind.title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -196,6 +196,7 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 PopupKind.PHOTO_FILTER -> PhotoFilterPanel(vm)
                 PopupKind.GRADIENT_MAP -> GradientMapPanel(vm)
                 PopupKind.VIBRANCE -> VibrancePanel(vm)
+                PopupKind.ENHANCE -> EnhancePanel(vm)
             }
         }
     }

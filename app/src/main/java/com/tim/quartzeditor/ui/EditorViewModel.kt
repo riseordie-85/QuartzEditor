@@ -46,10 +46,10 @@ enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Propert
 enum class PopupKind(val title: String) {
     STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), LEVELS("Levels"), CURVES("Curves"), BLUR("Gaussian Blur"), FILTERS("Filters"),
     HUE_SAT("Hue/Saturation"), COLOR_BALANCE("Color Balance"), BLACK_WHITE("Black & White"), PHOTO_FILTER("Photo Filter"),
-    GRADIENT_MAP("Gradient Map"), VIBRANCE("Vibrance");
+    GRADIENT_MAP("Gradient Map"), VIBRANCE("Vibrance"), ENHANCE("Enhance");
 
-    /** Changes pixels (or an adjustment layer), as opposed to Layer Style. */
-    val isFx: Boolean get() = this != STYLE
+    /** Changes pixels (or an adjustment layer), as opposed to Layer Style and Enhance. */
+    val isFx: Boolean get() = this != STYLE && this != ENHANCE
 
     companion object {
         /** The window an adjustment layer of [kind] opens in. */
@@ -392,6 +392,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var preview by mutableStateOf<LayerPreview?>(null)
         internal set
 
+    /** An Enhance effect being set up (EnhanceActions.kt), and what it's set to. */
+    var enhance by mutableStateOf<EnhanceSession?>(null)
+        internal set
+    var enhanceParams by mutableStateOf(EnhanceParams())
+        internal set
+
     /** Adjustments/filter being tried on the active layer (null = none). */
     var pendingFx by mutableStateOf<FxParams?>(null)
         internal set
@@ -559,6 +565,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * Runs slow work with the busy overlay up (it blocks other edits). [onDone] runs after the
      * overlay is gone, only if the work succeeded — so it may start busy work of its own.
      */
+    /** A new note beside the spinner while something slow runs (from any thread). */
+    internal fun updateBusy(label: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { if (busy != null) busy = label }
+    }
+
     internal fun runBusy(label: String, onDone: (() -> Unit)? = null, block: suspend () -> Unit) {
         if (busy != null) return
         busy = label
@@ -769,6 +780,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var popup by mutableStateOf<PopupKind?>(null)
 
     fun openPopup(k: PopupKind) {
+        // Another window: the Enhance effect being set up is dropped
+        if (k != PopupKind.ENHANCE && enhance != null) cancelEnhance()
         val a = doc?.active
         if (k.isFx && a != null && a.needsRaster) {
             askRasterize(a) { openPopup(k) }
@@ -781,6 +794,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Closes the floating window; adjustments being tried on a pixel layer are dropped. */
     fun closePopup() {
         if (popup?.isFx == true && pendingFx != null) cancelFx()
+        if (popup == PopupKind.ENHANCE) cancelEnhance()
         popup = null
     }
 
@@ -867,6 +881,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             cancelFx()
             return
         }
+        if (enhance != null) {
+            cancelEnhance()
+            return
+        }
         if (transform != null) {
             cancelTransform()
             return
@@ -908,6 +926,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (stroking || busy != null) return
         // Like Undo: what's being tried is dropped, not applied
         if (pendingFx != null) cancelFx()
+        if (enhance != null) cancelEnhance()
         if (transform != null) cancelTransform()
         if (warp != null) cancelWarp()
         if (cropBox != null) cancelCrop()
@@ -931,7 +950,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun redo() {
         val d = doc ?: return
-        if (stroking || busy != null || pendingFx != null || transform != null || warp != null || cropBox != null || textEdit != null) return
+        if (stroking || busy != null || pendingFx != null || enhance != null || transform != null || warp != null || cropBox != null || textEdit != null) return
         closeTabsChangedBy(history.peekRedo())
         val at = smartPositions(d)
         history.redo(d)?.let { toast("Redo: $it") }

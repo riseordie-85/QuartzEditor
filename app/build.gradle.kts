@@ -56,7 +56,8 @@ android {
 
 // ===================================================================== on-device AI models
 //
-// Select Object (MobileSAM) and AI Remove (MI-GAN) run on the tablet with no internet. Their model
+// Select Object (MobileSAM), AI Remove (MI-GAN), the depth effects (Depth Anything V2) and Upscale
+// (Real-ESRGAN) run on the tablet with no internet. Their model
 // files are downloaded here, once per computer, when the app is built (into ai-models/, which Git
 // ignores and Clean leaves alone), and checked against their known SHA-256. Without internet the app still
 // builds; those two features then say the model isn't included.
@@ -77,6 +78,18 @@ val aiModels = listOf(
         "migan_pipeline_v2.onnx",
         "https://huggingface.co/andraniksargsyan/migan/resolve/1538c135034b8cfe7a8472f34d09c8a5a45b17a7/migan_pipeline_v2.onnx",
         "6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b",
+    ),
+    // Depth Anything V2 (small): how far away everything is, for Depth blur, Depth fog, Relight and Replace sky
+    AiModel(
+        "depth_anything_v2_small.onnx",
+        "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx/model.onnx",
+        "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c",
+    ),
+    // Real-ESRGAN general x4v3: Upscale
+    AiModel(
+        "realesr_general_x4v3.onnx",
+        "https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/c6a971706797c7502945a2b4c4274fce4900d4ab/realesr-general-x4v3.onnx",
+        "1940a93ee08283a0a7286183186357b1688fe9fa8ede74604b424586aaddf112",
     ),
 )
 
@@ -137,7 +150,7 @@ val downloadAiModels by tasks.registering {
                 Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
             } catch (e: Exception) {
                 tmp.delete()
-                logger.warn("Couldn't download AI model ${m.name}: ${e.message}. The app builds without it (Select Object / AI Remove will say so).")
+                logger.warn("Couldn't download AI model ${m.name}: ${e.message}. The app builds without it (the features using it will say so).")
             }
         }
     }

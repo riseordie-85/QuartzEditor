@@ -206,6 +206,9 @@ class Doc(width: Int, height: Int, name: String) {
     /** Where this document is saved in the app's projects (null until first saved). */
     var projectId: String? = null
 
+    /** A layer put in only to show a preview (Enhance): left out of undo steps and saved files. */
+    var previewLayerId = 0L
+
     private var nextId = 1L
 
     val active: Layer? get() = layers.firstOrNull { it.id == activeId } ?: layers.lastOrNull()
@@ -238,7 +241,7 @@ class Doc(width: Int, height: Int, name: String) {
     }
 
     fun snapshot(): DocSnap = DocSnap(
-        layers.map { LayerSnap(it, it.props, it.tiles, it.x, it.y, it.mask) },
+        layers.filter { it.id != previewLayerId || previewLayerId == 0L }.map { LayerSnap(it, it.props, it.tiles, it.x, it.y, it.mask) },
         activeId,
         editMask,
         width,

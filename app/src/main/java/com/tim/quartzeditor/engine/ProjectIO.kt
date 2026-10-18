@@ -115,10 +115,12 @@ object ProjectIO {
      */
     private fun writeDoc(zip: ZipOutputStream, doc: Doc, prefix: String, canvasColor: Int, buf: ByteBuffer) {
         val layers = JSONArray()
+        // (Not a layer put in only for a preview)
+        val saved = doc.layers.filter { it.id != doc.previewLayerId || doc.previewLayerId == 0L }
         // Linked smart layers: the contents are written once, with the first of them
         val firstWith = java.util.IdentityHashMap<Doc, Long>()
-        for (l in doc.layers) l.props.smart?.let { sp -> firstWith.putIfAbsent(sp.contents, l.id) }
-        for (l in doc.layers) {
+        for (l in saved) l.props.smart?.let { sp -> firstWith.putIfAbsent(sp.contents, l.id) }
+        for (l in saved) {
             val p = l.props
             layers.put(
                 JSONObject()
@@ -169,11 +171,11 @@ object ProjectIO {
         zip.write(json.toString(1).toByteArray())
         zip.closeEntry()
 
-        for (l in doc.layers) {
+        for (l in saved) {
             for ((k, b) in l.tiles.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}L${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf)
             l.mask?.let { m -> for ((k, b) in m.tiles) if (!TileGrid.isBlank(b)) putTile(zip, "${prefix}M${l.id}/${TileGrid.tx(k)}_${TileGrid.ty(k)}", b, buf) }
         }
-        for (l in doc.layers) l.props.smart?.let { if (firstWith[it.contents] == l.id) writeDoc(zip, it.contents, "${prefix}S${l.id}/", canvasColor, buf) }
+        for (l in saved) l.props.smart?.let { if (firstWith[it.contents] == l.id) writeDoc(zip, it.contents, "${prefix}S${l.id}/", canvasColor, buf) }
     }
 
     private fun putTile(zip: ZipOutputStream, name: String, b: Bitmap, buf: ByteBuffer) {

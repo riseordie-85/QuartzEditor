@@ -271,21 +271,25 @@ internal fun EditorViewModel.canvasTransform(
     label: String, newW: Int, newH: Int, perspective: Boolean = false, onDone: (() -> Unit)? = null,
     /** Image size: layer styles scale by this too (null = they stay as they are). */
     styleScale: Float? = null,
+    /** Upscale: photo (pixel) layers are made this many times bigger by the AI instead (0 = no AI). */
+    aiFactor: Int = 0,
     build: (Matrix) -> Unit,
 ) {
     val d = doc ?: return
-    if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }) return
+    if (pendingFirst { canvasTransform(label, newW, newH, perspective, onDone, styleScale, aiFactor, build) }) return
     // (Text from Photoshop that's still its own pixels turns as pixels: no font needed)
     val fonts = d.layers.filter { it.props.text?.psdFont == null }.flatMap { it.props.text?.fonts.orEmpty() }.distinct().filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {
-        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, styleScale, build) }
+        withFonts(fonts) { canvasTransform(label, newW, newH, perspective, onDone, styleScale, aiFactor, build) }
         return
     }
     val layers = d.layers.toList()
     val snaps = layers.map { Triple(it, HashMap(it.tiles.tiles), it.mask?.let { m -> HashMap(m.tiles) }) }
     val oldProps = layers.associateWith { it.props }
     val newProps = HashMap<Layer, LayerProps>()
-    runBusy(if (styleScale != null) "Resizing…" else "Turning…", onDone = onDone) {
+    val aiLayers = if (aiFactor > 0) layers.filter { it.isPixels && it.props.smart == null && it.tiles.tiles.isNotEmpty() } else emptyList()
+    var aiDone = 0
+    runBusy(if (aiFactor > 0) "Upscaling…" else if (styleScale != null) "Resizing…" else "Turning…", onDone = onDone) {
         val results = withContext(Dispatchers.Default) {
             // Beyond a perspective's horizon pixels run off to infinity: keep only a margin
             val everywhere = if (perspective) Transformer.limitFor(newW, newH) else Rect(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
@@ -299,7 +303,14 @@ internal fun EditorViewModel.canvasTransform(
                     synchronized(newProps) { newProps[l] = oldProps.getValue(l).copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, m))) }
                 }
                 if (vp != null) synchronized(newProps) { newProps[l] = vp }
-                val grid = if (vp != null && vp.text?.psdFont == null) {
+                val grid = if (l in aiLayers) {
+                    // Upscale: new detail from the AI (one layer at a time; it's memory-hungry)
+                    synchronized(aiLayers) {
+                        aiUpscaleTiles(tiles, l.x, l.y, aiFactor) { f ->
+                            updateBusy("Upscaling… ${((aiDone + f) * 100f / aiLayers.size).toInt()}%")
+                        }.also { aiDone++ }
+                    }
+                } else if (vp != null && vp.text?.psdFont == null) {
                     VectorArt.rasterize(vp, VectorArt.clipFor(0, 0, newW, newH))
                 } else area?.let { a -> Transformer.render(tiles, false, a, m, everywhere) }
                     ?.let { (bmp, at) -> TileGrid.fromBitmap(bmp, at.left, at.top, alphaOnly = false).also { bmp.recycle() } }

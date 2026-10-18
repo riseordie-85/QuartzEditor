@@ -178,5 +178,9 @@ internal fun EditorViewModel.pendingFirst(then: () -> Unit): Boolean {
         applyWarp(onDone = then)
         return true
     }
+    if (enhance != null) {
+        applyEnhance(onDone = then)
+        return true
+    }
     return false
 }

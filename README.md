@@ -54,7 +54,8 @@ Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pe
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
-  saving), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **View** (Snap, Checkerboard, Modifier button, **Grid** and
+  saving), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **Enhance** (see
+  below), **View** (Snap, Checkerboard, Modifier button, **Grid** and
   **Rulers and guides** pages), and Settings. Tap a page to open it; ← goes back.
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
   layer under your finger. Tap Move again to switch to **Pan** (one finger moves the view). While moving
@@ -101,8 +102,8 @@ the list; the button shows the one you used last.
     carries on from it.
   - **Puppet Warp:** tap to add pins, drag a pin to bend the picture around the others (as rigidly as it
     can). Tap a pin to pick it; the bin deletes it. Stiffness sets how far each pin's pull reaches.
-  - **Liquify** (Ctrl+Shift+X): Push, Bloat, Pucker, Twirl both ways, Smooth and Restore brushes, with size
-    ([ and ]) and strength. Bloat, Pucker and Twirl keep working while you hold still. The picture's edges
+  - **Liquify** (Ctrl+Shift+X): Push, Bloat, Pucker, Twirl both ways, Smooth and Restore brushes. Size
+    ([ and ]) and Strength are in the brush column beside the tools, like the other brushes. Bloat, Pucker and Twirl keep working while you hold still. The picture's edges
     stay put, so an edge-to-edge photo never pulls in empty space.
     **Face-aware**: "Find faces" looks for faces on the device (through Google Play services), then sliders
     reshape each face: Eyes (size, height, width, tilt, distance), Nose (height, width), Mouth (smile,
@@ -146,8 +147,9 @@ the list; the button shows the one you used last.
   and Arc.
   Outline, shadow and glow come from Layer Style (fx).
 - **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one).
-- **Brush** and **Eraser** (one button; hold for the other) — open a second column with the tips (Round, Square, Triangle, Grunge) and the
-  Softness, Size and Opacity sliders; any other tool folds it away (tap Brush again to fold it yourself).
+- **Brush** and **Eraser** (one button) — tap it to switch between the brush and the eraser. While either is
+  picked, a second column shows the tips (Round, Square, Triangle, Grunge) and the Softness, Size and
+  Opacity sliders; any other tool folds it away.
 - **Healing** (Spot healing, AI Remove, Clone stamp) and **Toning** (Blur, Sharpen, Smudge, Dodge, Burn)
   are two buttons (hold for the list; Size, Softness and Strength in the brush column):
   - **Spot healing** — paint over a spot (up to about 250 px across; a message says when a stroke grows past
@@ -235,7 +237,8 @@ Only **Color**, **Properties** and **Layers** live in the column.
   - Each layer: show/hide, thumbnail, mask thumbnail, name, drag handle to reorder (drag near the top or
     bottom of the list and it scrolls; only the rows on screen are built, so hundreds of layers stay
     quick, and each picture keeps its place in the list when you come back from a smart layer's tab). **Long-press** a layer
-    for Rename, Duplicate, Merge down, Clip to layer below, and pages for **Layer style** (Copy / Paste,
+    for Rename, **Select pixels** (its pixels as a selection, like Ctrl-clicking a thumbnail in Photoshop; with ⇧
+    added to the selection, with Alt taken away), Duplicate, Merge down, Clip to layer below, and pages for **Layer style** (Copy / Paste,
     Save as preset, Apply / Clear) and **Convert** (smart layer, Edit contents, Unlink from copies, Rasterize).
     Duplicating a smart layer makes a **linked copy** (like Photoshop): editing either changes both; the
     row says "Linked to n others", and **Unlink from copies** gives one its own contents.
@@ -312,6 +315,31 @@ place, so the picture keeps its room; closing it brings the panels back as you l
 - Layer Style effects each have a **Blend mode** (Multiply shadows darken what's below; Bevel's highlight
   and shadow start at Screen and Multiply).
 
+### Enhance
+Menu → **Enhance** works on the selected layer (with a selection, only on what's selected):
+- **Auto enhance** — adds a Levels adjustment layer, clipped to the photo, that stretches each color
+  channel between its darkest and lightest parts (evening out a color cast) and sets a natural brightness.
+  Fine-tune it like any Levels layer.
+- **Upscale…** — the whole picture 2× or 4× bigger (up to 4096 px). Photo layers get new detail from the
+  on-device Real-ESRGAN model; shapes, text and masks are redrawn sharp as with Image size. It takes a while
+  on big pictures; the spinner shows how far along it is.
+- **Denoise** (Strength, Color speckles) and **Sharpen** (Amount, Radius, Leave smooth areas) — previewed
+  live on the picture, then Apply changes the layer's pixels (one undo step).
+- From **depth** (the on-device Depth Anything V2 model looks at the photo once, then everything is live):
+  - **Depth blur** — tap what should stay sharp; nearer and farther things blur like a wide-open lens
+    (Blur, Focus depth, In focus). The sharp parts don't smear into the blur.
+  - **Depth fog** — haze that thickens with distance; tap where it should start (Starts, Fade in,
+    Thickness, Color).
+  - **Relight** — drag the light around the picture: Strength, Height, Reach, Shadows, Relief, Color, and
+    whether it blends as Soft Light, Overlay or Linear Light.
+  - **Replace sky** — the sky is the farthest part reaching the top edge; pick a ready-made sky (Clear
+    blue, Deep blue, Golden hour, Sunset, Dusk, Overcast, Storm, with Clouds) or one of your photos, and how
+    far the sky reaches and how soft its edge is.
+  Each of these is added as **its own layer** above the photo, clipped to it, with a mask (Relight's light
+  is a Soft Light layer), so you can paint the mask, fade it or delete it later.
+- The settings open in a window with Cancel and Apply; anything else you do applies it first, Undo cancels
+  it.
+
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for
 in between. With a selection, the mask button makes a mask that shows only what's selected. Tap the mask thumbnail to paint on the mask, the layer thumbnail to paint pixels.
@@ -360,12 +388,14 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
   it whenever it changes, so blend modes, masks, styles, merging and export treat them like any layer.
 
 ## On-device AI
-Select Object (MobileSAM: its image encoder plus the Segment Anything mask decoder) and AI Remove (MI-GAN)
-run on the tablet through ONNX Runtime; the app has no internet permission, so nothing leaves the device.
-The model files (about 72 MB) are downloaded by Gradle the first time the app is built on a computer, into
+Select Object (MobileSAM: its image encoder plus the Segment Anything mask decoder), AI Remove (MI-GAN),
+the depth effects (Depth Anything V2 Small) and Upscale (Real-ESRGAN general x4v3) run on the tablet
+through ONNX Runtime; the app has no internet permission, so nothing leaves the device.
+The model files (about 176 MB) are downloaded by Gradle the first time the app is built on a computer, into
 `ai-models/` (ignored by Git; Clean leaves it), and checked against their SHA-256. Built without internet,
-the app still works; those two features say the model isn't included. Licenses: MobileSAM Apache-2.0
-(its mask decoder is the original Segment Anything decoder, Apache-2.0), MI-GAN MIT, ONNX Runtime MIT.
+the app still works; those features say the model isn't included. Licenses: MobileSAM Apache-2.0
+(its mask decoder is the original Segment Anything decoder, Apache-2.0), MI-GAN MIT, Depth Anything V2
+Small Apache-2.0, Real-ESRGAN BSD-3-Clause, ONNX Runtime MIT.
 
 ## Where the code is
 Everything is under `app/src/main/java/com/tim/quartzeditor/`.
@@ -376,7 +406,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
   selection expand/shrink (`SelectionOps`), the AI models (`Ai`), Photoshop files (`Psd` reads them,
   `PsdImport` turns them into a document, `PsdFonts` picks fonts), the blend modes Android doesn't have
-  (`Blends`), .svg files (`Svg`) and the custom shape library (`ShapeLibrary`).
+  (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`) and the Enhance effects
+  (`Enhance`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
   "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
 - `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:
@@ -385,11 +416,11 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
   `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
-  `ShapeLibraryActions`.
+  `ShapeLibraryActions`, `EnhanceActions`.
 - The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
   over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
   `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`, `ColorPanels`,
-  `Rulers`, `ModifierButton`, `LayerStrip`, `ShapePanel` (the shape library), `ImageSize`.
+  `Rulers`, `ModifierButton`, `LayerStrip`, `ShapePanel` (the shape library), `ImageSize`, `EnhancePanel`.
 
 ## Settings
 Menu → Settings (or the gear on the home screen).
