@@ -138,24 +138,11 @@ fun WarpOptions(vm: EditorViewModel) {
                 color = Q.textDim, fontSize = 12.sp,
             )
             Spacer(Modifier.height(6.dp))
-            // Size goes on a curve: fine control for small brushes
-            val lo = ln(8f)
-            val hi = ln(2000f)
-            PanelSlider(
-                "Size", ((ln(vm.liquifySize.coerceIn(8f, 2000f)) - lo) / (hi - lo)), 0f..1f, "${vm.liquifySize.roundToInt()} px",
-                onChange = { vm.liquifySize = exp(lo + (hi - lo) * it) },
-                onDone = { vm.saveLiquifyPrefs() },
-                fromTyped = { px -> (ln(px.coerceIn(8f, 2000f)) - lo) / (hi - lo) },
-            )
-            PanelSlider(
-                "Strength", vm.liquifyStrength, 0.05f..1f, "${(vm.liquifyStrength * 100).roundToInt()}%",
-                onChange = { vm.liquifyStrength = it },
-                onDone = { vm.saveLiquifyPrefs() },
-            )
+            // Size and strength are in the brush column beside the tools
             val smallest = (w.mesh.cell * 2.5f).roundToInt()
             Text(
-                if (vm.liquifySize < smallest) "On this layer the brush works at $smallest px or more. [ and ] change the size on a keyboard."
-                else "[ and ] change the size on a keyboard.",
+                if (vm.liquifySize < smallest) "Size and strength are beside the tools. On this layer the brush works at $smallest px or more. [ and ] change the size on a keyboard."
+                else "Size and strength are beside the tools. [ and ] change the size on a keyboard.",
                 color = Q.textDim, fontSize = 11.sp,
             )
             Spacer(Modifier.height(12.dp))

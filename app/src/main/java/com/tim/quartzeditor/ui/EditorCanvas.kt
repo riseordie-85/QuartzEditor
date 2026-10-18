@@ -951,7 +951,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
 
             // Brush preview while a brush slider moves
-            if (vm.brushPreview) {
+            if (vm.brushPreview && vm.tool == Tool.WARP) {
+                // Liquify's brush: its circle
+                val r = (vm.liquifySize * s / 2f).coerceAtLeast(2f)
+                val center = Offset(size.width / 2f, size.height / 2f)
+                drawCircle(Color.Black.copy(alpha = 0.5f), r + 1.5f, center, style = Stroke(1.5f))
+                drawCircle(Color.White.copy(alpha = 0.8f), r, center, style = Stroke(1f))
+            } else if (vm.brushPreview) {
                 val b = vm.currentBrush
                 val px = (b.size * s).coerceAtLeast(2f)
                 val center = Offset(size.width / 2f, size.height / 2f)

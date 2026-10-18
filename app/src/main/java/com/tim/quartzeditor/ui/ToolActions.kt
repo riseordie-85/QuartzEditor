@@ -772,3 +772,38 @@ internal fun selectionMask(sel: com.tim.quartzeditor.engine.Selection, l: com.ti
     }
     return g
 }
+
+/**
+ * Layer [id]'s pixels as a selection (Photoshop's Ctrl-click on a layer's thumbnail): selected as
+ * much as the layer shows there, mask included. With Shift held it adds to the selection, with Alt
+ * it takes away.
+ */
+fun EditorViewModel.selectLayerPixels(id: Long) {
+    val d = doc ?: return
+    val l = d.layer(id) ?: return
+    if (l.isAdjustment) {
+        toast("Adjustment layers have no pixels to select")
+        return
+    }
+    val mode = when {
+        shiftOn -> com.tim.quartzeditor.engine.SelectMode.ADD
+        altOn -> com.tim.quartzeditor.engine.SelectMode.SUBTRACT
+        else -> com.tim.quartzeditor.engine.SelectMode.NEW
+    }
+    val region = (if (l.isGroup) Rect(0, 0, d.width, d.height) else l.bounds())?.takeIf { it.intersect(com.tim.quartzeditor.engine.Transformer.limitFor(d.width, d.height)) }
+    if (region == null || region.isEmpty) {
+        toast("\"${l.props.name}\" is empty")
+        return
+    }
+    val alone = com.tim.quartzeditor.engine.Layer(
+        l.id, l.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, clip = false, visible = true, style = com.tim.quartzeditor.engine.LayerStyle(), parent = 0L),
+        l.tiles, l.x, l.y, l.mask, if (l.isGroup) com.tim.quartzeditor.engine.LayerKind.GROUP else com.tim.quartzeditor.engine.LayerKind.PIXELS,
+    )
+    val old = d.selection
+    setSelectionComputed("Select layer pixels") {
+        val bmp = com.tim.quartzeditor.engine.DocRenderer.renderLayers(listOf(alone), region, d.width, d.height, doc = d)
+        val grid = TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = true)
+        bmp.recycle()
+        com.tim.quartzeditor.engine.Selection.combineMask(old, grid, mode)
+    }
+}

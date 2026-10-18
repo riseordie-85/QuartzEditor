@@ -83,8 +83,9 @@ fun EditorViewModel.fillButton() {
 
 /** The brush button: Brush or Eraser (hold for both); tapping it while on one folds the brush column. */
 fun EditorViewModel.brushButton() {
+    // Tapped again: brush ⇄ eraser (their settings stay showing)
     if (tool == Tool.BRUSH || tool == Tool.ERASER) {
-        onToolButton(tool)
+        chooseBrush(eraser = tool == Tool.BRUSH)
         return
     }
     onToolButton(if (prefs.getString("lastBrush", "BRUSH") == "ERASER") Tool.ERASER else Tool.BRUSH)

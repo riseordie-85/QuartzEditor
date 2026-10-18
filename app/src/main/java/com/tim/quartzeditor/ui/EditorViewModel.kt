@@ -671,7 +671,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         selectDraft = null
         when {
             t == Tool.MOVE && (tool == Tool.MOVE || tool == Tool.PAN) -> tool = if (tool == Tool.MOVE) Tool.PAN else Tool.MOVE
-            (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) && tool == t -> brushColumnHidden = !brushColumnHidden
+            // The brush settings always show with the brushes
+            (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) && tool == t -> brushColumnHidden = false
             else -> {
                 tool = t
                 // The tool's settings show in Properties; other unpinned sections fold away

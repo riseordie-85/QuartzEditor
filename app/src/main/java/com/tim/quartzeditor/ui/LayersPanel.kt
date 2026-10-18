@@ -654,6 +654,7 @@ private fun LayerRow(
         val ids = if (vm.isMultiSelecting && layer.id in vm.selectedLayerIds()) vm.selectedLayerIds() else listOf(layer.id)
         Item("Rename…") { onRename() }
         Item("Duplicate") { vm.onLayer(layer.id) { duplicateLayer() } }
+        if (!layer.isAdjustment) Item("Select pixels") { vm.selectLayerPixels(layer.id) }
         if (ids.size > 1) Item("Merge ${ids.size} layers") { vm.mergeDown() }
         else Item(if (layer.isGroup) "Merge folder" else "Merge down") { vm.onLayer(layer.id) { mergeDown() } }
         if (!layer.isGroup) Item(if (p.clip) "Release clipping mask" else "Clip to layer below") { vm.onLayer(layer.id) { toggleClip() } }

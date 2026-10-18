@@ -113,7 +113,8 @@ import kotlin.math.sin
 @Composable
 fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier, menu: @Composable (Dp) -> Unit = {}) {
     val buttonSize = if (compact) 40.dp else 46.dp
-    val showBrush = (vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden
+    val liquify = vm.tool == Tool.WARP && vm.warp?.kind == com.tim.quartzeditor.engine.WarpKind.LIQUIFY
+    val showBrush = ((vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden) || liquify
     Row(
         modifier
             .fillMaxHeight()
@@ -302,6 +303,10 @@ internal fun warpIcon(k: com.tim.quartzeditor.engine.WarpKind) = when (k) {
 /** Brush tips and the three sliders, for whichever of brush or eraser is in use. */
 @Composable
 private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
+    if (vm.tool == Tool.WARP) {
+        LiquifyColumn(vm, compact)
+        return
+    }
     val forTool = vm.sliderTool
     val b = when (forTool) {
         Tool.ERASER -> vm.eraser
@@ -367,6 +372,45 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 onActive = preview,
             )
             ToolLabel("${(b.opacity * 100).roundToInt()}%")
+        }
+    }
+}
+
+/** Liquify's brush: size and strength, where the other brushes keep theirs. */
+@Composable
+private fun LiquifyColumn(vm: EditorViewModel, compact: Boolean) {
+    val preview: (Boolean) -> Unit = { active ->
+        vm.brushPreview = active
+        if (!active) vm.saveLiquifyPrefs()
+    }
+    BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
+        val sliderH = ((maxHeight - 120.dp) / 2).coerceIn(56.dp, 280.dp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(vertical = 10.dp),
+        ) {
+            // Size goes on a curve: fine control for small brushes
+            val lo = kotlin.math.ln(8f)
+            val hi = kotlin.math.ln(2000f)
+            SliderCaption("Size")
+            VerticalSlider(
+                value = (kotlin.math.ln(vm.liquifySize.coerceIn(8f, 2000f)) - lo) / (hi - lo),
+                onChange = { t -> vm.liquifySize = kotlin.math.exp(lo + (hi - lo) * t) },
+                height = sliderH,
+                description = "Liquify size",
+                onActive = preview,
+            )
+            ToolLabel("${vm.liquifySize.roundToInt()}px")
+            Spacer(Modifier.height(10.dp))
+            SliderCaption("Strength")
+            VerticalSlider(
+                value = (vm.liquifyStrength - 0.05f) / 0.95f,
+                onChange = { t -> vm.liquifyStrength = 0.05f + 0.95f * t },
+                height = sliderH,
+                description = "Liquify strength",
+                onActive = preview,
+            )
+            ToolLabel("${(vm.liquifyStrength * 100).roundToInt()}%")
         }
     }
 }
