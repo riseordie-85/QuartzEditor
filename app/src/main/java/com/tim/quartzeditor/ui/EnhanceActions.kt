@@ -83,6 +83,8 @@ data class EnhanceParams(
  * size. New-layer effects preview on [tempId], a layer put in just for the preview.
  */
 class EnhanceSession(
+    /** The picture it's on (a session never touches another one). */
+    val doc: com.tim.quartzeditor.engine.Doc,
     val kind: EnhanceKind,
     val layerId: Long,
     val area: Rect,
@@ -158,7 +160,7 @@ fun EditorViewModel.startEnhance(kind: EnhanceKind) {
             EnhanceKind.DEPTH_BLUR -> p0.copy(focus = depth?.let { nearest(it) } ?: p0.focus, focusPoint = null)
             else -> p0
         }
-        enhance = EnhanceSession(kind, l.id, area, k, proxy, depth, tempId, d.selection?.takeIf { !it.isEmpty })
+        enhance = EnhanceSession(d, kind, l.id, area, k, proxy, depth, tempId, d.selection?.takeIf { !it.isEmpty })
         openPopup(PopupKind.ENHANCE)
         refreshEnhance()
         if (kind == EnhanceKind.DEPTH_BLUR) toast("Tap what should stay sharp")
@@ -217,6 +219,8 @@ internal fun EditorViewModel.refreshEnhance() {
             val params = enhanceParams
             val bmp = try {
                 withContext(Dispatchers.Default) { render(s, params, full = null) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 toast(e.message ?: "Couldn't show that")
                 null
@@ -329,7 +333,7 @@ private fun EditorViewModel.renderRaw(s: EnhanceSession, p: EnhanceParams, full:
                 val argb = big.copy(Bitmap.Config.ARGB_8888, false)
                 big.recycle()
                 com.tim.quartzeditor.engine.Gpu.blurred(argb, soft, android.graphics.Shader.TileMode.CLAMP).also { argb.recycle() }.let { b ->
-                    b.copy(Bitmap.Config.ALPHA_8, false).also { b.recycle() }
+                    b.copy(Bitmap.Config.ALPHA_8, true).also { b.recycle() }
                 }
             } else big
             image to hidden
@@ -398,7 +402,8 @@ fun EditorViewModel.applyEnhance(onDone: (() -> Unit)? = null) {
         endEnhance()
         if (s.kind.newLayer) {
             val grid = withContext(Dispatchers.Default) { TileGrid.fromBitmap(pixels, s.area.left, s.area.top, alphaOnly = false).also { it.dropEmptyTiles() } }
-            val mask = hidden?.let { hb -> withContext(Dispatchers.Default) { TileGrid.fromBitmap(hb, s.area.left, s.area.top, alphaOnly = true) } }
+            // (A mask to paint on even when nothing is hidden yet: Relight)
+            val mask = hidden?.let { hb -> withContext(Dispatchers.Default) { TileGrid.fromBitmap(hb, s.area.left, s.area.top, alphaOnly = true) } } ?: TileGrid(alphaOnly = true)
             pixels.recycle()
             hidden?.recycle()
             stackEdit(s.kind.label) {
@@ -452,15 +457,20 @@ private fun EditorViewModel.endEnhance() {
     enhance = null
     previewJob?.cancel()
     preview = null
+    // (Only ever on the picture it started on: ids are only unique within one picture)
+    val d = s.doc
     s.tempId?.let { id ->
-        doc?.let { d ->
+        if (d.previewLayerId == id) {
             d.layers.removeAll { it.id == id }
-            if (d.previewLayerId == id) d.previewLayerId = 0L
+            d.previewLayerId = 0L
             if (d.activeId == id) d.activeId = s.layerId
         }
     }
     if (popup == PopupKind.ENHANCE) popup = null
+    d.invalidate()
     doc?.invalidate()
+    // The depth model is big and each effect only needs it once
+    if (s.kind.depth) Models.forget(Models.DEPTH)
 }
 
 // ===================================================================== auto enhance
@@ -479,7 +489,12 @@ fun EditorViewModel.autoEnhance() {
         return
     }
     val alone = aloneCopy(l, withMask = true)
+    val sel = d.selection?.takeIf { !it.isEmpty }
     runBusy("Looking at the photo…") {
+        // With a selection: the layer's mask shows only what's selected
+        val mask = withContext(Dispatchers.Default) {
+            sel?.let { selectionMask(it, Layer(-1L, LayerProps("Auto enhance"), TileGrid(alphaOnly = false), kind = LayerKind.ADJUSTMENT), d) }
+        }
         val levels = withContext(Dispatchers.Default) {
             val full = DocRenderer.renderLayers(listOf(alone), area, d.width, d.height, doc = d)
             val k = min(1f, 800f / max(area.width(), area.height()))
@@ -491,11 +506,12 @@ fun EditorViewModel.autoEnhance() {
             val fx = FxParams(kind = FxKind.LEVELS, levels = levels)
             val nl = Layer(
                 d.newId(), LayerProps("Auto enhance", parent = l.props.parent, clip = true, adjust = fx),
-                TileGrid(alphaOnly = false), mask = TileGrid(alphaOnly = true), kind = LayerKind.ADJUSTMENT,
+                TileGrid(alphaOnly = false), mask = mask ?: TileGrid(alphaOnly = true), kind = LayerKind.ADJUSTMENT,
             )
             d.layers.add(d.indexOf(l.id) + 1, nl)
             d.activeId = nl.id
             d.editMask = false
+            if (mask != null) d.selection = null
         }
         toast("Auto enhance added as a Levels layer: fine-tune it like any Levels layer, or lower its opacity")
     }
@@ -531,11 +547,13 @@ fun EditorViewModel.upscaleImage(factor: Int) {
 
 /**
  * One pixel layer's tiles made [factor] times bigger by the AI (canvas position scaled with it).
- * Called by [canvasTransform] in the background.
+ * Only what's on the [docW]×[docH] canvas is kept (a cropped photo can hold far more around it,
+ * which at 4× wouldn't fit in memory). Called by [canvasTransform] in the background.
  */
-internal fun EditorViewModel.aiUpscaleTiles(tiles: Map<Long, Bitmap>, x: Int, y: Int, factor: Int, progress: (Float) -> Unit): TileGrid {
+internal fun EditorViewModel.aiUpscaleTiles(tiles: Map<Long, Bitmap>, x: Int, y: Int, docW: Int, docH: Int, factor: Int, progress: (Float) -> Unit): TileGrid {
     val g = TileGrid(alphaOnly = false).also { it.tiles.putAll(tiles) }
-    val b = com.tim.quartzeditor.engine.Transformer.contentBounds(tiles) ?: return TileGrid(alphaOnly = false)
+    val b = com.tim.quartzeditor.engine.Transformer.contentBounds(tiles)?.takeIf { it.intersect(-x, -y, docW - x, docH - y) }
+        ?: return TileGrid(alphaOnly = false)
     val src = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
     g.drawTo(Canvas(src), -b.left.toFloat(), -b.top.toFloat(), null)
     val big = Upscaler.upscale(ctx, src, factor, progress)

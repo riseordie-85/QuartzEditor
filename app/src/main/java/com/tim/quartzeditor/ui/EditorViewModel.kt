@@ -477,6 +477,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ================================================================== opening and closing
 
     internal fun setDocument(d: Doc, canvas: Int? = null) {
+        cancelEnhance()
         lastStrokeEnd = null
         cloneSource = null
         cloneOffset = null
@@ -518,6 +519,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Shows another open document (a tab) with its own undo, leaving nothing half done behind. */
     internal fun switchDocument(d: Doc, h: History) {
+        cancelEnhance()
         lastStrokeEnd = null
         cloneSource = null
         cloneOffset = null
@@ -780,8 +782,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var popup by mutableStateOf<PopupKind?>(null)
 
     fun openPopup(k: PopupKind) {
-        // Another window: the Enhance effect being set up is dropped
-        if (k != PopupKind.ENHANCE && enhance != null) cancelEnhance()
+        // Another window: the Enhance effect being set up is applied first (like anything else you do)
+        if (k != PopupKind.ENHANCE && enhance != null) {
+            applyEnhance { openPopup(k) }
+            return
+        }
         val a = doc?.active
         if (k.isFx && a != null && a.needsRaster) {
             askRasterize(a) { openPopup(k) }

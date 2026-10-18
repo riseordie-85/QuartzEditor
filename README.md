@@ -319,10 +319,11 @@ place, so the picture keeps its room; closing it brings the panels back as you l
 Menu → **Enhance** works on the selected layer (with a selection, only on what's selected):
 - **Auto enhance** — adds a Levels adjustment layer, clipped to the photo, that stretches each color
   channel between its darkest and lightest parts (evening out a color cast) and sets a natural brightness.
-  Fine-tune it like any Levels layer.
+  With a selection, its mask shows only what's selected. Fine-tune it like any Levels layer.
 - **Upscale…** — the whole picture 2× or 4× bigger (up to 4096 px). Photo layers get new detail from the
-  on-device Real-ESRGAN model; shapes, text and masks are redrawn sharp as with Image size. It takes a while
-  on big pictures; the spinner shows how far along it is.
+  on-device Real-ESRGAN model (only what's on the canvas: pixels a crop left outside it are trimmed);
+  shapes, text and masks are redrawn sharp as with Image size. It takes a while on big pictures; the
+  spinner shows how far along it is.
 - **Denoise** (Strength, Color speckles) and **Sharpen** (Amount, Radius, Leave smooth areas) — previewed
   live on the picture, then Apply changes the layer's pixels (one undo step).
 - From **depth** (the on-device Depth Anything V2 model looks at the photo once, then everything is live):
@@ -337,8 +338,8 @@ Menu → **Enhance** works on the selected layer (with a selection, only on what
     far the sky reaches and how soft its edge is.
   Each of these is added as **its own layer** above the photo, clipped to it, with a mask (Relight's light
   is a Soft Light layer), so you can paint the mask, fade it or delete it later.
-- The settings open in a window with Cancel and Apply; anything else you do applies it first, Undo cancels
-  it.
+- The settings open in a window with Cancel and Apply; anything else you do applies it first; Undo or
+  closing the window cancels it.
 
 ### Masks
 A mask hides parts of its layer without erasing them: paint black to hide, white to show, gray for

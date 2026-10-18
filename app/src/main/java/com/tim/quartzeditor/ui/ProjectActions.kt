@@ -229,6 +229,7 @@ fun EditorViewModel.closeDocument() {
 fun EditorViewModel.discardDocument() {
     val d = doc ?: return
     if (busy != null) return
+    cancelEnhance()
     pendingFx = null
     transform = null
     resetVectorState()

@@ -306,7 +306,7 @@ internal fun EditorViewModel.canvasTransform(
                 val grid = if (l in aiLayers) {
                     // Upscale: new detail from the AI (one layer at a time; it's memory-hungry)
                     synchronized(aiLayers) {
-                        aiUpscaleTiles(tiles, l.x, l.y, aiFactor) { f ->
+                        aiUpscaleTiles(tiles, l.x, l.y, d.width, d.height, aiFactor) { f ->
                             updateBusy("Upscaling… ${((aiDone + f) * 100f / aiLayers.size).toInt()}%")
                         }.also { aiDone++ }
                     }

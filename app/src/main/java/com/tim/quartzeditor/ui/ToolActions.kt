@@ -779,16 +779,22 @@ internal fun selectionMask(sel: com.tim.quartzeditor.engine.Selection, l: com.ti
  * it takes away.
  */
 fun EditorViewModel.selectLayerPixels(id: Long) {
+    val mode = when {
+        shiftOn -> com.tim.quartzeditor.engine.SelectMode.ADD
+        altOn -> com.tim.quartzeditor.engine.SelectMode.SUBTRACT
+        else -> com.tim.quartzeditor.engine.SelectMode.NEW
+    }
+    selectLayerPixels(id, mode)
+}
+
+private fun EditorViewModel.selectLayerPixels(id: Long, mode: com.tim.quartzeditor.engine.SelectMode) {
+    // What's pending (a transform, say) goes in first, so the layer is selected as it ends up
+    if (pendingFirst { selectLayerPixels(id, mode) }) return
     val d = doc ?: return
     val l = d.layer(id) ?: return
     if (l.isAdjustment) {
         toast("Adjustment layers have no pixels to select")
         return
-    }
-    val mode = when {
-        shiftOn -> com.tim.quartzeditor.engine.SelectMode.ADD
-        altOn -> com.tim.quartzeditor.engine.SelectMode.SUBTRACT
-        else -> com.tim.quartzeditor.engine.SelectMode.NEW
     }
     val region = (if (l.isGroup) Rect(0, 0, d.width, d.height) else l.bounds())?.takeIf { it.intersect(com.tim.quartzeditor.engine.Transformer.limitFor(d.width, d.height)) }
     if (region == null || region.isEmpty) {

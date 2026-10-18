@@ -43,16 +43,41 @@ object Models {
     fun session(ctx: Context, name: String): OrtSession {
         sessions[name]?.let { return it }
         if (!has(ctx, name)) throw AiException("This build doesn't include the AI model ($name). Build the app with internet on once so Android Studio can download it.")
-        val bytes = ctx.assets.open("models/$name").use { it.readBytes() }
+        val file = modelFile(ctx, name)
         return OrtSession.SessionOptions().use { opts ->
             opts.setIntraOpNumThreads(max(1, min(4, Runtime.getRuntime().availableProcessors())))
-            env.createSession(bytes, opts).also { sessions[name] = it }
+            env.createSession(file.absolutePath, opts).also { sessions[name] = it }
         }
+    }
+
+    /**
+     * The model as a file of its own (copied out of the app once per install or update), so it loads
+     * from there instead of being read whole into memory first (the depth model is ~100 MB).
+     */
+    private fun modelFile(ctx: Context, name: String): java.io.File {
+        val stamp = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        val root = java.io.File(ctx.noBackupFilesDir, "models")
+        val dir = java.io.File(root, stamp.toString())
+        val f = java.io.File(dir, name)
+        if (f.isFile) return f
+        // Copies from an older version of the app go
+        root.listFiles()?.filter { it.name != dir.name }?.forEach { it.deleteRecursively() }
+        dir.mkdirs()
+        val tmp = java.io.File(dir, "$name.part")
+        ctx.assets.open("models/$name").use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
+        if (!tmp.renameTo(f)) throw AiException("Couldn't get the AI model ready")
+        return f
     }
 
     /** Lets go of the models (they're big); they load again next time. */
     /** Runs a model (never while it's being let go). */
     internal inline fun <T> running(block: () -> T): T = synchronized(this) { block() }
+
+    /** Lets go of one model (the depth model is big and used once per effect). */
+    @Synchronized
+    fun forget(name: String) {
+        sessions.remove(name)?.let { runCatching { it.close() } }
+    }
 
     @Synchronized
     fun release() {
@@ -359,6 +384,32 @@ object Depth {
 
 /** Upscale with Real-ESRGAN (general x4v3): 4× bigger, worked out in overlapping tiles. */
 object Upscaler {
+    /**
+     * [src]'s colors with see-through parts filled from the nearest colors (halved again and again,
+     * then each size put behind the one above it), unpremultiplied, as pixels.
+     */
+    private fun bleed(src: Bitmap): IntArray {
+        val levels = ArrayList<Bitmap>()
+        var cur = src
+        while (cur.width > 1 || cur.height > 1) {
+            cur = Bitmap.createScaledBitmap(cur, max(1, cur.width / 2), max(1, cur.height / 2), true)
+            levels.add(cur)
+        }
+        val behind = Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OVER) }
+        var acc = (levels.lastOrNull() ?: src).copy(Bitmap.Config.ARGB_8888, true)
+        for (i in levels.size - 2 downTo -1) {
+            val fine = (if (i >= 0) levels[i] else src).copy(Bitmap.Config.ARGB_8888, true)
+            Canvas(fine).drawBitmap(acc, null, Rect(0, 0, fine.width, fine.height), behind)
+            acc.recycle()
+            acc = fine
+        }
+        levels.forEach { it.recycle() }
+        val out = IntArray(src.width * src.height)
+        acc.getPixels(out, 0, src.width, 0, 0, src.width, src.height)
+        acc.recycle()
+        return out
+    }
+
     private const val TILE = 192
     private const val PAD = 12
 
@@ -376,6 +427,10 @@ object Upscaler {
         val name = sess.inputNames.firstOrNull() ?: "input"
         val px = IntArray(w * h)
         src.getPixels(px, 0, w, 0, 0, w, h)
+        val seeThrough = src.hasAlpha() && px.any { (it ushr 24) != 255 }
+        // The model sees colors only: see-through parts take the colors around them (not black,
+        // which would leave dark fringes at the edges once the transparency is put back)
+        val rgb = if (seeThrough) bleed(src) else px
         val tilesX = (w + TILE - 1) / TILE
         val tilesY = (h + TILE - 1) / TILE
         var done = 0
@@ -395,7 +450,7 @@ object Upscaler {
             val n = iw * ih
             val input = FloatArray(3 * n)
             for (y in 0 until ih) for (x in 0 until iw) {
-                val c = px[(iy0 + y) * w + ix0 + x]
+                val c = rgb[(iy0 + y) * w + ix0 + x]
                 val i = y * iw + x
                 input[i] = ((c shr 16) and 0xFF) / 255f
                 input[n + i] = ((c shr 8) and 0xFF) / 255f
@@ -438,9 +493,11 @@ object Upscaler {
             progress(done / total.toFloat())
         }
         // Transparency: the original's, scaled smoothly
-        if (src.hasAlpha() && px.any { (it ushr 24) != 255 }) {
+        if (seeThrough) {
             val alpha = Bitmap.createBitmap(ow, oh, Bitmap.Config.ALPHA_8)
-            Canvas(alpha).drawBitmap(src.extractAlpha(), null, Rect(0, 0, ow, oh), Paint(Paint.FILTER_BITMAP_FLAG))
+            val a = src.extractAlpha()
+            Canvas(alpha).drawBitmap(a, null, Rect(0, 0, ow, oh), Paint(Paint.FILTER_BITMAP_FLAG))
+            a.recycle()
             Canvas(out).drawBitmap(alpha, 0f, 0f, Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN) })
             alpha.recycle()
         }

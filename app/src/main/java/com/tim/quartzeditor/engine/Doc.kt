@@ -392,6 +392,7 @@ class Doc(width: Int, height: Int, name: String) {
         d.guidesY.addAll(guidesY)
         d.projectId = projectId
         d.nextId = nextId
+        d.previewLayerId = previewLayerId
         return d
     }
 
