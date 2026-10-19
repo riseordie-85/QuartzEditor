@@ -119,10 +119,19 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
             try {
                 ctx.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
                     ?: throw IllegalArgumentException("Couldn't read that file.")
-                com.tim.quartzeditor.engine.PsdImport.read(tmp, name)
+                try {
+                    com.tim.quartzeditor.engine.PsdImport.read(tmp, name)
+                } catch (e: com.tim.quartzeditor.engine.TiffRawException) {
+                    // A camera raw file after all: Android's decoder opens it
+                    null
+                }
             } finally {
                 tmp.delete()
             }
+        }
+        if (result == null) {
+            viewModelScope.launch { openImage(uri) }
+            return@runBusy
         }
         setDocument(result.doc)
         if (result.notes.isNotEmpty()) importReport = name to result.notes
@@ -143,8 +152,17 @@ internal fun EditorViewModel.isPsd(uri: Uri): Boolean {
     if (type.startsWith("image/")) return false
     return try {
         ctx.contentResolver.openInputStream(uri)?.use { s ->
-            val head = ByteArray(4)
-            s.read(head) == 4 && (String(head, Charsets.ISO_8859_1) == "8BPS" || com.tim.quartzeditor.engine.TiffReader.isTiff(head))
+            // Enough of the start to tell a TIFF from a camera raw file (Android opens those)
+            val head = ByteArray(64 * 1024)
+            var n = 0
+            while (n < head.size) {
+                val k = s.read(head, n, head.size - n)
+                if (k <= 0) break
+                n += k
+            }
+            val h = head.copyOf(n)
+            n >= 4 && (String(h, 0, 4, Charsets.ISO_8859_1) == "8BPS" ||
+                (com.tim.quartzeditor.engine.TiffReader.isTiff(h) && !com.tim.quartzeditor.engine.TiffReader.looksRaw(h)))
         } ?: false
     } catch (e: Exception) {
         false

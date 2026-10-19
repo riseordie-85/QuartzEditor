@@ -78,6 +78,8 @@ object PsdImport {
     private fun fromTiff(buf: java.nio.ByteBuffer, name: String, depth: Int): Result {
         val info = try {
             TiffReader.info(buf)
+        } catch (e: TiffRawException) {
+            throw e
         } catch (e: TiffException) {
             throw PsdException(e.message ?: "This TIFF couldn't be read.")
         } catch (e: IndexOutOfBoundsException) {
@@ -99,7 +101,9 @@ object PsdImport {
         }
         val readable = TiffReader.unsupported(info)
         if (layered == null && readable != null) throw PsdException(readable)
-        val f = layered ?: PsdFile(buf, 1, info.width, info.height, 8, 3, info.samples, emptyList(), -1L, 120.0, 30.0)
+        // Turned a quarter (a camera's portrait shot): the picture is as tall as the file is wide
+        val turned = layered == null && info.orientation in 5..8
+        val f = layered ?: PsdFile(buf, 1, if (turned) info.height else info.width, if (turned) info.width else info.height, 8, 3, info.samples, emptyList(), -1L, 120.0, 30.0)
         return Builder(f, name, depth, if (readable == null) TiffSource(buf, info) else null).build()
     }
 
@@ -151,6 +155,36 @@ object PsdImport {
 
         /** A file saved without layers: its flattened picture as one layer. */
         fun compositeOnly() {
+            if (tiff != null && tiff.info.orientation != 1 && f.layers.isEmpty()) {
+                // A TIFF saved sideways or mirrored: read (at the document's size), then turned upright
+                val i = tiff.info
+                val w = (i.width * s).roundToInt().coerceAtLeast(1)
+                val h = (i.height * s).roundToInt().coerceAtLeast(1)
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                if (w == i.width && h == i.height) {
+                    TiffReader.rows(tiff.buf, i, androidJpeg) { y, row -> bmp.setPixels(row, 0, w, 0, y, w, 1) }
+                } else {
+                    val shrink = RowShrinker(i.width, i.height, w, h) { y, row -> bmp.setPixels(row, 0, w, 0, y, w, 1) }
+                    TiffReader.rows(tiff.buf, i, androidJpeg) { y, row -> shrink.row(y, row) }
+                    shrink.finish()
+                }
+                val m = Matrix()
+                when (i.orientation) {
+                    2 -> m.postScale(-1f, 1f)
+                    3 -> m.postRotate(180f)
+                    4 -> m.postScale(1f, -1f)
+                    5 -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+                    6 -> m.postRotate(90f)
+                    7 -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+                    8 -> m.postRotate(270f)
+                }
+                val upright = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true)
+                if (upright !== bmp) bmp.recycle()
+                val grid = TileGrid.fromBitmap(upright, 0, 0, alphaOnly = false).also { it.dropEmptyTiles() }
+                upright.recycle()
+                doc.layers.add(Layer(doc.newId(), LayerProps("Background"), grid))
+                return
+            }
             if (tiff != null) {
                 // A TIFF: its own picture
                 val grid = TileGrid(alphaOnly = false)

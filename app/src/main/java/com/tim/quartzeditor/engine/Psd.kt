@@ -946,7 +946,8 @@ internal object Descriptors {
 
     private fun id(r: PsdReader.Reader): String {
         val n = r.i32()
-        return if (n == 0) r.ascii(4) else r.ascii(n)
+        // A four-letter code (n = 0) is stored like a number; a written-out key is plain text
+        return if (n == 0) r.ascii(4) else r.latin1(n)
     }
 
     private fun value(r: PsdReader.Reader, type: String): Any? = when (type) {
@@ -1400,7 +1401,7 @@ sealed class PsdAdjust {
             // Newer files repeat the curves with their channel numbers
             if (version == 1 && b.remaining() >= 10) {
                 val sig = ByteArray(4).also { b.get(it) }
-                if (String(sig, Charsets.ISO_8859_1) == "Crv ") {
+                if (String(sig, Charsets.ISO_8859_1).let { if (b.order() == ByteOrder.LITTLE_ENDIAN) it.reversed() else it } == "Crv ") {
                     b.short
                     val count = b.int
                     val extra = LinkedHashMap<Int, List<Pair<Int, Int>>>()

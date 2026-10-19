@@ -106,7 +106,15 @@ object Media {
     }
 
     /** A TIFF held in [buf] as a bitmap no bigger than [maxPx], turned upright. */
-    fun decodeTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap {
+    fun decodeTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap = try {
+        readTiff(buf, maxPx)
+    } catch (e: com.tim.quartzeditor.engine.TiffException) {
+        throw IOException(e.message)
+    } catch (e: RuntimeException) {
+        throw IOException("This TIFF file looks damaged.")
+    }
+
+    private fun readTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap {
         val reader = com.tim.quartzeditor.engine.TiffReader
         val info = try {
             reader.info(buf)
@@ -140,9 +148,18 @@ object Media {
         return Bitmap.createBitmap(bmp, 0, 0, w, h, m, true).also { if (it !== bmp) bmp.recycle() }
     }
 
-    /** Decodes an image upright, as editable pixels, no bigger than [maxPx] on its longest side. */
-    fun decodeUpright(context: Context, uri: Uri, maxPx: Int): Bitmap {
-        if (isTiff(context, uri)) return decodeTiff(context, uri, maxPx)
+    /**
+     * Decodes an image upright, as editable pixels, no bigger than [maxPx] on its longest side.
+     * Android's decoder goes first (it reads camera raw files, which are TIFFs too); a TIFF it
+     * can't read is read by the app.
+     */
+    fun decodeUpright(context: Context, uri: Uri, maxPx: Int): Bitmap = try {
+        decodeAndroid(context, uri, maxPx)
+    } catch (e: IOException) {
+        if (isTiff(context, uri)) decodeTiff(context, uri, maxPx) else throw e
+    }
+
+    private fun decodeAndroid(context: Context, uri: Uri, maxPx: Int): Bitmap {
         val source = ImageDecoder.createSource(context.contentResolver, uri)
         val bmp = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE

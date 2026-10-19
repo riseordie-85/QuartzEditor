@@ -18,7 +18,10 @@ import kotlin.math.roundToInt
 // or one per color; and BigTIFF for files over 4 GB.
 
 /** A TIFF that can't be read, with a message for the person. */
-class TiffException(message: String) : Exception(message)
+open class TiffException(message: String) : Exception(message)
+
+/** A camera raw file (built like a TIFF): left to Android's own decoder. */
+class TiffRawException : TiffException("This is a camera raw file.")
 
 /** Decodes one JPEG-compressed piece of a TIFF ([width]×[height]) as ARGB colors, or null when it can't. */
 fun interface TiffJpeg {
@@ -94,6 +97,36 @@ object TiffReader {
         return ii || mm
     }
 
+    /**
+     * Whether a file starting with [head] (its first few KB) looks like a camera raw file: a DNG,
+     * or Canon's CR2, or a TIFF whose first directory holds a camera make and more pictures.
+     */
+    fun looksRaw(head: ByteArray): Boolean {
+        if (!isTiff(head) || head.size < 16) return false
+        if (head.size >= 10 && head[8] == 'C'.code.toByte() && head[9] == 'R'.code.toByte()) return true
+        return try {
+            val b = ByteBuffer.wrap(head).order(if (head[0] == 'I'.code.toByte()) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
+            if (b.getShort(2).toInt() != 42) return false
+            val at = b.getInt(4)
+            if (at <= 0 || at + 2 > head.size) return false
+            val n = b.getShort(at).toInt() and 0xFFFF
+            var make = false
+            var sub = false
+            for (k in 0 until n) {
+                val p = at + 2 + k * 12
+                if (p + 12 > head.size) break
+                when (b.getShort(p).toInt() and 0xFFFF) {
+                    50706 -> return true
+                    271 -> make = true
+                    330 -> sub = true
+                }
+            }
+            make && sub
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // ------------------------------------------------------------ tags
 
     private class Entry(val tag: Int, val type: Int, val count: Long, val valueAt: Long)
@@ -111,9 +144,10 @@ object TiffReader {
 
         fun longs(tag: Int): LongArray? {
             val e = entries[tag] ?: return null
-            val n = e.count.coerceAtMost(50_000_000L).toInt()
             val sz = typeSize(e.type)
-            if (sz == 0) return null
+            if (sz == 0 || e.valueAt < 0 || e.valueAt >= b.limit()) return null
+            // Never more than the file holds (a damaged count can't ask for gigabytes)
+            val n = min(e.count, (b.limit() - e.valueAt) / sz).coerceIn(0L, 50_000_000L).toInt()
             val out = LongArray(n)
             var p = e.valueAt
             for (i in 0 until n) {
@@ -183,7 +217,15 @@ object TiffReader {
     }
 
     /** The TIFF's first full-size picture (smaller previews saved alongside it are skipped). */
-    fun info(buffer: ByteBuffer): TiffInfo {
+    fun info(buffer: ByteBuffer): TiffInfo = try {
+        readInfo(buffer)
+    } catch (e: TiffException) {
+        throw e
+    } catch (e: RuntimeException) {
+        throw TiffException("This TIFF file looks damaged.")
+    }
+
+    private fun readInfo(buffer: ByteBuffer): TiffInfo {
         val b = buffer.duplicate()
         if (b.limit() < 16) throw TiffException("This TIFF file is empty.")
         val order = if (b.get(0) == 'I'.code.toByte()) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
@@ -209,6 +251,9 @@ object TiffReader {
         val width = t.int(256, 0)
         val height = t.int(257, 0)
         if (width <= 0 || height <= 0) throw TiffException("This TIFF file has no picture.")
+        if (width > 1_000_000 || height > 1_000_000 || width.toLong() * height > 2_000_000_000L) throw TiffException("This TIFF's picture is too big to open here.")
+        // Camera raw files (DNG, NEF, CR2, ARW…) are TIFFs too, but Android reads those itself
+        if (t.has(50706) || t.int(262, 0) == 32803 || t.int(262, 0) == 34892) throw TiffRawException()
         val bits = t.int(258, 1)
         val samples = t.int(277, 1)
         val compression = t.int(259, 1)
@@ -229,7 +274,8 @@ object TiffReader {
             predictor = t.int(317, 1),
             fillOrder = t.int(266, 1),
             extraSamples = t.longs(338)?.map { it.toInt() }?.toIntArray() ?: IntArray(0),
-            rowsPerStrip = t.int(278, height).coerceIn(1, height),
+            // (Read as a long: "one strip for the whole picture" is often 2³² − 1)
+            rowsPerStrip = (t.longs(278)?.firstOrNull() ?: height.toLong()).coerceIn(1L, height.toLong()).toInt(),
             offsets = offsets,
             counts = counts,
             tileWidth = if (tiled) t.int(322, 0) else 0,
@@ -265,16 +311,32 @@ object TiffReader {
     /**
      * The picture's rows, top to bottom, as ARGB (straight, not premultiplied): [onRow] gets the
      * row's number and its [TiffInfo.width] colors (the same array each time). [jpeg] decodes
-     * JPEG-compressed pieces.
+     * JPEG-compressed pieces. Only a row or so of each strip is held at a time, so even huge
+     * files need little memory. A damaged file throws [TiffException].
      */
     fun rows(buffer: ByteBuffer, i: TiffInfo, jpeg: TiffJpeg?, onRow: (Int, IntArray) -> Unit) {
         unsupported(i)?.let { throw TiffException(it) }
+        try {
+            readRows(buffer, i, jpeg, onRow)
+        } catch (e: TiffException) {
+            throw e
+        } catch (e: OutOfMemoryError) {
+            throw e
+        } catch (e: RuntimeException) {
+            throw TiffException("This TIFF file looks damaged.")
+        }
+    }
+
+    private fun readRows(buffer: ByteBuffer, i: TiffInfo, jpeg: TiffJpeg?, onRow: (Int, IntArray) -> Unit) {
         val b = buffer.duplicate().order(i.order)
         val w = i.width
         val h = i.height
+        val planes = if (i.planar == 2) i.samples else 1
         val out = IntArray(w)
         if (!i.tiled) {
             val perPlane = (h + i.rowsPerStrip - 1) / i.rowsPerStrip
+            // Not enough pieces for the picture's size: it's damaged (or not what it says)
+            if (perPlane.toLong() * planes > i.offsets.size.toLong() + 1) throw TiffException("This TIFF file looks damaged.")
             for (s in 0 until perPlane) {
                 val rows = min(i.rowsPerStrip, h - s * i.rowsPerStrip)
                 val chunk = chunk(b, i, s, perPlane, w, rows, jpeg)
@@ -287,23 +349,26 @@ object TiffReader {
         }
         val tw = i.tileWidth
         val th = i.tileHeight
-        if (tw <= 0 || th <= 0) throw TiffException("This TIFF file looks damaged.")
+        if (tw <= 0 || th <= 0 || tw > 65536 || th > 65536) throw TiffException("This TIFF file looks damaged.")
         val across = (w + tw - 1) / tw
         val down = (h + th - 1) / th
         val perPlane = across * down
-        val band = IntArray(w * th)
+        if (perPlane.toLong() * planes > i.offsets.size.toLong() + 1) throw TiffException("This TIFF file looks damaged.")
+        val bandRows = min(th, h)
+        if (w.toLong() * bandRows > 256L * 1024 * 1024) throw TiffException("This TIFF's tiles are too big to read here.")
+        val band = IntArray(w * bandRows)
+        val row = IntArray(tw)
         for (ty in 0 until down) {
+            val rows = min(th, h - ty * th)
             for (tx in 0 until across) {
                 val chunk = chunk(b, i, ty * across + tx, perPlane, tw, th, jpeg)
                 val x0 = tx * tw
                 val n = min(tw, w - x0)
-                val row = IntArray(tw)
-                for (r in 0 until th) {
+                for (r in 0 until rows) {
                     chunk.row(r, row, 0, tw)
                     System.arraycopy(row, 0, band, r * w + x0, n)
                 }
             }
-            val rows = min(th, h - ty * th)
             for (r in 0 until rows) {
                 System.arraycopy(band, r * w, out, 0, w)
                 onRow(ty * th + r, out)
@@ -311,14 +376,14 @@ object TiffReader {
         }
     }
 
-    /** One strip or tile, decompressed, that hands out its rows as colors. */
+    /** One strip or tile that hands out its rows as colors, top to bottom. */
     private interface Chunk {
         fun row(r: Int, out: IntArray, at: Int, n: Int)
     }
 
     private fun chunk(b: ByteBuffer, i: TiffInfo, index: Int, perPlane: Int, cw: Int, ch: Int, jpeg: TiffJpeg?): Chunk {
         if (i.compression == 7) {
-            val raw = piece(b, i, index)
+            val raw = piece(b, i, index, -1L)
             val px = jpeg?.decode(jpegStream(raw, i.jpegTables), cw, ch)
                 ?: throw TiffException("This TIFF's JPEG pieces couldn't be read.")
             return object : Chunk {
@@ -333,35 +398,261 @@ object TiffReader {
         }
         val planes = if (i.planar == 2) i.samples else 1
         val perPixel = if (i.planar == 2) 1 else i.samples
-        val rowBytes = (cw.toLong() * perPixel * i.bits + 7) / 8
-        val data = Array(planes) { p ->
-            val raw = piece(b, i, index + p * perPlane)
-            val need = (rowBytes * ch).toInt()
-            val bytes = decompress(raw, i.compression, need)
-            if (i.fillOrder == 2 && i.bits < 8) for (k in bytes.indices) bytes[k] = reverseBits(bytes[k])
-            unpredict(bytes, i, rowBytes.toInt(), ch, cw, perPixel)
-            bytes
-        }
+        val rowBytesL = (cw.toLong() * perPixel * i.bits + 7) / 8
+        if (rowBytesL > 512L * 1024 * 1024) throw TiffException("This TIFF's rows are too long to read here.")
+        val rowBytes = rowBytesL.toInt()
+        val sources = Array(planes) { p -> source(b, i, index + p * perPlane, rowBytes.toLong() * ch) }
+        val data = Array(planes) { ByteArray(rowBytes) }
         val conv = Converter(i)
+        var next = 0
         return object : Chunk {
-            override fun row(r: Int, out: IntArray, at: Int, n: Int) = conv.row(data, rowBytes.toInt() * r, perPixel, out, at, n)
+            override fun row(r: Int, out: IntArray, at: Int, n: Int) {
+                // Rows come in order; skipped ones are read past
+                while (next <= r) {
+                    for (p in 0 until planes) {
+                        val d = data[p]
+                        sources[p].read(d, rowBytes)
+                        if (i.fillOrder == 2 && i.bits < 8) for (k in d.indices) d[k] = reverseBits(d[k])
+                        unpredict(d, i, rowBytes, 1, cw, perPixel)
+                    }
+                    next++
+                }
+                conv.row(data, 0, perPixel, out, at, n)
+            }
         }
     }
 
-    /** A strip's or tile's stored bytes. */
-    private fun piece(b: ByteBuffer, i: TiffInfo, index: Int): ByteArray {
-        if (index >= i.offsets.size) return ByteArray(0)
+    /** A strip's or tile's bytes, decompressed as they're needed. */
+    private interface Source {
+        /** The next [n] bytes into [dst] (zeros past the end of the data). */
+        fun read(dst: ByteArray, n: Int)
+    }
+
+    /** Where piece [index] is and how long (its stated length, or what's left of the file). */
+    private fun span(b: ByteBuffer, i: TiffInfo, index: Int, plainLength: Long): Pair<Int, Int> {
+        if (index >= i.offsets.size) return 0 to 0
         val at = i.offsets[index]
+        if (at <= 0 || at >= b.limit()) return 0 to 0
         var len = i.counts.getOrElse(index) { -1 }
-        if (at <= 0 || at >= b.limit()) return ByteArray(0)
-        if (len < 0) len = b.limit() - at
+        // No byte counts: uncompressed pieces are exactly their rows; others run until they end
+        if (len <= 0) len = if (i.compression == 1 && plainLength > 0) plainLength else b.limit() - at
         len = min(len, b.limit() - at)
-        if (len > Int.MAX_VALUE - 8) throw TiffException("This TIFF's pieces are too big to read here.")
-        val out = ByteArray(len.toInt())
-        val d = b.duplicate()
-        d.position(at.toInt())
-        d.get(out)
+        return at.toInt() to len.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    /** A strip's or tile's stored bytes (only for JPEG pieces, which are decoded whole). */
+    private fun piece(b: ByteBuffer, i: TiffInfo, index: Int, plainLength: Long): ByteArray {
+        val (at, len) = span(b, i, index, plainLength)
+        if (len > 256 * 1024 * 1024) throw TiffException("This TIFF's pieces are too big to read here.")
+        val out = ByteArray(len)
+        if (len > 0) {
+            val d = b.duplicate()
+            d.position(at)
+            d.get(out)
+        }
         return out
+    }
+
+    private fun source(b: ByteBuffer, i: TiffInfo, index: Int, plainLength: Long): Source {
+        val (at, len) = span(b, i, index, plainLength)
+        val end = at + len
+        return when (i.compression) {
+            32773 -> PackBitsSource(b, at, end)
+            5 -> LzwSource(b, at, end)
+            8, 32946 -> DeflateSource(b, at, end)
+            else -> object : Source {
+                var pos = at
+                override fun read(dst: ByteArray, n: Int) {
+                    val k = min(n, max(0, end - pos))
+                    if (k > 0) {
+                        val d = b.duplicate()
+                        d.position(pos)
+                        d.get(dst, 0, k)
+                        pos += k
+                    }
+                    if (k < n) java.util.Arrays.fill(dst, k, n, 0)
+                }
+            }
+        }
+    }
+
+    private class PackBitsSource(val b: ByteBuffer, var pos: Int, val end: Int) : Source {
+        private var run = 0
+        private var literal = false
+        private var value: Byte = 0
+
+        override fun read(dst: ByteArray, n: Int) {
+            var o = 0
+            while (o < n) {
+                if (run == 0) {
+                    if (pos >= end) break
+                    val c = b.get(pos++).toInt()
+                    when {
+                        c >= 0 -> {
+                            run = c + 1
+                            literal = true
+                        }
+                        c != -128 -> {
+                            if (pos >= end) break
+                            run = 1 - c
+                            literal = false
+                            value = b.get(pos++)
+                        }
+                    }
+                    continue
+                }
+                if (literal) {
+                    if (pos >= end) {
+                        run = 0
+                        break
+                    }
+                    dst[o++] = b.get(pos++)
+                } else {
+                    dst[o++] = value
+                }
+                run--
+            }
+            if (o < n) java.util.Arrays.fill(dst, o, n, 0)
+        }
+    }
+
+    private class DeflateSource(val b: ByteBuffer, var pos: Int, val end: Int) : Source {
+        private val inf = Inflater()
+        private val input = ByteArray(64 * 1024)
+        private var done = false
+
+        override fun read(dst: ByteArray, n: Int) {
+            var got = 0
+            try {
+                while (got < n && !done) {
+                    if (inf.needsInput()) {
+                        val k = min(input.size, end - pos)
+                        if (k <= 0) {
+                            done = true
+                            break
+                        }
+                        val d = b.duplicate()
+                        d.position(pos)
+                        d.get(input, 0, k)
+                        pos += k
+                        inf.setInput(input, 0, k)
+                    }
+                    val k = inf.inflate(dst, got, n - got)
+                    got += k
+                    if (k == 0 && (inf.finished() || inf.needsDictionary())) done = true
+                }
+            } catch (e: Exception) {
+                // A damaged piece: what came out is kept, the rest stays empty
+                done = true
+            }
+            if (got < n) java.util.Arrays.fill(dst, got, n, 0)
+            if (done) inf.end()
+        }
+    }
+
+    /** TIFF's LZW: codes of 9 to 12 bits, highest bit first, the code size growing one code early. */
+    private class LzwSource(val b: ByteBuffer, var pos: Int, val end: Int) : Source {
+        private val prefix = IntArray(4096)
+        private val suffix = ByteArray(4096)
+        private val first = ByteArray(4096)
+        private val length = IntArray(4096)
+        private var next = 258
+        private var width = 9
+        private var old = -1
+        private var bitBuf = 0L
+        private var bitCount = 0
+        private var done = false
+        /** A decoded string not handed out yet. */
+        private val pending = ByteArray(4096)
+        private var pendStart = 0
+        private var pendEnd = 0
+
+        init {
+            for (c in 0 until 256) {
+                suffix[c] = c.toByte()
+                first[c] = c.toByte()
+                length[c] = 1
+            }
+        }
+
+        private fun emit(code: Int) {
+            val len = length[code]
+            var k = len - 1
+            var c = code
+            while (c >= 0 && k >= 0) {
+                pending[k] = suffix[c]
+                k--
+                c = if (c < 258) -1 else prefix[c]
+            }
+            pendStart = 0
+            pendEnd = len
+        }
+
+        /** Decodes the next code into [pending]; false at the end. */
+        private fun step(): Boolean {
+            while (true) {
+                while (bitCount < width) {
+                    if (pos >= end) return false
+                    bitBuf = (bitBuf shl 8) or (b.get(pos++).toLong() and 0xFF)
+                    bitCount += 8
+                }
+                val code = ((bitBuf shr (bitCount - width)) and ((1L shl width) - 1)).toInt()
+                bitCount -= width
+                if (code == 257) return false
+                if (code == 256) {
+                    next = 258
+                    width = 9
+                    old = -1
+                    continue
+                }
+                if (old == -1) {
+                    if (code > 255) return false
+                    emit(code)
+                    old = code
+                    return true
+                }
+                if (code < next) {
+                    emit(code)
+                    if (next < 4096) {
+                        prefix[next] = old
+                        suffix[next] = first[code]
+                        first[next] = first[old]
+                        length[next] = length[old] + 1
+                        next++
+                    }
+                } else if (code == next && next < 4096) {
+                    prefix[next] = old
+                    suffix[next] = first[old]
+                    first[next] = first[old]
+                    length[next] = length[old] + 1
+                    next++
+                    emit(code)
+                } else {
+                    return false
+                }
+                old = code
+                if (next + 1 >= (1 shl width) && width < 12) width++
+                return true
+            }
+        }
+
+        override fun read(dst: ByteArray, n: Int) {
+            var o = 0
+            while (o < n) {
+                if (pendStart < pendEnd) {
+                    val k = min(n - o, pendEnd - pendStart)
+                    System.arraycopy(pending, pendStart, dst, o, k)
+                    pendStart += k
+                    o += k
+                    continue
+                }
+                if (done || !step()) {
+                    done = true
+                    break
+                }
+            }
+            if (o < n) java.util.Arrays.fill(dst, o, n, 0)
+        }
     }
 
     /** A JPEG piece made whole: the shared tables (when the file keeps them apart) put in front. */
@@ -374,126 +665,6 @@ object TiffReader {
         System.arraycopy(tables, 0, out, 0, t)
         System.arraycopy(raw, skip, out, t, raw.size - skip)
         return out
-    }
-
-    private fun decompress(raw: ByteArray, compression: Int, need: Int): ByteArray {
-        val out = ByteArray(need)
-        when (compression) {
-            1 -> System.arraycopy(raw, 0, out, 0, min(raw.size, need))
-            32773 -> packBits(raw, out)
-            5 -> lzw(raw, out)
-            8, 32946 -> {
-                val inf = Inflater()
-                try {
-                    inf.setInput(raw)
-                    var got = 0
-                    while (got < need) {
-                        val k = inf.inflate(out, got, need - got)
-                        if (k == 0 && (inf.finished() || inf.needsInput() || inf.needsDictionary())) break
-                        got += k
-                    }
-                } catch (e: Exception) {
-                    // A damaged piece: what came out is kept, the rest stays empty
-                } finally {
-                    inf.end()
-                }
-            }
-        }
-        return out
-    }
-
-    private fun packBits(src: ByteArray, dst: ByteArray) {
-        var p = 0
-        var o = 0
-        while (p < src.size && o < dst.size) {
-            val c = src[p++].toInt()
-            if (c >= 0) {
-                val k = min(min(c + 1, dst.size - o), src.size - p)
-                System.arraycopy(src, p, dst, o, k)
-                p += k
-                o += k
-            } else if (c != -128) {
-                if (p >= src.size) break
-                val v = src[p++]
-                val k = min(1 - c, dst.size - o)
-                java.util.Arrays.fill(dst, o, o + k, v)
-                o += k
-            }
-        }
-    }
-
-    /** TIFF's LZW: codes of 9 to 12 bits, highest bit first, the code size growing one code early. */
-    private fun lzw(src: ByteArray, dst: ByteArray) {
-        val prefix = IntArray(4096)
-        val suffix = ByteArray(4096)
-        val first = ByteArray(4096)
-        val length = IntArray(4096)
-        for (c in 0 until 256) {
-            suffix[c] = c.toByte()
-            first[c] = c.toByte()
-            length[c] = 1
-        }
-        var next = 258
-        var width = 9
-        var old = -1
-        var bitBuf = 0L
-        var bitCount = 0
-        var p = 0
-        var o = 0
-        fun put(code: Int) {
-            val len = length[code]
-            var k = o + len - 1
-            var c = code
-            while (c >= 0 && k >= o) {
-                if (k < dst.size) dst[k] = suffix[c]
-                k--
-                c = if (c < 258) -1 else prefix[c]
-            }
-            o += len
-        }
-        while (o < dst.size) {
-            while (bitCount < width) {
-                if (p >= src.size) return
-                bitBuf = (bitBuf shl 8) or (src[p++].toLong() and 0xFF)
-                bitCount += 8
-            }
-            val code = ((bitBuf shr (bitCount - width)) and ((1L shl width) - 1)).toInt()
-            bitCount -= width
-            if (code == 257) return
-            if (code == 256) {
-                next = 258
-                width = 9
-                old = -1
-                continue
-            }
-            if (old == -1) {
-                if (code > 255) return
-                put(code)
-                old = code
-                continue
-            }
-            if (code < next) {
-                put(code)
-                if (next < 4096) {
-                    prefix[next] = old
-                    suffix[next] = first[code]
-                    first[next] = first[old]
-                    length[next] = length[old] + 1
-                    next++
-                }
-            } else if (code == next && next < 4096) {
-                prefix[next] = old
-                suffix[next] = first[old]
-                first[next] = first[old]
-                length[next] = length[old] + 1
-                next++
-                put(code)
-            } else {
-                return
-            }
-            old = code
-            if (next + 1 >= (1 shl width) && width < 12) width++
-        }
     }
 
     private fun reverseBits(v: Byte): Byte {
