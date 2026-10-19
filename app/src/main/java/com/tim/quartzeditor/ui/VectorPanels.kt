@@ -269,6 +269,10 @@ fun ShapeOptions(vm: EditorViewModel) {
         Spacer(Modifier.height(6.dp))
     }
     if (layer != null) {
+        Extrude3DOptions(vm, spec.extrude) { label, live, change ->
+            if (live) vm.editVectorLive(layer.id) { p -> p.copy(shape = p.shape?.let { it.copy(extrude = change(it.extrude)) }) }
+            else vm.editVector(layer.id, label) { p -> p.copy(shape = p.shape?.let { it.copy(extrude = change(it.extrude)) }) }
+        }
         Spacer(Modifier.height(6.dp))
         Text("Scale, rotate or distort it with Transform; it stays sharp.", color = Q.textDim, fontSize = 12.sp)
         Spacer(Modifier.height(6.dp))
@@ -418,6 +422,12 @@ fun TextOptions(vm: EditorViewModel) {
         Text("Arcs work on one line of text.", color = Q.textDim, fontSize = 11.sp)
     }
     if (layer != null) TextWarpOptions(vm, layer, spec)
+    if (layer != null) {
+        Extrude3DOptions(vm, spec.extrude) { label, live, change ->
+            if (live) vm.editVectorLive(layer.id) { p -> p.copy(text = p.text?.let { it.copy(extrude = change(it.extrude)) }) }
+            else vm.editVector(layer.id, label) { p -> p.copy(text = p.text?.let { it.copy(extrude = change(it.extrude)) }) }
+        }
+    }
     if (layer != null) {
         Spacer(Modifier.height(6.dp))
         Text("Outline, shadow and glow: Layer Style (fx). Scale or rotate it with Transform; it stays sharp.", color = Q.textDim, fontSize = 12.sp)
@@ -821,6 +831,87 @@ private fun TextWarpOptions(vm: EditorViewModel, layer: com.tim.quartzeditor.eng
     }
 }
 
+
+/**
+ * A shape or text layer's 3D: off or a ready-made look, then depth, how it's turned, perspective,
+ * the light and the sides' color. [set] changes it (label, live while a slider moves, the change).
+ */
+@Composable
+private fun Extrude3DOptions(
+    vm: EditorViewModel,
+    e: com.tim.quartzeditor.engine.Extrude3D?,
+    set: (String, Boolean, (com.tim.quartzeditor.engine.Extrude3D?) -> com.tim.quartzeditor.engine.Extrude3D?) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
+    val presets = com.tim.quartzeditor.engine.Extrude3D.PRESETS
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("3D", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(52.dp))
+        Box(Modifier.weight(1f)) {
+            val name = when {
+                e == null -> "Off"
+                else -> presets.firstOrNull { (_, p) -> p == e }?.first ?: "Custom"
+            }
+            Text(
+                name, color = Q.text, fontSize = 14.sp,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Q.field).clickable { open = true }.padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                androidx.compose.material3.DropdownMenuItem(text = { Text("Off") }, onClick = {
+                    open = false
+                    set("3D off", false) { null }
+                })
+                presets.forEach { (n, p) ->
+                    androidx.compose.material3.DropdownMenuItem(text = { Text(n) }, onClick = {
+                        open = false
+                        // A look keeps the sides' color you picked
+                        set("3D", false) { old -> p.copy(sideColor = old?.sideColor) }
+                    })
+                }
+            }
+        }
+    }
+    if (e == null) return
+    fun live(label: String, change: (com.tim.quartzeditor.engine.Extrude3D) -> com.tim.quartzeditor.engine.Extrude3D) = set(label, true) { it?.let(change) }
+    fun deg(v: Float) = "${v.roundToInt()}°"
+    PanelSlider("Depth", e.depth, 0f..600f, "${e.depth.roundToInt()} px",
+        onChange = { v -> live("3D depth") { it.copy(depth = v) } }, onDone = { vm.commitVector("3D depth") })
+    PanelSlider("Tilt", e.tilt, -80f..80f, deg(e.tilt),
+        onChange = { v -> live("3D tilt") { it.copy(tilt = if (kotlin.math.abs(v) < 1f) 0f else v) } }, onDone = { vm.commitVector("3D tilt") })
+    PanelSlider("Turn", e.turn, -80f..80f, deg(e.turn),
+        onChange = { v -> live("3D turn") { it.copy(turn = if (kotlin.math.abs(v) < 1f) 0f else v) } }, onDone = { vm.commitVector("3D turn") })
+    PanelSlider("Perspective", e.perspective, 0f..1f, "${(e.perspective * 100).roundToInt()}%",
+        onChange = { v -> live("3D perspective") { it.copy(perspective = v) } }, onDone = { vm.commitVector("3D perspective") }, fromTyped = { it / 100f })
+    PanelSlider("Light angle", e.lightAngle, 0f..360f, deg(e.lightAngle),
+        onChange = { v -> live("3D light") { it.copy(lightAngle = v) } }, onDone = { vm.commitVector("3D light") })
+    PanelSlider("Light height", e.lightHeight, 0f..90f, deg(e.lightHeight),
+        onChange = { v -> live("3D light") { it.copy(lightHeight = v) } }, onDone = { vm.commitVector("3D light") })
+    PanelSlider("Shading", e.shading, 0f..1f, "${(e.shading * 100).roundToInt()}%",
+        onChange = { v -> live("3D shading") { it.copy(shading = v) } }, onDone = { vm.commitVector("3D shading") }, fromTyped = { it / 100f })
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Sides", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(52.dp))
+        Box(Modifier.weight(1f)) {
+            ChipRow(listOf("Its own colors", "A color"), if (e.sideColor == null) 0 else 1) { i ->
+                set("3D sides", false) { it?.copy(sideColor = if (i == 0) null else (it.sideColor ?: vm.foreground)) }
+            }
+        }
+        e.sideColor?.let { c ->
+            Spacer(Modifier.width(6.dp))
+            ColorChip(c) { picking = true }
+        }
+    }
+    if (picking) {
+        ColorPickDialog(
+            vm, e.sideColor ?: vm.foreground, title = "Sides color",
+            onLive = { c -> set("3D sides", true) { it?.copy(sideColor = c) } },
+            onDone = {
+                picking = false
+                vm.commitVector("3D sides")
+            },
+        )
+    }
+}
 
 /** A shape's fill: its color, a gradient or a pattern. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

@@ -3,8 +3,6 @@ package com.tim.quartzeditor.engine
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Color
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
@@ -12,26 +10,24 @@ import android.graphics.RectF
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import org.json.JSONObject
-import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 // 3D for shape and text layers: the layer's front pushed back into a solid of [Extrude3D.depth],
 // turned in space ([Extrude3D.tilt], [Extrude3D.turn]) and seen in perspective, lit by a light
-// like the layer styles' (angle and height). The sides are drawn as many thin slices from the back
-// to the front; each slice's edge is shaded by which way that bit of side faces the light.
+// like the layer styles' (angle and height). Each pixel looks through the solid front to back; the
+// sides it meets are shaded by which way that bit of edge faces the light.
 
 /** A shape or text layer's 3D: how deep, how it's turned, and how it's lit. Angles in degrees. */
 data class Extrude3D(
     val depth: Float = 60f,
-    /** Tipped back (positive: the top goes away) or forward. */
+    /** Tipped: positive brings the top toward you (seen from above, its top side shows), negative from below. */
     val tilt: Float = 25f,
-    /** Turned left or right. */
+    /** Turned: negative brings the left toward you (its left side shows), positive the right. */
     val turn: Float = -30f,
     /** 0 nearly flat (far away) … 1 strong (close up). */
     val perspective: Float = 0.4f,
@@ -46,6 +42,9 @@ data class Extrude3D(
     fun toJson(): JSONObject = JSONObject().put("depth", depth.toDouble()).put("tilt", tilt.toDouble()).put("turn", turn.toDouble())
         .put("persp", perspective.toDouble()).put("lightAngle", lightAngle.toDouble()).put("lightHeight", lightHeight.toDouble())
         .put("shading", shading.toDouble()).also { o -> sideColor?.let { o.put("side", it.toLong() and 0xFFFFFFFFL) } }
+
+    /** It makes anything 3D (otherwise the layer is drawn flat). */
+    val active: Boolean get() = depth >= 0.5f || kotlin.math.abs(tilt) >= 0.5f || kotlin.math.abs(turn) >= 0.5f
 
     /** Sizes scaled by [k] (the layer made bigger or smaller). */
     fun scaled(k: Float): Extrude3D = copy(depth = depth * k)
@@ -63,7 +62,7 @@ data class Extrude3D(
         val PRESETS: List<Pair<String, Extrude3D>> = listOf(
             "Classic" to Extrude3D(),
             "Deep" to Extrude3D(depth = 140f, tilt = 20f, turn = -35f),
-            "Tilted back" to Extrude3D(depth = 70f, tilt = 55f, turn = 0f, perspective = 0.6f),
+            "From above" to Extrude3D(depth = 70f, tilt = 55f, turn = 0f, perspective = 0.6f),
             "From below" to Extrude3D(depth = 70f, tilt = -40f, turn = 15f, perspective = 0.5f),
             "Side on" to Extrude3D(depth = 90f, tilt = 5f, turn = -60f, perspective = 0.5f),
             "Flat block" to Extrude3D(depth = 40f, tilt = 0f, turn = -20f, perspective = 0f, shading = 0.5f),
@@ -135,7 +134,9 @@ object Extrude {
 
     /**
      * The solid: [front] (the layer drawn flat, covering [box] at one pixel per unit) made 3D.
-     * Returns the picture and where it goes (layer-local, whole pixels). Runs on the GPU.
+     * Returns the picture and where it goes (layer-local, whole pixels). Runs on the GPU: each
+     * pixel follows its line of sight through the solid (front to back), which crosses every slice
+     * of it along one straight line in [front].
      */
     fun render(e: Extrude3D, front: Bitmap, box: RectF): Pair<Bitmap, Rect> {
         val area = bounds(e, box)
@@ -147,90 +148,112 @@ object Extrude {
         val r = rotation(e)
         val l = light(e)
         val shade = e.shading.coerceIn(0f, 1f)
-        // The sides' colors, lit by which way each edge faces
+        val f = eye(e, box)
+        // The front faces (0, 0, −1), turned: a little darker when it faces away from the light (it
+        // keeps its own colors, mostly)
+        val frontLit = 1f - shade * 0.25f * (1f - max(0f, -r[2] * l[0] - r[5] * l[1] - r[8] * l[2]))
+        // The outline, softened, says which way each bit of side faces
         val soft = Gpu.blurred(front, 1.5f, Shader.TileMode.DECAL)
-        val sideTex = try {
-            Gpu.renderOffscreen(front.width, front.height) { c ->
-                val sh = RuntimeShader(SIDES).apply {
-                    setInputShader("front", BitmapShader(front, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
-                    setInputShader("soft", BitmapShader(soft, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+        try {
+            val bmp = Gpu.renderOffscreen(w, h) { c ->
+                val sh = RuntimeShader(SOLID).apply {
+                    setInputShader("front", BitmapShader(front, Shader.TileMode.DECAL, Shader.TileMode.DECAL))
+                    setInputShader("soft", BitmapShader(soft, Shader.TileMode.DECAL, Shader.TileMode.DECAL))
                     setFloatUniform("r0", r[0], r[1], r[2])
                     setFloatUniform("r1", r[3], r[4], r[5])
                     setFloatUniform("r2", r[6], r[7], r[8])
+                    setFloatUniform("eye", f)
+                    // The box's middle on this picture, and in [front]
+                    setFloatUniform("center", box.centerX() - out.left, box.centerY() - out.top)
+                    setFloatUniform("mid", front.width / 2f, front.height / 2f)
+                    setFloatUniform("depth", e.depth.coerceAtLeast(0f))
                     setFloatUniform("light", l[0], l[1], l[2])
                     setFloatUniform("shade", shade)
+                    setFloatUniform("frontLit", frontLit)
                     val sc = e.sideColor
                     setFloatUniform("useColor", if (sc != null) 1f else 0f)
                     val col = sc ?: Color.GRAY
                     setFloatUniform("sideColor", Color.red(col) / 255f, Color.green(col) / 255f, Color.blue(col) / 255f)
                 }
-                c.drawRect(0f, 0f, front.width.toFloat(), front.height.toFloat(), Paint().apply { shader = sh })
-            }
-        } finally {
-            soft.recycle()
-        }
-        // The front faces (0, 0, −1), turned: lit by how much it faces the light
-        val nz = floatArrayOf(-r[2], -r[5], -r[8])
-        val frontLit = 1f - shade * 0.55f * (1f - max(0f, nz[0] * l[0] + nz[1] * l[1] + nz[2] * l[2]))
-        val depth = e.depth.coerceAtLeast(0f)
-        // One slice every pixel or so (as it shows), up to 400
-        val slices = (depth / 0.75f).roundToInt().coerceIn(if (depth > 0f) 2 else 0, 400)
-        try {
-            val bmp = Gpu.renderOffscreen(w, h) { c ->
-                c.translate(-out.left.toFloat(), -out.top.toFloat())
-                val p = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-                for (i in slices downTo 1) {
-                    val z = depth * i / slices
-                    // Farther back is a little darker
-                    val k = 1f - shade * 0.3f * (z / depth.coerceAtLeast(1f))
-                    p.colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setScale(k, k, k, 1f) })
-                    c.save()
-                    c.concat(matrix(e, box, z))
-                    c.drawBitmap(sideTex, box.left, box.top, p)
-                    c.restore()
-                }
-                p.colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setScale(frontLit, frontLit, frontLit, 1f) })
-                c.save()
-                c.concat(matrix(e, box, 0f))
-                c.drawBitmap(front, box.left, box.top, p)
-                c.restore()
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = sh })
             }
             return bmp to out
         } finally {
-            sideTex.recycle()
+            soft.recycle()
         }
     }
 
     /**
-     * Each edge's side color: the outward direction comes from the (slightly blurred) outline, is
-     * turned like the solid, and lit by the light. Inside the shape (no edge) it's never seen.
+     * For each pixel: where its line of sight meets the front (z = 0) and how it moves through
+     * [front] as it goes deeper (it's a straight line there), then steps along it, about a pixel at a
+     * time, adding what it meets front to back. The front is lit as a whole; each bit of side by
+     * which way its edge faces (from the softened outline), turned like the solid, and darker
+     * farther back.
      */
-    private const val SIDES = """
+    private const val SOLID = """
 uniform shader front;
 uniform shader soft;
 uniform float3 r0;
 uniform float3 r1;
 uniform float3 r2;
+uniform float eye;
+uniform float2 center;
+uniform float2 mid;
+uniform float depth;
 uniform float3 light;
 uniform float shade;
+uniform float frontLit;
 uniform float useColor;
 uniform float3 sideColor;
+
 half4 main(float2 p) {
-    float4 c = float4(front.eval(p));
-    if (c.a <= 0.0) return half4(0.0);
-    float gx = float(soft.eval(p + float2(1.0, 0.0)).a) - float(soft.eval(p - float2(1.0, 0.0)).a);
-    float gy = float(soft.eval(p + float2(0.0, 1.0)).a) - float(soft.eval(p - float2(0.0, 1.0)).a);
-    float2 n2 = float2(-gx, -gy);
-    float len = length(n2);
-    float lit = 0.6;
-    if (len > 0.0001) {
-        float3 n = float3(n2 / len, 0.0);
-        float3 nt = float3(dot(r0, n), dot(r1, n), dot(r2, n));
-        lit = 0.25 + 0.75 * max(dot(nt, light), 0.0);
+    float X = p.x - center.x;
+    float Y = p.y - center.y;
+    // (X, Y) = eye·(R·d).xy / (eye + (R·d).z), d = (dx, dy, z): two lines in dx, dy
+    float a11 = X * r2.x - eye * r0.x;
+    float a12 = X * r2.y - eye * r0.y;
+    float a21 = Y * r2.x - eye * r1.x;
+    float a22 = Y * r2.y - eye * r1.y;
+    float det = a11 * a22 - a12 * a21;
+    if (abs(det) < 1e-6) return half4(0.0);
+    float2 b0 = float2(-X * eye, -Y * eye);
+    float2 b1 = float2(eye * r0.z - X * r2.z, eye * r1.z - Y * r2.z);
+    float2 p0 = float2(a22 * b0.x - a12 * b0.y, -a21 * b0.x + a11 * b0.y) / det;
+    float2 v = float2(a22 * b1.x - a12 * b1.y, -a21 * b1.x + a11 * b1.y) / det;
+    float len = length(v) * depth;
+    float n = clamp(ceil(len / 0.75), 1.0, 600.0);
+    float dz = depth / n;
+    float4 acc = float4(0.0);
+    for (int i = 0; i <= 600; i++) {
+        float fi = float(i);
+        if (fi > n) break;
+        float z = fi * dz;
+        float2 t = mid + p0 + v * z;
+        float4 c = float4(front.eval(t));
+        if (c.a > 0.002) {
+            float3 col;
+            if (i == 0) {
+                col = c.rgb / c.a * frontLit;
+            } else {
+                float gx = float(soft.eval(t + float2(1.0, 0.0)).a) - float(soft.eval(t - float2(1.0, 0.0)).a);
+                float gy = float(soft.eval(t + float2(0.0, 1.0)).a) - float(soft.eval(t - float2(0.0, 1.0)).a);
+                float2 n2 = float2(-gx, -gy);
+                float nl = length(n2);
+                float lit = 0.6;
+                if (nl > 0.0001) {
+                    float3 nn = float3(n2 / nl, 0.0);
+                    float3 nt = float3(dot(r0, nn), dot(r1, nn), dot(r2, nn));
+                    lit = 0.25 + 0.75 * max(dot(nt, light), 0.0);
+                }
+                float k = mix(1.0, lit, shade) * (1.0 - shade * 0.3 * (z / max(depth, 1.0)));
+                float3 base = useColor > 0.5 ? sideColor : c.rgb / c.a;
+                col = base * k;
+            }
+            acc += (1.0 - acc.a) * float4(col * c.a, c.a);
+            if (acc.a > 0.996) break;
+        }
     }
-    float k = mix(1.0, lit, shade);
-    float3 base = useColor > 0.5 ? sideColor : c.rgb / c.a;
-    return half4(half3(base * k * c.a), half(c.a));
+    return half4(acc);
 }
 """
 }

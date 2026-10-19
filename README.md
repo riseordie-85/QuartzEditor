@@ -145,6 +145,11 @@ the list; the button shows the one you used last.
   and gears, square teeth at 100%), and "same width and height". New shapes always
   start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
   layer selected, Properties changes that shape.
+  **3D** (shape and text layers, in Properties): pushes the layer back into a solid and turns it in
+  space. Looks: Classic, Deep, From above, From below, Side on, Flat block; then Depth, Tilt, Turn,
+  Perspective, Light angle and height, Shading, and the sides in the layer's own colors or one color.
+  It stays editable (change the shape, the text or the font and the solid follows); layer styles (a
+  drop shadow, say) go around the solid, and Transform scales its depth along.
 - **Custom shapes** (hold the Shape tool → Custom shapes; tap Shape again to go back) — the shape library in Properties: hearts, stars, speech and
   thought bubbles, clouds, arrows, check marks, rings and frames, pins, tags, ribbons, badges and bursts,
   cogs and more. Pick one and drag on the picture ("Keep its proportions" keeps its shape). **Add an
@@ -162,7 +167,7 @@ the list; the button shows the one you used last.
   and **Warp text**: Arc, Arc Lower, Arc Upper, Arch, Bulge, Shell Lower, Shell Upper, Flag, Wave, Fish,
   Rise, Fisheye, Inflate, Squeeze, Twist, with Bend, Horizontal and Vertical distortion, bent along the
   width or the height (the text stays editable).
-  Outline, shadow and glow come from Layer Style (fx).
+  Outline, shadow and glow come from Layer Style (fx). **3D** works on text too (see Shape).
 - **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one).
 - **Brush** and **Eraser** (one button) — tap it to switch between the brush and the eraser. While either is
   picked, a second column shows the tips (Round, Square, Triangle, Grunge) and the Softness, Size and

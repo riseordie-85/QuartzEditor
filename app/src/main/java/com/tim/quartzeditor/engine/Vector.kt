@@ -162,6 +162,8 @@ data class ShapeSpec(
     val fillPattern: PatternFx? = null,
     /** Dashed outline: dash and gap lengths, in outline widths (null = solid). */
     val dash: List<Float>? = null,
+    /** 3D: pushed back into a solid (null = flat). */
+    val extrude: Extrude3D? = null,
 ) {
     val hasFill: Boolean get() = fill != null && closed
     val hasStroke: Boolean get() = stroke != null && strokeWidth > 0f
@@ -208,6 +210,7 @@ data class ShapeSpec(
             }
         }
         .also { o -> dash?.let { d -> o.put("dash", JSONArray().also { a -> d.forEach { a.put(it.toDouble()) } }) } }
+        .also { o -> extrude?.let { o.put("extrude", it.toJson()) } }
 
     companion object {
         fun fromJson(o: JSONObject): ShapeSpec {
@@ -260,6 +263,7 @@ data class ShapeSpec(
                     PatternFx(true, p.optString("key", "b:checker"), p.optLong("a", 0xFF000000L).toInt(), p.optLong("b", 0xFFFFFFFFL).toInt(), p.optDouble("scale", 1.0).toFloat())
                 },
                 dash = o.optJSONArray("dash")?.let { a -> List(a.length()) { a.optDouble(it).toFloat() } }?.takeIf { it.isNotEmpty() },
+                extrude = runCatching { Extrude3D.fromJson(o.optJSONObject("extrude")) }.getOrNull(),
             )
         }
 
@@ -520,6 +524,8 @@ data class TextSpec(
     val runs: List<TextRun> = emptyList(),
     /** Warp Text: bent into a shape (null = straight; takes the place of [curve]). */
     val warp: TextWarp? = null,
+    /** 3D: pushed back into a solid (null = flat). */
+    val extrude: Extrude3D? = null,
 ) {
     /** Every font it uses. */
     val fonts: Set<String> get() = if (runs.isEmpty()) setOf(fontKey) else setOf(fontKey) + runs.mapNotNull { it.fontKey }
@@ -563,6 +569,7 @@ data class TextSpec(
         .also { o -> psdFont?.let { o.put("psdFont", it) } }
         .also { o -> if (runs.isNotEmpty()) o.put("runs", JSONArray().also { a -> runs.forEach { a.put(it.toJson()) } }) }
         .also { o -> warp?.let { o.put("warp", it.toJson()) } }
+        .also { o -> extrude?.let { o.put("extrude", it.toJson()) } }
 
     /** Shown in the Layers panel. */
     val title: String get() = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40) ?: "Text"
@@ -586,6 +593,7 @@ data class TextSpec(
             psdFont = if (o.has("psdFont")) o.optString("psdFont") else null,
             runs = o.optJSONArray("runs")?.let { a -> List(a.length()) { TextRun.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
             warp = runCatching { TextWarp.fromJson(o.optJSONObject("warp")) }.getOrNull(),
+            extrude = runCatching { Extrude3D.fromJson(o.optJSONObject("extrude")) }.getOrNull(),
         )
     }
 }
@@ -821,8 +829,18 @@ object VectorArt {
         }
     }
 
-    /** Layer-local bounds of what [props] draws (generous), or null for nothing. */
+    /** The 3D a shape or text layer has (null: flat). */
+    fun extrudeOf(props: LayerProps): Extrude3D? = (props.shape?.extrude ?: props.text?.extrude)?.takeIf { it.active }
+
+    /** Layer-local bounds of what [props] draws (generous), or null for nothing; with 3D, the solid's. */
     fun bounds(props: LayerProps): RectF? {
+        val flat = flatBounds(props) ?: return null
+        val e = extrudeOf(props) ?: return flat
+        return Extrude.bounds(e, flat)
+    }
+
+    /** Layer-local bounds of what [props] draws flat (generous), or null for nothing. */
+    fun flatBounds(props: LayerProps): RectF? {
         props.shape?.let { s ->
             val r = RectF()
             shapeOutline(s).computeBounds(r, true)
@@ -846,6 +864,7 @@ object VectorArt {
      * drawn, so an enormous shape can't use up memory.
      */
     fun rasterize(props: LayerProps, clip: RectF): TileGrid {
+        extrudeOf(props)?.let { return rasterize3D(props, it, clip) }
         val g = TileGrid(alphaOnly = false)
         val area = bounds(props) ?: return g
         if (!area.intersect(clip)) return g
@@ -861,11 +880,56 @@ object VectorArt {
         return g
     }
 
-    /** [props] with its shape or text moved by [m] (layer-local → new layer-local). */
-    fun transformed(props: LayerProps, m: Matrix): LayerProps = props.copy(
-        shape = props.shape?.let { it.copy(matrix = it.matrix.then(m)) },
-        text = props.text?.let { it.copy(matrix = it.matrix.then(m)) },
-    )
+    /**
+     * A 3D shape or text layer: drawn flat (no bigger than about 3000 px a side; the solid is scaled
+     * back up), made into a solid on the GPU, then cut into tiles within [clip].
+     */
+    private fun rasterize3D(props: LayerProps, e: Extrude3D, clip: RectF): TileGrid {
+        val g = TileGrid(alphaOnly = false)
+        val flat = flatBounds(props) ?: return g
+        val k = min(1f, 3000f / max(flat.width(), flat.height()).coerceAtLeast(1f))
+        val fw = ceil(flat.width() * k).toInt().coerceIn(1, 4096)
+        val fh = ceil(flat.height() * k).toInt().coerceIn(1, 4096)
+        val box = RectF(flat.left * k, flat.top * k, flat.left * k + fw, flat.top * k + fh)
+        val front = Bitmap.createBitmap(fw, fh, Bitmap.Config.ARGB_8888)
+        val built = props.text?.let { buildText(it) }
+        Canvas(front).apply {
+            translate(-box.left, -box.top)
+            scale(k, k)
+            draw(this, props, built)
+        }
+        val (solid, out) = try {
+            Extrude.render(e.scaled(k), front, box)
+        } finally {
+            front.recycle()
+        }
+        try {
+            val dst = RectF(out.left / k, out.top / k, out.right / k, out.bottom / k)
+            val area = RectF(dst)
+            if (!area.intersect(clip)) return g
+            val p = Paint(Paint.FILTER_BITMAP_FLAG)
+            for (key in g.keysIn(area)) {
+                val tile = TileGrid.newTile(false)
+                val c = Canvas(tile)
+                c.translate(-(TileGrid.tx(key) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(key) * TileGrid.SIZE).toFloat())
+                c.drawBitmap(solid, null, dst, p)
+                if (TileGrid.isBlank(tile)) tile.recycle() else g.tiles[key] = tile
+            }
+            return g
+        } finally {
+            solid.recycle()
+        }
+    }
+
+    /** [props] with its shape or text moved by [m] (layer-local → new layer-local); 3D depth scales along. */
+    fun transformed(props: LayerProps, m: Matrix): LayerProps {
+        val v = FloatArray(9).also { m.getValues(it) }
+        val k = kotlin.math.sqrt(abs(v[0] * v[4] - v[1] * v[3])).takeIf { it.isFinite() && it > 0f } ?: 1f
+        return props.copy(
+            shape = props.shape?.let { it.copy(matrix = it.matrix.then(m), extrude = it.extrude?.scaled(k)) },
+            text = props.text?.let { it.copy(matrix = it.matrix.then(m), extrude = it.extrude?.scaled(k)) },
+        )
+    }
 
     /** The area (layer-local) a shape or text layer at ([x], [y]) is drawn within on a [w] × [h] canvas. */
     fun clipFor(x: Int, y: Int, w: Int, h: Int): RectF {
