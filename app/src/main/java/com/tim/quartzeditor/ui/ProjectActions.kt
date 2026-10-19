@@ -325,19 +325,27 @@ fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
     // The whole picture (with what's being edited in smart layers' tabs)
     val sc = saveCopy() ?: return
     val copy = sc.doc
-    if (format == ExportFormat.PSD) {
-        runBusy("Saving a Photoshop file…") {
+    if (format == ExportFormat.PSD || format == ExportFormat.TIFF_LAYERS) {
+        val tiff = format == ExportFormat.TIFF_LAYERS
+        runBusy(if (tiff) "Saving a layered TIFF…" else "Saving a Photoshop file…") {
             val (uri, notes) = withContext(Dispatchers.Default) {
                 sc.finish()
-                val tmp = java.io.File(ctx.cacheDir, "export.psd")
+                val tmp = java.io.File(ctx.cacheDir, "export.${format.ext}")
                 try {
-                    val r = com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir)
-                    Media.saveDownload(ctx, tmp, "${copy.name.ifBlank { "Quartz" }}.psd", format.mime) to r.notes
+                    val name = "${copy.name.ifBlank { "Quartz" }}.${format.ext}"
+                    if (tiff) {
+                        val r = com.tim.quartzeditor.engine.PsdExport.writeTiff(copy, tmp, ctx.cacheDir)
+                        Media.savePictureFile(ctx, tmp, name, format.mime) to r.notes
+                    } else {
+                        val r = com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir)
+                        Media.saveDownload(ctx, tmp, name, format.mime) to r.notes
+                    }
                 } finally {
                     tmp.delete()
                 }
             }
-            if (notes.isNotEmpty()) exportReport = copy.name to notes else toast("Saved to Download/${Media.FOLDER}")
+            val where = if (tiff) "Pictures/${Media.FOLDER}" else "Download/${Media.FOLDER}"
+            if (notes.isNotEmpty()) exportReport = Triple(copy.name + "." + format.ext, where, notes) else toast("Saved to $where")
             onSaved(uri)
         }
         return

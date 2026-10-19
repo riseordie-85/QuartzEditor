@@ -404,13 +404,13 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
     // After saving a Photoshop file: what Photoshop gets differently
-    vm.exportReport?.let { (name, notes) ->
+    vm.exportReport?.let { (name, where, notes) ->
         AlertDialog(
             onDismissRequest = { vm.exportReport = null },
-            title = { Text("Saved \"$name.psd\"") },
+            title = { Text("Saved \"$name\"") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    Text("It's in Download/${com.tim.quartzeditor.data.Media.FOLDER}, with its layers. In Photoshop, a few things are different:", color = Q.textDim, fontSize = 14.sp)
+                    Text("It's in $where, with its layers. In Photoshop, a few things are different:", color = Q.textDim, fontSize = 14.sp)
                     for (n in notes) Text("• $n", color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
                 }
             },
@@ -582,6 +582,7 @@ private fun ExportDialog(name: String, onDismiss: () -> Unit, onExport: (ExportF
                 Text(
                     when {
                         format == ExportFormat.PSD -> "Keeps every layer, mask, style, adjustment, shape, text and smart layer. Saved to Download/${com.tim.quartzeditor.data.Media.FOLDER}."
+                        format == ExportFormat.TIFF_LAYERS -> "A TIFF any app shows, with the layers kept inside it like Photoshop's own (Photoshop and Quartz Editor open them)."
                         format.alpha -> "Keeps see-through areas."
                         else -> "See-through areas become white."
                     },

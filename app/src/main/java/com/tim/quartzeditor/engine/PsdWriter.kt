@@ -18,6 +18,9 @@ interface PsdSink {
     fun bytes(b: ByteArray, off: Int = 0, len: Int = b.size)
     /** Overwrites four bytes already written at [at]. */
     fun patchU32(at: Long, v: Long)
+
+    /** Overwrites two bytes already written at [at]. */
+    fun patchU16(at: Long, v: Int)
 }
 
 fun PsdSink.i16(v: Int) {
@@ -134,6 +137,11 @@ class PsdBuf(initial: Int = 256) : PsdSink {
         data[i + 3] = v.toByte()
     }
 
+    override fun patchU16(at: Long, v: Int) {
+        data[at.toInt()] = (v ushr 8).toByte()
+        data[at.toInt() + 1] = v.toByte()
+    }
+
     fun toByteArray(): ByteArray = data.copyOf(size)
 
     /** The bytes as they are (the first [size] count; don't change them). */
@@ -199,7 +207,7 @@ class PsdFileSink(private val raf: RandomAccessFile) : PsdSink {
     }
 
     /** Patches a two-byte number. */
-    fun patchU16(at: Long, v: Int) {
+    override fun patchU16(at: Long, v: Int) {
         val bytes = byteArrayOf((v ushr 8).toByte(), v.toByte())
         for (k in 0 until 2) {
             val p = at + k
@@ -472,78 +480,7 @@ object PsdWriter {
         // Layers and masks
         s.section(2) {
             s.section(4, total = true) {
-                val list = layers.ifEmpty { listOf(PsdLayerOut("Layer")) }
-                // Negative: the first alpha channel is the merged picture's transparency
-                s.i16(if (compositeAlpha) -list.size else list.size)
-                // Each channel's length is written once its data is: remember where
-                val lengths = ArrayList<LongArray>()
-                for (l in list) {
-                    s.i32(l.top)
-                    s.i32(l.left)
-                    s.i32(l.bottom)
-                    s.i32(l.right)
-                    val ids = channelIds(l)
-                    s.u16(ids.size)
-                    val at = LongArray(ids.size)
-                    for ((k, id) in ids.withIndex()) {
-                        s.i16(id)
-                        at[k] = s.pos
-                        s.u32(2)
-                    }
-                    lengths.add(at)
-                    s.sig("8BIM")
-                    s.sig(l.blend)
-                    s.u8(l.opacity.coerceIn(0, 255))
-                    s.u8(if (l.clipping) 1 else 0)
-                    var flags = 0x08
-                    if (l.lockAlpha) flags = flags or 0x01
-                    if (l.hidden) flags = flags or 0x02
-                    if (l.pixelsIrrelevant) flags = flags or 0x10
-                    s.u8(flags)
-                    s.u8(0)
-                    s.section(1) {
-                        // Mask
-                        s.section(1) {
-                            val m = l.mask
-                            if (m != null) {
-                                s.i32(m.top)
-                                s.i32(m.left)
-                                s.i32(m.bottom)
-                                s.i32(m.right)
-                                s.u8(m.defaultColor)
-                                s.u8(if (m.disabled) 0x02 else 0)
-                                s.zeros(2)
-                            }
-                        }
-                        // Blending ranges: everything blends
-                        s.section(1) {
-                            repeat(5) {
-                                s.u32(0x0000FFFFL)
-                                s.u32(0x0000FFFFL)
-                            }
-                        }
-                        s.pascal(l.name, 4)
-                        for ((key, data) in l.blocks) block(s, key, data)
-                    }
-                }
-                // Channel data
-                for ((li, l) in list.withIndex()) {
-                    val ids = channelIds(l)
-                    // The color channels are read in one pass over the pixels (each row once)
-                    val packed = packColors(l)
-                    for ((k, id) in ids.withIndex()) {
-                        val start = s.pos
-                        val pc = packed?.get(id)
-                        if (pc != null) {
-                            s.u16(1)
-                            for (n in pc.first) s.u16(n)
-                            s.bytes(pc.second.bytesNoCopy(), 0, pc.second.size)
-                        } else {
-                            writeChannel(s, l, id)
-                        }
-                        s.patchU32(lengths[li][k], s.pos - start)
-                    }
-                }
+                layerInfo(s, layers, compositeAlpha)
             }
             // Global layer mask info: none
             s.u32(0)
@@ -583,6 +520,82 @@ object PsdWriter {
             }
         }
         s.finish()
+    }
+
+    /** The layers' count, records and channel data (a layer info section without its length). */
+    fun layerInfo(s: PsdSink, layers: List<PsdLayerOut>, compositeAlpha: Boolean) {
+        val list = layers.ifEmpty { listOf(PsdLayerOut("Layer")) }
+        // Negative: the first alpha channel is the merged picture's transparency
+        s.i16(if (compositeAlpha) -list.size else list.size)
+        // Each channel's length is written once its data is: remember where
+        val lengths = ArrayList<LongArray>()
+        for (l in list) {
+            s.i32(l.top)
+            s.i32(l.left)
+            s.i32(l.bottom)
+            s.i32(l.right)
+            val ids = channelIds(l)
+            s.u16(ids.size)
+            val at = LongArray(ids.size)
+            for ((k, id) in ids.withIndex()) {
+                s.i16(id)
+                at[k] = s.pos
+                s.u32(2)
+            }
+            lengths.add(at)
+            s.sig("8BIM")
+            s.sig(l.blend)
+            s.u8(l.opacity.coerceIn(0, 255))
+            s.u8(if (l.clipping) 1 else 0)
+            var flags = 0x08
+            if (l.lockAlpha) flags = flags or 0x01
+            if (l.hidden) flags = flags or 0x02
+            if (l.pixelsIrrelevant) flags = flags or 0x10
+            s.u8(flags)
+            s.u8(0)
+            s.section(1) {
+                // Mask
+                s.section(1) {
+                    val m = l.mask
+                    if (m != null) {
+                        s.i32(m.top)
+                        s.i32(m.left)
+                        s.i32(m.bottom)
+                        s.i32(m.right)
+                        s.u8(m.defaultColor)
+                        s.u8(if (m.disabled) 0x02 else 0)
+                        s.zeros(2)
+                    }
+                }
+                // Blending ranges: everything blends
+                s.section(1) {
+                    repeat(5) {
+                        s.u32(0x0000FFFFL)
+                        s.u32(0x0000FFFFL)
+                    }
+                }
+                s.pascal(l.name, 4)
+                for ((key, data) in l.blocks) block(s, key, data)
+            }
+        }
+        // Channel data
+        for ((li, l) in list.withIndex()) {
+            val ids = channelIds(l)
+            // The color channels are read in one pass over the pixels (each row once)
+            val packed = packColors(l)
+            for ((k, id) in ids.withIndex()) {
+                val start = s.pos
+                val pc = packed?.get(id)
+                if (pc != null) {
+                    s.u16(1)
+                    for (n in pc.first) s.u16(n)
+                    s.bytes(pc.second.bytesNoCopy(), 0, pc.second.size)
+                } else {
+                    writeChannel(s, l, id)
+                }
+                s.patchU32(lengths[li][k], s.pos - start)
+            }
+        }
     }
 
     private fun channelIds(l: PsdLayerOut): List<Int> {
@@ -626,7 +639,7 @@ object PsdWriter {
     }
 
     /** One channel: its compression (PackBits, or none when empty), row lengths and rows. */
-    private fun writeChannel(s: PsdFileSink, l: PsdLayerOut, id: Int) {
+    private fun writeChannel(s: PsdSink, l: PsdLayerOut, id: Int) {
         if (id == -2) {
             val m = l.mask!!
             val w = m.right - m.left
@@ -673,6 +686,30 @@ object PsdWriter {
             s.bytes(packed, 0, n)
             s.patchU16(table + 2L * y, n)
         }
+    }
+
+    /**
+     * The layers as a layered TIFF keeps them (its tag 37724, big-endian like the .psd): written to
+     * [raf] (emptied first).
+     */
+    fun writeTiffLayers(
+        raf: RandomAccessFile,
+        layers: List<PsdLayerOut>,
+        compositeAlpha: Boolean,
+        globalBlocks: List<Pair<String, (PsdSink) -> Unit>> = emptyList(),
+    ) {
+        raf.setLength(0)
+        val s = PsdFileSink(raf)
+        "Adobe Photoshop Document Data Block\u0000".forEach { s.u8(it.code) }
+        s.sig("8BIM")
+        s.sig("Layr")
+        s.section(4, total = true) { layerInfo(s, layers, compositeAlpha) }
+        for ((key, body) in globalBlocks) {
+            s.sig("8BIM")
+            s.sig(key)
+            s.section(4, total = true) { body(s) }
+        }
+        s.finish()
     }
 
     // ------------------------------------------------------------ common blocks

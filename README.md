@@ -410,6 +410,10 @@ in between. With a selection, the mask button makes a mask that shows only what'
 
   Afterwards a short list says what Photoshop gets differently (3D and pattern-filled layers as their
   pixels, Long Shadow and Pattern Overlay only in the flattened picture, Gaussian Blur adjustment layers…).
+- **TIFF with layers**: Export image → TIFF with layers saves a TIFF to `Pictures/Quartz Editor` that any
+  app shows as the flattened picture, with everything above kept inside it the way Photoshop keeps its
+  own layered TIFFs (Photoshop and Quartz Editor open it with its layers). Plain **TIFF** stays one
+  flattened picture.
 - **Close without saving** (menu) throws away changes since the last save.
 - The menu also rotates the whole image 90° or flips it.
 - **Save project file** writes a `.qedit` file anywhere (Drive, Downloads...). Projects live inside the app,

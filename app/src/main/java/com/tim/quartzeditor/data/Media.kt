@@ -26,6 +26,8 @@ enum class ExportFormat(val label: String, val mime: String, val ext: String, va
     TIFF("TIFF", "image/tiff", "tif", null, true),
     /** With its layers (saved to Download, since it isn't a picture galleries show). */
     PSD("Photoshop", "image/vnd.adobe.photoshop", "psd", null, true),
+    /** A TIFF that keeps its layers inside (Photoshop opens them; other apps show the flattened picture). */
+    TIFF_LAYERS("TIFF with layers", "image/tiff", "tif", null, true),
 }
 
 object Media {
@@ -203,6 +205,30 @@ object Media {
             resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 16) } } ?: throw IOException("Couldn't write the file")
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            uri
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
+    }
+
+    /** Copies a finished picture file to Pictures/Quartz Editor as [name]. Returns its address. */
+    suspend fun savePictureFile(context: Context, file: java.io.File, name: String, mime: String): Uri = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, mime)
+            put(MediaStore.Images.Media.RELATIVE_PATH, FOLDER_LABEL)
+            put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+            ?: throw IOException("Android didn't allow a new picture")
+        try {
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 16) } } ?: throw IOException("Couldn't write the picture")
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
             uri
         } catch (e: Exception) {

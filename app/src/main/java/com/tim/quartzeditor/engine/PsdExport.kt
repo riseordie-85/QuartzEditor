@@ -35,7 +35,21 @@ object PsdExport {
     fun write(doc: Doc, file: File, cacheDir: File, depth: Int = 0): Result {
         val w = Writer(doc, cacheDir, depth)
         try {
-            w.run(file)
+            w.run(file, tiff = false)
+        } finally {
+            w.cleanUp()
+        }
+        return Result(w.notes.toList())
+    }
+
+    /**
+     * Writes [doc] as a layered TIFF to [file]: the flattened picture any viewer shows, with the
+     * layers kept inside it the way Photoshop keeps them (its own layered TIFFs).
+     */
+    fun writeTiff(doc: Doc, file: File, cacheDir: File): Result {
+        val w = Writer(doc, cacheDir, 0)
+        try {
+            w.run(file, tiff = true)
         } finally {
             w.cleanUp()
         }
@@ -55,7 +69,7 @@ object PsdExport {
             temps.forEach { it.delete() }
         }
 
-        fun run(out: File) {
+        fun run(out: File, tiff: Boolean) {
             val layers = ArrayList<PsdLayerOut>()
             emit(0L, layers)
             // The flattened picture, as we draw it
@@ -75,14 +89,28 @@ object PsdExport {
                 }
                 val global = ArrayList<Pair<String, (PsdSink) -> Unit>>()
                 if (embedded.isNotEmpty()) global.add("lnk2" to { s -> embedded.values.forEach { writeLinked(s, it) } })
-                RandomAccessFile(out, "rw").use { raf ->
-                    PsdWriter.write(
-                        raf, doc.width, doc.height, layers,
-                        composite = { y, o -> flat.getPixels(o, 0, flat.width, 0, y, flat.width, 1) },
-                        compositeAlpha = alpha,
-                        resources = listOf(PsdWriter.resolution(72.0)),
-                        globalBlocks = global,
-                    )
+                if (tiff) {
+                    // The layers first (to a file of their own), then the TIFF around them
+                    val data = File.createTempFile("layers", ".bin", cacheDir).also { temps.add(it) }
+                    RandomAccessFile(data, "rw").use { raf -> PsdWriter.writeTiffLayers(raf, layers, alpha, global) }
+                    out.outputStream().buffered(1 shl 16).use { os ->
+                        TiffWriter.write(
+                            os, doc.width, doc.height, alpha, "Quartz Editor",
+                            { y, o -> flat.getPixels(o, 0, flat.width, 0, y, flat.width, 1) },
+                            extra = listOf(TiffWriter.Tag(37724, 7, data.length(), ByteArray(0), data)),
+                            bigEndian = true,
+                        )
+                    }
+                } else {
+                    RandomAccessFile(out, "rw").use { raf ->
+                        PsdWriter.write(
+                            raf, doc.width, doc.height, layers,
+                            composite = { y, o -> flat.getPixels(o, 0, flat.width, 0, y, flat.width, 1) },
+                            compositeAlpha = alpha,
+                            resources = listOf(PsdWriter.resolution(72.0)),
+                            globalBlocks = global,
+                        )
+                    }
                 }
             } finally {
                 flat.recycle()

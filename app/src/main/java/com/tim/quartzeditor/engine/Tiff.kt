@@ -995,15 +995,28 @@ class RowShrinker(private val srcW: Int, private val srcH: Int, private val outW
 
 /**
  * Writes a TIFF: 8-bit RGB (with transparency when [alpha]), ZIP-compressed with the predictor,
- * in strips, little-endian. [row] fills a row's ARGB colors (straight, not premultiplied).
- * [extra] adds tags (tag, type, count, bytes): Photoshop's layers, for a layered TIFF.
+ * in strips, little-endian (or big-endian with [bigEndian]). [row] fills a row's ARGB colors
+ * (straight, not premultiplied). [extra] adds tags (tag, type, count, bytes or a file holding them):
+ * Photoshop's layers, for a layered TIFF.
  */
 object TiffWriter {
     private const val ROWS = 32
 
-    class Tag(val tag: Int, val type: Int, val count: Long, val data: ByteArray)
+    class Tag(val tag: Int, val type: Int, val count: Long, val data: ByteArray, val file: java.io.File? = null) {
+        val size: Long get() = file?.length() ?: data.size.toLong()
+    }
 
-    fun write(out: java.io.OutputStream, width: Int, height: Int, alpha: Boolean, software: String, row: (Int, IntArray) -> Unit, extra: List<Tag> = emptyList()) {
+    fun write(
+        out: java.io.OutputStream,
+        width: Int,
+        height: Int,
+        alpha: Boolean,
+        software: String,
+        row: (Int, IntArray) -> Unit,
+        extra: List<Tag> = emptyList(),
+        bigEndian: Boolean = false,
+    ) {
+        val order = if (bigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN
         val spp = if (alpha) 4 else 3
         val strips = (height + ROWS - 1) / ROWS
         // The strips first (compressed in memory one at a time), then the directory
@@ -1043,8 +1056,8 @@ object TiffWriter {
             def.end()
         }
         val tags = ArrayList<Tag>()
-        fun short(tag: Int, vararg v: Int) = tags.add(Tag(tag, 3, v.size.toLong(), ByteBuffer.allocate(2 * v.size).order(ByteOrder.LITTLE_ENDIAN).also { b -> v.forEach { b.putShort(it.toShort()) } }.array()))
-        fun long(tag: Int, vararg v: Long) = tags.add(Tag(tag, 4, v.size.toLong(), ByteBuffer.allocate(4 * v.size).order(ByteOrder.LITTLE_ENDIAN).also { b -> v.forEach { b.putInt(it.toInt()) } }.array()))
+        fun short(tag: Int, vararg v: Int) = tags.add(Tag(tag, 3, v.size.toLong(), ByteBuffer.allocate(2 * v.size).order(order).also { b -> v.forEach { b.putShort(it.toShort()) } }.array()))
+        fun long(tag: Int, vararg v: Long) = tags.add(Tag(tag, 4, v.size.toLong(), ByteBuffer.allocate(4 * v.size).order(order).also { b -> v.forEach { b.putInt(it.toInt()) } }.array()))
         fun ascii(tag: Int, s: String) = (s + "\u0000").toByteArray(Charsets.ISO_8859_1).let { tags.add(Tag(tag, 2, it.size.toLong(), it)) }
         // Strip positions: header (8) + strips
         val offsets = LongArray(strips)
@@ -1064,8 +1077,8 @@ object TiffWriter {
         short(277, spp)
         long(278, ROWS.toLong())
         long(279, *LongArray(strips) { stripData[it].size.toLong() })
-        tags.add(Tag(282, 5, 1, ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(72).putInt(1).array()))
-        tags.add(Tag(283, 5, 1, ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(72).putInt(1).array()))
+        tags.add(Tag(282, 5, 1, ByteBuffer.allocate(8).order(order).putInt(72).putInt(1).array()))
+        tags.add(Tag(283, 5, 1, ByteBuffer.allocate(8).order(order).putInt(72).putInt(1).array()))
         short(284, 1)
         short(296, 2)
         ascii(305, software)
@@ -1077,36 +1090,38 @@ object TiffWriter {
         val ifdAt = at
         val ifdSize = 2 + tags.size * 12 + 4
         var valueAt = ifdAt + ifdSize
-        val dir = ByteBuffer.allocate(ifdSize).order(ByteOrder.LITTLE_ENDIAN)
+        val dir = ByteBuffer.allocate(ifdSize).order(order)
         dir.putShort(tags.size.toShort())
-        val big = ArrayList<ByteArray>()
+        val big = ArrayList<Tag>()
         for (t in tags) {
             dir.putShort(t.tag.toShort())
             dir.putShort(t.type.toShort())
             dir.putInt(t.count.toInt())
-            if (t.data.size <= 4) {
+            if (t.file == null && t.data.size <= 4) {
                 dir.put(t.data)
                 repeat(4 - t.data.size) { dir.put(0) }
             } else {
-                if (valueAt + t.data.size > 0xFFFFFFF0L) throw TiffException("The picture is too big for a TIFF file.")
+                if (valueAt + t.size > 0xFFFFFFF0L) throw TiffException("The picture is too big for a TIFF file.")
                 dir.putInt(valueAt.toInt())
-                big.add(t.data)
-                valueAt += t.data.size + (t.data.size and 1)
+                big.add(t)
+                valueAt += t.size + (t.size and 1L)
             }
         }
         dir.putInt(0)
         // Write it all
-        val head = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
-        head.put('I'.code.toByte()).put('I'.code.toByte()).putShort(42).putInt(ifdAt.toInt())
+        val head = ByteBuffer.allocate(8).order(order)
+        val mark = (if (bigEndian) 'M' else 'I').code.toByte()
+        head.put(mark).put(mark).putShort(42).putInt(ifdAt.toInt())
         out.write(head.array())
         for (s in 0 until strips) {
             out.write(stripData[s])
             if (stripData[s].size and 1 == 1) out.write(0)
         }
         out.write(dir.array())
-        for (b in big) {
-            out.write(b)
-            if (b.size and 1 == 1) out.write(0)
+        for (t in big) {
+            val f = t.file
+            if (f != null) f.inputStream().use { it.copyTo(out, 1 shl 16) } else out.write(t.data)
+            if (t.size and 1L == 1L) out.write(0)
         }
         out.flush()
     }
