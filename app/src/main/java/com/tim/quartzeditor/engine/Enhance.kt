@@ -245,41 +245,70 @@ half4 main(float2 p) {
      * reach the top edge, with edges following the picture. Null when there's no sky.
      */
     fun skyMask(src: Bitmap, depth: FloatArray, w: Int, h: Int, threshold: Float): FloatArray? {
-        val cand = BooleanArray(w * h) { depth[it] <= threshold }
-        val sky = BooleanArray(w * h)
-        val queue = IntArray(w * h)
-        var head = 0
-        var tail = 0
-        for (x in 0 until w) if (cand[x]) {
-            sky[x] = true
-            queue[tail++] = x
-        }
-        while (head < tail) {
-            val i = queue[head++]
-            val x = i % w
-            val y = i / w
-            fun visit(j: Int) {
-                if (!sky[j] && cand[j]) {
-                    sky[j] = true
-                    queue[tail++] = j
-                }
-            }
-            if (x > 0) visit(i - 1)
-            if (x < w - 1) visit(i + 1)
-            if (y > 0) visit(i - w)
-            if (y < h - 1) visit(i + w)
-        }
-        if (tail < w * h * 0.01f) return null
-        val px = IntArray(w * h)
+        val n = w * h
+        val px = IntArray(n)
         src.getPixels(px, 0, w, 0, 0, w, h)
-        val gray = FloatArray(w * h) { i ->
+        val gray = FloatArray(n) { i ->
             val c = px[i]
             (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f
         }
-        val p = FloatArray(w * h) { if (sky[it]) 1f else 0f }
+        val sky = BooleanArray(n)
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        fun flood(ok: (Int) -> Boolean) {
+            while (head < tail) {
+                val i = queue[head++]
+                val x = i % w
+                val y = i / w
+                fun visit(j: Int) {
+                    if (!sky[j] && ok(j)) {
+                        sky[j] = true
+                        queue[tail++] = j
+                    }
+                }
+                if (x > 0) visit(i - 1)
+                if (x < w - 1) visit(i + 1)
+                if (y > 0) visit(i - w)
+                if (y < h - 1) visit(i + w)
+            }
+        }
+        // 1. The farthest parts that reach the top edge
+        for (x in 0 until w) if (depth[x] <= threshold) {
+            sky[x] = true
+            queue[tail++] = x
+        }
+        flood { depth[it] <= threshold }
+        if (tail < n * 0.01f) return null
+        // 2. Then on into nearby parts that are nearly as far and as bright as that sky (clouds
+        // hugging a peak, haze along a ridge), which the depth alone tends to leave behind
+        var sum = 0.0
+        var sum2 = 0.0
+        for (k in 0 until tail) {
+            val g = gray[queue[k]].toDouble()
+            sum += g
+            sum2 += g * g
+        }
+        val mean = (sum / tail).toFloat()
+        val sd = kotlin.math.sqrt(max(0.0, sum2 / tail - (sum / tail) * (sum / tail))).toFloat()
+        val bright = mean - max(0.06f, 1.2f * sd)
+        val far = threshold + 0.1f
+        head = 0
+        flood { depth[it] <= far && gray[it] >= bright }
+        // 3. One pixel more, so the new sky tucks in under the edge instead of leaving a rim of the old one
+        val grown = sky.copyOf()
+        for (i in 0 until n) if (sky[i]) {
+            val x = i % w
+            if (x > 0) grown[i - 1] = true
+            if (x < w - 1) grown[i + 1] = true
+            if (i >= w) grown[i - w] = true
+            if (i + w < n) grown[i + w] = true
+        }
+        val p = FloatArray(n) { if (grown[it]) 1f else 0f }
         val f = Cutout.guidedFilter(gray, p, w, h, max(2, (max(w, h) / 250f).roundToInt()), 1e-3f)
         for (i in f.indices) {
-            val t = ((f[i] - 0.25f) / 0.5f).coerceIn(0f, 1f)
+            // Leaning towards sky where it's unsure (a soft edge shows the new sky, not a halo of the old)
+            val t = ((f[i] - 0.15f) / 0.5f).coerceIn(0f, 1f)
             f[i] = t * t * (3f - 2f * t)
         }
         return f
@@ -316,9 +345,16 @@ half4 main(float2 p) {
                 setFloatUniform("size", w.toFloat(), hy)
                 setFloatUniform("amount", clouds)
                 setFloatUniform("seed", seed)
-                val tint = if (preset == SkyPreset.SUNSET || preset == SkyPreset.GOLDEN || preset == SkyPreset.DUSK) 0xFFFFE0C8.toInt()
-                else if (preset == SkyPreset.STORM || preset == SkyPreset.OVERCAST) 0xFFC8CCD2.toInt() else Color.WHITE
+                // Sunlit tops and shaded undersides, in the sky's own light
+                val (tint, shade) = when (preset) {
+                    SkyPreset.SUNSET, SkyPreset.GOLDEN -> 0xFFFFE0C8.toInt() to 0xFF6B5272.toInt()
+                    SkyPreset.DUSK -> 0xFFF2D2D8.toInt() to 0xFF4A3D66.toInt()
+                    SkyPreset.STORM -> 0xFFC4C8CE.toInt() to 0xFF464C56.toInt()
+                    SkyPreset.OVERCAST -> 0xFFE4E6EA.toInt() to 0xFF8C929C.toInt()
+                    else -> Color.WHITE to 0xFFB3BFD6.toInt()
+                }
                 setFloatUniform("tint", Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f)
+                setFloatUniform("shade", Color.red(shade) / 255f, Color.green(shade) / 255f, Color.blue(shade) / 255f)
             }
             // (Shaders only run on the GPU: the clouds are made there, then laid over the sky)
             val cl = shaded(w, h, sh)
@@ -333,26 +369,49 @@ uniform float2 size;
 uniform float amount;
 uniform float seed;
 uniform float3 tint;
-float hash(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7)) + seed) * 43758.5453); }
+uniform float3 shade;
+// A hash without sin(): sin of big numbers is too coarse on phone GPUs (it made blocks)
+float hash(float2 p) {
+    float3 p3 = fract(float3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
 float noise(float2 p) {
     float2 i = floor(p);
     float2 f = fract(p);
-    float2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i), hash(i + float2(1.0, 0.0)), u.x), mix(hash(i + float2(0.0, 1.0)), hash(i + float2(1.0, 1.0)), u.x), u.y);
+    float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = hash(i);
+    float b = hash(i + float2(1.0, 0.0));
+    float c = hash(i + float2(0.0, 1.0));
+    float d = hash(i + float2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
-half4 main(float2 p) {
-    // Wide, soft clouds, thinning towards the horizon
-    float2 q = p / size.x * float2(3.0, 7.0);
+float fbm(float2 p) {
     float v = 0.0;
     float a = 0.5;
-    for (int o = 0; o < 5; o++) {
-        v += a * noise(q);
-        q *= 2.03;
+    for (int o = 0; o < 6; o++) {
+        v += a * noise(p);
+        p = float2(1.6 * p.x + 1.2 * p.y, -1.2 * p.x + 1.6 * p.y) + float2(3.1, 1.7);
         a *= 0.5;
     }
+    return v;
+}
+half4 main(float2 p) {
     float t = clamp(p.y / max(size.y, 1.0), 0.0, 1.0);
-    float c = smoothstep(1.0 - amount * 0.75, 1.0 - amount * 0.75 + 0.35, v) * (1.0 - t * 0.6);
-    return half4(half3(tint) * half(c), half(c * 0.9));
+    // Flatter towards the horizon (they're farther away); only up-down is squeezed, so nothing shears
+    float2 uv = p / size.x;
+    float2 q = float2(uv.x * 4.0, uv.y * 6.0 + t * t * 3.5) + float2(seed * 1.37, seed * 0.71);
+    float2 warp = float2(fbm(q + float2(1.7, 9.2)), fbm(q + float2(8.3, 2.8)));
+    float2 r = q + 0.3 * warp;
+    float d = fbm(r);
+    float cover = mix(0.66, 0.36, amount);
+    float dens = smoothstep(cover, cover + 0.16, d);
+    // Lit from above: thicker just above means more shadow below
+    float up = fbm(r - float2(0.0, 0.12));
+    float light = clamp(0.7 + (d - up) * 4.0 - smoothstep(cover, cover + 0.45, d) * 0.45, 0.0, 1.0);
+    float3 col = mix(shade, tint, light);
+    float a = dens * (1.0 - t * 0.55) * 0.97;
+    return half4(half3(col * a), half(a));
 }
 """
 
