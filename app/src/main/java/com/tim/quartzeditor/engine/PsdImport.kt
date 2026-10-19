@@ -37,7 +37,7 @@ object PsdImport {
 
     class Result(val doc: Doc, val notes: List<String>)
 
-    /** Reads [file] (a .psd or .psb copied somewhere readable). Runs in the background. */
+    /** Reads [file] (a .psd or .psb, or a TIFF, copied somewhere readable). Runs in the background. */
     fun read(file: File, name: String): Result {
         val raf = RandomAccessFile(file, "r")
         val buf = try {
@@ -46,7 +46,9 @@ object PsdImport {
         } finally {
             raf.close()
         }
-        return fromBuffer(buf, name, 0)
+        val head = ByteArray(4)
+        buf.duplicate().get(head)
+        return if (TiffReader.isTiff(head)) fromTiff(buf, name, 0) else fromBuffer(buf, name, 0)
     }
 
     /** A Photoshop file held in [buf] ([depth]: how many smart objects deep this file is). */
@@ -55,7 +57,53 @@ object PsdImport {
         return Builder(f, name, depth).build()
     }
 
-    private class Builder(val f: PsdFile, name: String, val depth: Int = 0) {
+    /** JPEG pieces of a TIFF, decoded by Android. */
+    val androidJpeg = TiffJpeg { data, w, h ->
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, android.graphics.BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }) ?: return@TiffJpeg null
+        val out = IntArray(w * h)
+        bmp.getPixels(out, 0, w, 0, 0, min(w, bmp.width), min(h, bmp.height))
+        bmp.recycle()
+        out
+    }
+
+    /** A TIFF's picture, decoded straight from the file. */
+    class TiffSource(val buf: java.nio.ByteBuffer, val info: TiffInfo)
+
+    /**
+     * A TIFF held in [buf]: with Photoshop's layers when it has them (a layered TIFF), otherwise
+     * its picture as one layer.
+     */
+    private fun fromTiff(buf: java.nio.ByteBuffer, name: String, depth: Int): Result {
+        val info = try {
+            TiffReader.info(buf)
+        } catch (e: TiffException) {
+            throw PsdException(e.message ?: "This TIFF couldn't be read.")
+        } catch (e: IndexOutOfBoundsException) {
+            throw PsdException("This TIFF file looks damaged.")
+        }
+        val mode = when (info.photometric) {
+            0, 1 -> 1
+            5 -> 4
+            8, 9 -> 9
+            else -> 3
+        }
+        // Lab layers aren't read; their flattened picture is
+        val layered = info.layerData?.takeIf { mode != 9 }?.let { at ->
+            try {
+                PsdReader.readTiff(buf.duplicate().order(info.order), at, info.resources, info.width, info.height, info.bits, mode, info.samples)
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val readable = TiffReader.unsupported(info)
+        if (layered == null && readable != null) throw PsdException(readable)
+        val f = layered ?: PsdFile(buf, 1, info.width, info.height, 8, 3, info.samples, emptyList(), -1L, 120.0, 30.0)
+        return Builder(f, name, depth, if (readable == null) TiffSource(buf, info) else null).build()
+    }
+
+    private class Builder(val f: PsdFile, name: String, val depth: Int = 0, val tiff: TiffSource? = null) {
         val notes = ArrayList<String>()
         /** Shrinks pictures bigger than the app's limit. */
         val s: Float = min(1f, Doc.MAX_SIDE.toFloat() / max(f.width, f.height))
@@ -103,6 +151,21 @@ object PsdImport {
 
         /** A file saved without layers: its flattened picture as one layer. */
         fun compositeOnly() {
+            if (tiff != null) {
+                // A TIFF: its own picture
+                val grid = TileGrid(alphaOnly = false)
+                val sink = RowSink(grid)
+                val x0 = max(0, keep.left)
+                val x1 = min(f.width, keep.right)
+                TiffReader.rows(tiff.buf, tiff.info, androidJpeg) { y, row ->
+                    if (y >= keep.top && y < keep.bottom) sink.row(row, 0, x0, x1, y)
+                }
+                sink.finish()
+                grid.dropEmptyTiles()
+                doc.layers.add(Layer(doc.newId(), LayerProps("Background"), grid))
+                return
+            }
+            if (f.compositeOffset < 0) return
             val rows = PsdReader.ChannelRows.composite(f)
             if (rows.isEmpty()) return
             val colors = colorChannels().size
@@ -634,6 +697,13 @@ object PsdImport {
             if (head[0] == '8'.code.toByte() && head[1] == 'B'.code.toByte() && head[2] == 'P'.code.toByte() && head[3] == 'S'.code.toByte()) {
                 if (depth >= 2) return null
                 return fromBuffer(data, name, depth + 1).doc
+            }
+            // A TIFF (layered or not)
+            if (TiffReader.isTiff(head)) {
+                if (depth >= 2) return null
+                val d = fromTiff(data, name, depth + 1).doc
+                if (expect != null && expect > 0f && abs(d.width.toFloat() / d.height - expect) / expect > 0.04f) return null
+                return d
             }
             // A picture: decoded straight from the file (never copied whole), no bigger than the app's limit
             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }

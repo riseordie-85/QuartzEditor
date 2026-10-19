@@ -10,7 +10,13 @@ from the build). Background removal's model is fetched by Google Play services i
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
   portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
-- **Open File Picker**: any image, a `.qedit` project file, or a **Photoshop file** (`.psd`, `.psb`).
+- **Open File Picker**: any image, a `.qedit` project file, a **Photoshop file** (`.psd`, `.psb`) or a
+  **TIFF** (`.tif`, `.tiff`).
+- **TIFFs** open whatever saved them: no compression, LZW, ZIP, PackBits or JPEG; 1 to 32 bits (including
+  floating point); black and white, gray, palette, RGB, CMYK, YCbCr or Lab; with transparency; in strips
+  or tiles; BigTIFF. A **layered TIFF from Photoshop** opens with all its layers, like a Photoshop file
+  (everything below applies). Smaller previews saved inside the file are skipped. Pictures bigger than
+  4096 px are shrunk to fit. TIFFs also work for Place image, pattern and sky photos.
 - **Photoshop files** open with their layers: pixel layers, folders at any depth (Pass Through or with
   their own blend mode, open or closed, with their own layer styles), layer masks (and folder masks),
   vector masks (with their path operations), every blend mode, opacity and fill, clipping masks (to
@@ -31,13 +37,14 @@ from the build). Background removal's model is fetched by Google Play services i
   you imported with that name, or a close free match for common ones (Arial → Arimo, Helvetica Neue →
   Inter, Gotham/Proxima Nova → Montserrat, Futura → Jost…); editing says when it isn't the original.
   **Smart objects stay smart**: embedded pictures (PNG, JPEG, …) and embedded Photoshop files become the
-  smart layer's contents, placed where they were (edit them in their own tab). **Copies of one smart
-  object stay linked**: editing one changes them all. Linked files, TIFF, warps and smart filters keep
+  smart layer's contents, placed where they were (edit them in their own tab); so do embedded TIFFs,
+  with their layers when they have them. **Copies of one smart
+  object stay linked**: editing one changes them all. Linked files, warps and smart filters keep
   what you see as the contents. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger than 4096
   px are shrunk to fit. Afterwards a short list says what didn't come across exactly (Channel Mixer,
   Selective Color, Color Lookup, Posterize and Threshold adjustments; blend modes on effects that only
   layers have).
-- **Very big Photoshop files** (over 300 MB) ask first: they can take minutes and may close the app on a
+- **Very big Photoshop files and TIFFs** (over 300 MB) ask first: they can take minutes and may close the app on a
   phone or tablet. **Open anyway** goes ahead.
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
 
@@ -349,7 +356,7 @@ in between. With a selection, the mask button makes a mask that shows only what'
 ### Saving
 - Your work is saved to **Projects** automatically when you go Home or switch apps, with every layer,
   mask and setting (smart layers keep their full-size contents inside the project).
-- **Export image** saves a flattened PNG, JPG or WebP to `Pictures/Quartz Editor` (shows up in Quartz
+- **Export image** saves a flattened PNG, JPG, WebP or TIFF (ZIP-compressed, with transparency) to `Pictures/Quartz Editor` (shows up in Quartz
   Gallery), optionally sharing it.
 - **Close without saving** (menu) throws away changes since the last save.
 - The menu also rotates the whole image 90° or flips it.
@@ -406,7 +413,7 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`),
   project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
   selection expand/shrink (`SelectionOps`), the AI models (`Ai`), Photoshop files (`Psd` reads them,
-  `PsdImport` turns them into a document, `PsdFonts` picks fonts), the blend modes Android doesn't have
+  `PsdImport` turns them into a document, `PsdFonts` picks fonts), TIFF files (`Tiff`: reading and writing), the blend modes Android doesn't have
   (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`) and the Enhance effects
   (`Enhance`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,

@@ -18,10 +18,12 @@ import kotlin.math.roundToInt
 /** A photo from the phone's gallery. */
 data class GalleryPhoto(val id: Long, val uri: Uri, val name: String)
 
-enum class ExportFormat(val label: String, val mime: String, val ext: String, val compress: Bitmap.CompressFormat, val alpha: Boolean) {
+/** [compress] null: written by the app itself (TIFF). */
+enum class ExportFormat(val label: String, val mime: String, val ext: String, val compress: Bitmap.CompressFormat?, val alpha: Boolean) {
     PNG("PNG", "image/png", "png", Bitmap.CompressFormat.PNG, true),
     JPEG("JPG", "image/jpeg", "jpg", Bitmap.CompressFormat.JPEG, false),
     WEBP("WebP", "image/webp", "webp", Bitmap.CompressFormat.WEBP_LOSSLESS, true),
+    TIFF("TIFF", "image/tiff", "tif", null, true),
 }
 
 object Media {
@@ -77,8 +79,70 @@ object Media {
         null
     } ?: uri.lastPathSegment.orEmpty()
 
+    /** Whether [uri] is a TIFF (by its first bytes; Android can't decode TIFFs itself). Reads the file. */
+    fun isTiff(context: Context, uri: Uri): Boolean = try {
+        context.contentResolver.openInputStream(uri)?.use { s ->
+            val head = ByteArray(4)
+            s.read(head) == 4 && com.tim.quartzeditor.engine.TiffReader.isTiff(head)
+        } ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+    /** A TIFF's picture (its flattened one, for a layered TIFF) as a bitmap no bigger than [maxPx] on its longest side. */
+    fun decodeTiff(context: Context, uri: Uri, maxPx: Int): Bitmap {
+        val tmp = java.io.File(context.cacheDir, "decode-${System.nanoTime()}.tif")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
+                ?: throw IOException("Couldn't read that file.")
+            val buf = java.io.RandomAccessFile(tmp, "r").use { raf ->
+                if (raf.length() > Int.MAX_VALUE) throw IOException("This file is over 2 GB, too big to open here.")
+                raf.channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, raf.length())
+            }
+            return decodeTiff(buf, maxPx)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** A TIFF held in [buf] as a bitmap no bigger than [maxPx], turned upright. */
+    fun decodeTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap {
+        val reader = com.tim.quartzeditor.engine.TiffReader
+        val info = try {
+            reader.info(buf)
+        } catch (e: com.tim.quartzeditor.engine.TiffException) {
+            throw IOException(e.message)
+        }
+        reader.unsupported(info)?.let { throw IOException(it) }
+        val k = minOf(1f, maxPx.toFloat() / max(info.width, info.height))
+        val w = (info.width * k).roundToInt().coerceAtLeast(1)
+        val h = (info.height * k).roundToInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val jpeg = com.tim.quartzeditor.engine.PsdImport.androidJpeg
+        if (w == info.width && h == info.height) {
+            reader.rows(buf, info, jpeg) { y, row -> bmp.setPixels(row, 0, w, 0, y, w, 1) }
+        } else {
+            val shrink = com.tim.quartzeditor.engine.RowShrinker(info.width, info.height, w, h) { y, row -> bmp.setPixels(row, 0, w, 0, y, w, 1) }
+            reader.rows(buf, info, jpeg) { y, row -> shrink.row(y, row) }
+            shrink.finish()
+        }
+        val m = android.graphics.Matrix()
+        when (info.orientation) {
+            2 -> m.postScale(-1f, 1f)
+            3 -> m.postRotate(180f)
+            4 -> m.postScale(1f, -1f)
+            5 -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+            6 -> m.postRotate(90f)
+            7 -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+            8 -> m.postRotate(270f)
+        }
+        if (m.isIdentity) return bmp
+        return Bitmap.createBitmap(bmp, 0, 0, w, h, m, true).also { if (it !== bmp) bmp.recycle() }
+    }
+
     /** Decodes an image upright, as editable pixels, no bigger than [maxPx] on its longest side. */
     fun decodeUpright(context: Context, uri: Uri, maxPx: Int): Bitmap {
+        if (isTiff(context, uri)) return decodeTiff(context, uri, maxPx)
         val source = ImageDecoder.createSource(context.contentResolver, uri)
         val bmp = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -95,6 +159,14 @@ object Media {
         return if (bmp.config != Bitmap.Config.ARGB_8888) bmp.copy(Bitmap.Config.ARGB_8888, false) else bmp
     }
 
+    /** [bitmap] as a TIFF (8-bit RGB, with transparency when it has any). */
+    fun writeTiff(bitmap: Bitmap, out: java.io.OutputStream) {
+        val w = bitmap.width
+        val alpha = bitmap.hasAlpha()
+        com.tim.quartzeditor.engine.TiffWriter.write(out, w, bitmap.height, alpha, "Quartz Editor", { y, row -> bitmap.getPixels(row, 0, w, 0, y, w, 1) })
+        out.flush()
+    }
+
     /** Saves a finished image to Pictures/Quartz Editor. Returns its address. */
     suspend fun saveImage(context: Context, bitmap: Bitmap, name: String, format: ExportFormat): Uri = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
@@ -109,7 +181,9 @@ object Media {
             ?: throw IOException("Android didn't allow a new picture")
         try {
             resolver.openOutputStream(uri)?.use { out ->
-                if (!bitmap.compress(format.compress, if (format == ExportFormat.JPEG) 95 else 100, out)) throw IOException("Couldn't encode the picture")
+                val c = format.compress
+                if (c == null) writeTiff(bitmap, out.buffered(1 shl 16))
+                else if (!bitmap.compress(c, if (format == ExportFormat.JPEG) 95 else 100, out)) throw IOException("Couldn't encode the picture")
             } ?: throw IOException("Couldn't write the picture")
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)

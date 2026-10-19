@@ -139,12 +139,12 @@ fun BigPsdDialog(vm: EditorViewModel) {
     val size = if (bytes >= 1024L * 1024 * 1024) "%.1f GB".format(bytes / (1024.0 * 1024 * 1024)) else "${bytes / (1024 * 1024)} MB"
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { vm.bigPsdAsk = null },
-        title = { Text("A very big Photoshop file") },
+        title = { Text("A very big file") },
         text = {
             Text(
                 "This file is $size. Files this big can take minutes to open, and may close the app on this device" +
                     (if (ramGb > 0.5) " (it has about ${ramGb.roundToInt()} GB of memory)" else "") +
-                    ". Big pictures are shrunk to fit as they open.\n\nPhotoshop on a computer is the safer place for files like this.",
+                    ". Big pictures are shrunk to fit as they open.\n\nA computer is the safer place for files like this.",
                 color = Q.textDim, fontSize = 14.sp,
             )
         },

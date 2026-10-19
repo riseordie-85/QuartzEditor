@@ -91,6 +91,8 @@ class PsdLayer {
     var patternFill: Map<String, Any?>? = null
     /** Adjustment layer: its settings block (key, bytes), read by [PsdAdjust.parse]. */
     var adjustData: Pair<String, ByteArray>? = null
+    /** The byte order its settings are stored in (little-endian only inside some layered TIFFs). */
+    var order: ByteOrder = ByteOrder.BIG_ENDIAN
     /** Newer adjustment settings (Brightness/Contrast keeps its real values here: "CgEd"). */
     var adjustDesc: Map<String, Any?>? = null
 
@@ -142,6 +144,8 @@ class PsdFile(
     val patterns: Map<String, PsdPattern> = emptyMap(),
 ) {
     val psb: Boolean get() = version == 2
+    /** Big-endian, as in .psd files, except in layered TIFFs saved in PC byte order. */
+    val order: ByteOrder get() = buffer.order()
 }
 
 /** Reads a .psd or .psb held in [buf] (the whole file). */
@@ -168,71 +172,121 @@ object PsdReader {
         // Color mode data (palettes): not needed
         r.skip(r.u32())
         // Image resources: the global light angle and altitude for layer styles
-        var angle = 120.0
-        var altitude = 30.0
         val resLen = r.u32()
-        val resEnd = r.pos + resLen
-        while (r.pos + 12 <= resEnd) {
-            if (r.ascii(4) != "8BIM") break
-            val id = r.u16()
-            val nameLen = r.u8()
-            r.skip(nameLen + if ((nameLen + 1) % 2 != 0) 1 else 0)
-            val size = r.u32()
-            val dataAt = r.pos
-            if (id == 1037 && size >= 4) angle = r.i32().toDouble()
-            if (id == 1049 && size >= 4) altitude = r.i32().toDouble()
-            r.pos = dataAt + size + (size and 1)
-        }
-        r.pos = resEnd
+        val (angle, altitude) = lightAngles(r, r.pos + resLen)
+        r.pos += resLen
 
         // Layer and mask information
         val lmLen = if (psb) r.u64() else r.u32()
         val lmEnd = r.pos + lmLen
-        var layers: List<PsdLayer> = emptyList()
-        var mergedAlpha = false
-        val linked = HashMap<String, PsdLinked>()
-        val patterns = HashMap<String, PsdPattern>()
+        val blocks = Blocks()
         if (lmLen > 0) {
             val infoLen = if (psb) r.u64() else r.u32()
             val infoEnd = r.pos + infoLen
             if (infoLen > 0) {
-                mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
-                layers = readLayerInfo(r, psb, depth)
+                blocks.mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
+                blocks.layers = readLayerInfo(r, psb, depth)
             }
             r.pos = infoEnd
             // Global layer mask info
             if (r.pos + 4 <= lmEnd) r.skip(r.u32())
             // More blocks: 16-bit files keep their layers here, and smart objects' embedded files are here
-            while (r.pos + 12 <= lmEnd) {
-                val sig = r.ascii(4)
-                if (sig != "8BIM" && sig != "8B64") break
-                val key = r.ascii(4)
-                val len = if (psb && key in LONG_KEYS) r.u64() else r.u32()
-                val at = r.pos
-                if ((key == "Lr16" || key == "Lr32" || key == "Layr") && len > 0 && layers.isEmpty()) {
-                    mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
-                    layers = readLayerInfo(r, psb, depth)
-                }
-                if (key == "Patt" || key == "Pat2" || key == "Pat3") {
-                    try {
-                        readPatterns(r, at + len, patterns)
-                    } catch (e: Exception) {
-                    }
-                }
-                if (key == "lnk2" || key == "lnkD" || key == "lnk3") {
-                    try {
-                        readLinked(r, at + len, linked)
-                    } catch (e: Exception) {
-                    } catch (e: StackOverflowError) {
-                    }
-                }
-                r.pos = at + len
-                // Blocks here are padded to 4 bytes
-                while ((r.pos - at) % 4 != 0L && r.pos < lmEnd) r.pos++
-            }
+            readBlocks(r, lmEnd, psb, depth, blocks)
         }
         r.pos = lmEnd
-        return PsdFile(buf, version, width, height, depth, mode, channels, layers, r.pos, angle, altitude, mergedAlpha, linked, patterns)
+        return PsdFile(buf, version, width, height, depth, mode, channels, blocks.layers, r.pos, angle, altitude, blocks.mergedAlpha, blocks.linked, blocks.patterns)
+    }
+
+    /** What the extra blocks after the layer records hold. */
+    private class Blocks {
+        var layers: List<PsdLayer> = emptyList()
+        var mergedAlpha = false
+        val linked = HashMap<String, PsdLinked>()
+        val patterns = HashMap<String, PsdPattern>()
+    }
+
+    /** Tagged blocks ("8BIM" + key + length) until [end]: layers (when not read yet), patterns, smart objects' files. */
+    private fun readBlocks(r: Reader, end: Long, psb: Boolean, depth: Int, out: Blocks) {
+        while (r.pos + 12 <= end) {
+            val sig = r.ascii(4)
+            if (sig != "8BIM" && sig != "8B64") break
+            val key = r.ascii(4)
+            val len = if (psb && key in LONG_KEYS) r.u64() else r.u32()
+            val at = r.pos
+            if ((key == "Lr16" || key == "Lr32" || key == "Layr") && len > 0 && out.layers.isEmpty()) {
+                out.mergedAlpha = r.buf.getShort(r.pos.toInt()) < 0
+                out.layers = readLayerInfo(r, psb, depth)
+            }
+            if (key == "Patt" || key == "Pat2" || key == "Pat3") {
+                try {
+                    readPatterns(r, at + len, out.patterns)
+                } catch (e: Exception) {
+                }
+            }
+            if (key == "lnk2" || key == "lnkD" || key == "lnk3") {
+                try {
+                    readLinked(r, at + len, out.linked)
+                } catch (e: Exception) {
+                } catch (e: StackOverflowError) {
+                }
+            }
+            r.pos = at + len
+            // Blocks here are padded to 4 bytes
+            while ((r.pos - at) % 4 != 0L && r.pos < end) r.pos++
+        }
+    }
+
+    /** The global light angle and altitude from image resources (reading from [r] up to [end], then back). */
+    private fun lightAngles(r: Reader, end: Long): Pair<Double, Double> {
+        val start = r.pos
+        var angle = 120.0
+        var altitude = 30.0
+        try {
+            while (r.pos + 12 <= end) {
+                if (r.ascii(4) != "8BIM") break
+                val id = r.u16()
+                val nameLen = r.u8()
+                r.skip(nameLen + if ((nameLen + 1) % 2 != 0) 1 else 0)
+                val size = r.u32()
+                val dataAt = r.pos
+                if (id == 1037 && size >= 4) angle = r.i32().toDouble()
+                if (id == 1049 && size >= 4) altitude = r.i32().toDouble()
+                r.pos = dataAt + size + (size and 1)
+            }
+        } catch (e: PsdException) {
+        }
+        r.pos = start
+        return angle to altitude
+    }
+
+    /**
+     * Photoshop's layers kept inside a layered TIFF ("ImageSourceData", [at] in the file). The
+     * TIFF's own picture is the flattened one; [resources] are its Photoshop image resources.
+     * [buf] must be in the TIFF's byte order: in a PC-order TIFF, Photoshop stores the layers
+     * little-endian too. Null when there are none.
+     */
+    fun readTiff(buf: ByteBuffer, at: LongRange, resources: LongRange?, width: Int, height: Int, depth: Int, mode: Int, channels: Int): PsdFile? {
+        if (depth != 8 && depth != 16) return null
+        val r = Reader(buf)
+        r.pos = at.first
+        if (r.latin1(36) != "Adobe Photoshop Document Data Block\u0000") return null
+        val end = at.last + 1
+        if (r.pos + 12 > end) return null
+        val sig = r.ascii(4)
+        if (sig != "8BIM" && sig != "8B64") return null
+        r.pos -= 4
+        val psb = sig == "8B64"
+        val blocks = Blocks()
+        readBlocks(r, end, psb, depth, blocks)
+        if (blocks.layers.isEmpty()) return null
+        // Image resources are always big-endian
+        var angles = 120.0 to 30.0
+        if (resources != null) {
+            val rr = Reader(buf.duplicate().order(ByteOrder.BIG_ENDIAN))
+            rr.pos = resources.first
+            angles = lightAngles(rr, resources.last + 1)
+        }
+        return PsdFile(buf, if (psb) 2 else 1, width, height, depth, mode, channels, blocks.layers, -1L, angles.first, angles.second, false, blocks.linked, blocks.patterns)
     }
 
     /** The patterns block: each pattern's name, id and where its pixels are (read later by [patternPixels]). */
@@ -258,7 +312,7 @@ object PsdReader {
      * Patterns are saved as a "virtual memory array": a rectangle, then each channel raw or RLE.
      */
     fun patternPixels(file: PsdFile, p: PsdPattern): Triple<Int, Int, IntArray>? = try {
-        val r = Reader(file.buffer.duplicate().order(ByteOrder.BIG_ENDIAN))
+        val r = Reader(file.buffer.duplicate().order(file.order))
         r.pos = p.offset
         r.skip(4) // version (3)
         val vmaLen = r.u32()
@@ -374,6 +428,7 @@ object PsdReader {
         val layers = ArrayList<PsdLayer>(count)
         repeat(count) {
             val l = PsdLayer()
+            l.order = r.buf.order()
             l.top = r.i32()
             l.left = r.i32()
             l.bottom = r.i32()
@@ -604,6 +659,11 @@ object PsdReader {
     ) {
         private val rowBytes = width * (depth / 8)
         private val raw = ByteArray(rowBytes)
+        /** 16-bit values stored low byte first (a layered TIFF in PC byte order). */
+        private val le = buf.order() == ByteOrder.LITTLE_ENDIAN
+        private fun at16(b: ByteArray, x: Int): Int =
+            if (le) (b[2 * x].toInt() and 0xFF) or ((b[2 * x + 1].toInt() and 0xFF) shl 8)
+            else ((b[2 * x].toInt() and 0xFF) shl 8) or (b[2 * x + 1].toInt() and 0xFF)
         private var row = 0
 
         /** Fills [out] (at least [width] long) with the next row; zeros past the end of the data. */
@@ -643,7 +703,7 @@ object PsdReader {
             } else {
                 // 16-bit: the high byte, rounded
                 for (x in 0 until width) {
-                    val v = ((raw[2 * x].toInt() and 0xFF) shl 8) or (raw[2 * x + 1].toInt() and 0xFF)
+                    val v = at16(raw, x)
                     out[x] = ((v * 255 + 32767) / 65535).toByte()
                 }
             }
@@ -692,9 +752,14 @@ object PsdReader {
             } else {
                 var prev = 0
                 for (x in 0 until width) {
-                    val v = (((b[2 * x].toInt() and 0xFF) shl 8) or (b[2 * x + 1].toInt() and 0xFF)) + prev and 0xFFFF
-                    b[2 * x] = (v shr 8).toByte()
-                    b[2 * x + 1] = v.toByte()
+                    val v = at16(b, x) + prev and 0xFFFF
+                    if (le) {
+                        b[2 * x] = v.toByte()
+                        b[2 * x + 1] = (v shr 8).toByte()
+                    } else {
+                        b[2 * x] = (v shr 8).toByte()
+                        b[2 * x + 1] = v.toByte()
+                    }
                     prev = v
                 }
             }
@@ -818,7 +883,10 @@ object PsdReader {
             return v
         }
 
-        fun ascii(n: Int): String = latin1(n)
+        /** Little-endian (a layered TIFF in PC byte order): numbers and four-letter codes are stored back to front. */
+        private val reversed = buf.order() == ByteOrder.LITTLE_ENDIAN
+
+        fun ascii(n: Int): String = if (reversed && n == 4) latin1(4).reversed() else latin1(n)
 
         fun latin1(n: Int): String {
             check(n)
@@ -1245,7 +1313,7 @@ sealed class PsdAdjust {
         fun parse(l: PsdLayer): PsdAdjust? {
             val (key, data) = l.adjustData ?: return if ("brit" in l.keys || l.adjustDesc != null) brightness(l, null) else null
             return try {
-                val b = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+                val b = ByteBuffer.wrap(data).order(l.order)
                 when (key) {
                     "levl" -> {
                         b.short // version

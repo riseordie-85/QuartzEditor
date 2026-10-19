@@ -109,7 +109,7 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
         }
         return
     }
-    runBusy("Opening Photoshop file…") {
+    runBusy("Opening…") {
         val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
         val result = withContext(Dispatchers.IO) {
             // Read from a copy (the file is read in place, not loaded into memory all at once)
@@ -126,22 +126,25 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
         }
         setDocument(result.doc)
         if (result.notes.isNotEmpty()) importReport = name to result.notes
-        else toast("Opened ${result.doc.layers.size} layers from Photoshop")
+        else if (result.doc.layers.size > 1) toast("Opened ${result.doc.layers.size} layers")
     }
 }
 
-/** True when [uri] is a Photoshop file (by its name, type or first bytes). Reads the file: not on the main thread. */
+/**
+ * True when [uri] is a Photoshop file or a TIFF (by its name, type or first bytes): opened with
+ * its layers, by [openPsd]. Reads the file: not on the main thread.
+ */
 internal fun EditorViewModel.isPsd(uri: Uri): Boolean {
     val type = ctx.contentResolver.getType(uri).orEmpty().lowercase()
-    if ("photoshop" in type || type.endsWith("/psd")) return true
+    if ("photoshop" in type || type.endsWith("/psd") || type == "image/tiff" || type == "image/tif") return true
     val name = com.tim.quartzeditor.data.Media.displayNameWithExtension(ctx, uri).lowercase()
-    if (name.endsWith(".psd") || name.endsWith(".psb")) return true
+    if (name.endsWith(".psd") || name.endsWith(".psb") || name.endsWith(".tif") || name.endsWith(".tiff")) return true
     // A known kind of picture: no need to look inside
     if (type.startsWith("image/")) return false
     return try {
         ctx.contentResolver.openInputStream(uri)?.use { s ->
             val head = ByteArray(4)
-            s.read(head) == 4 && String(head, Charsets.ISO_8859_1) == "8BPS"
+            s.read(head) == 4 && (String(head, Charsets.ISO_8859_1) == "8BPS" || com.tim.quartzeditor.engine.TiffReader.isTiff(head))
         } ?: false
     } catch (e: Exception) {
         false
