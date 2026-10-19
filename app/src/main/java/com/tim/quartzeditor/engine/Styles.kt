@@ -298,13 +298,13 @@ data class LayerStyle(
             .put("distance", satin.distance.toDouble()).put("size", satin.size.toDouble()).put("invert", satin.invert).put("blend", satin.blend.name))
 
     companion object {
-        private fun gradientJson(g: GradientFx) = JSONObject().put("on", g.on)
+        internal fun gradientJson(g: GradientFx) = JSONObject().put("on", g.on)
             .put("colors", org.json.JSONArray().also { a -> g.colors.forEach { a.put(it.toLong() and 0xFFFFFFFFL) } })
             .put("type", g.type.name).put("angle", g.angle.toDouble()).put("scale", g.scale.toDouble())
             .put("reverse", g.reverse).put("opacity", g.opacity.toDouble()).put("blend", g.blend.name)
             .also { o -> g.positions?.let { ps -> o.put("positions", org.json.JSONArray().also { a -> ps.forEach { a.put(it.toDouble()) } }) } }
 
-        private fun gradientFrom(gf: JSONObject?, dg: GradientFx): GradientFx = if (gf == null) dg else GradientFx(
+        internal fun gradientFrom(gf: JSONObject?, dg: GradientFx): GradientFx = if (gf == null) dg else GradientFx(
             gf.optBoolean("on"),
             gf.optJSONArray("colors")?.let { a -> List(a.length()) { a.optLong(it).toInt() } }?.takeIf { it.size >= 2 } ?: dg.colors,
             GradientType.entries.firstOrNull { it.name == gf.optString("type") } ?: GradientType.LINEAR,

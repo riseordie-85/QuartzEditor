@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Filter
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
@@ -426,10 +428,17 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                         FxKind.entries.forEach { k -> Item(FX_KIND_LABELS.getValue(k), fxKindIcon(k)) { vm.addAdjustmentLayer(k) } }
                     }
                     Page(if (active?.isAdjustment == true) "Edit this adjustment layer" else "On this layer", Icons.Outlined.Tune) {
-                        Label(if (d.selection != null) "Changes this layer's pixels, inside the selection" else "Changes this layer's pixels")
+                        Label(
+                            when {
+                                active?.isSmart == true -> "Added as a smart filter (stays editable)"
+                                d.selection != null -> "Changes this layer's pixels, inside the selection"
+                                else -> "Changes this layer's pixels"
+                            },
+                        )
                         listOf(
                             PopupKind.ADJUSTMENTS, PopupKind.LEVELS, PopupKind.CURVES, PopupKind.HUE_SAT, PopupKind.COLOR_BALANCE,
-                            PopupKind.VIBRANCE, PopupKind.BLACK_WHITE, PopupKind.PHOTO_FILTER, PopupKind.GRADIENT_MAP, PopupKind.BLUR, PopupKind.FILTERS,
+                            PopupKind.VIBRANCE, PopupKind.BLACK_WHITE, PopupKind.PHOTO_FILTER, PopupKind.GRADIENT_MAP, PopupKind.CHANNEL_MIXER,
+                            PopupKind.SELECTIVE_COLOR, PopupKind.COLOR_LOOKUP, PopupKind.POSTERIZE, PopupKind.THRESHOLD, PopupKind.BLUR, PopupKind.FILTERS,
                         ).forEach { k -> Item("${k.title}…") { vm.openPopup(k) } }
                     }
                 }
@@ -461,6 +470,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     Page("Convert") {
                         if (active != null && !active.isAdjustment) Item(if (vm.isMultiSelecting) "Convert picked to smart layer" else "Convert to smart layer") { vm.convertToSmart() }
                         if (active?.isSmart == true) Item("Edit smart layer contents") { vm.openSmartContents(active.id) }
+                        if (active?.isSmart == true) Item("Replace contents…") { vm.replaceContentsFor = active.id }
                         Item("Rasterize layer", enabled = active?.needsRaster == true) { active?.let { vm.rasterizeLayer(it.id) } }
                         Item("Apply layer style", enabled = canApplyStyle(active)) { vm.applyLayerStyle(active!!.id) }
                     }
@@ -633,6 +643,11 @@ private fun LayerRow(
                 if (layer.isSmart) {
                     val n = vm.doc?.let { com.tim.quartzeditor.engine.linkedCopies(it, layer).size } ?: 0
                     if (n > 0) add("Linked to $n other${if (n > 1) "s" else ""}")
+                    p.smart?.let { sp ->
+                        if (sp.warp != null) add("Warped")
+                        val on = sp.filters.count { it.enabled }
+                        if (sp.filters.isNotEmpty()) add(if (on == sp.filters.size) "${sp.filters.size} smart filter${if (sp.filters.size > 1) "s" else ""}" else "Smart filters ($on of ${sp.filters.size} on)")
+                    }
                 }
                 if (clipBase != null) add("Clipped to ${clipBase.props.name}")
                 if (p.blend != Blend.NORMAL && !(layer.isGroup && p.passThrough)) add(p.blend.label)
@@ -667,8 +682,31 @@ private fun LayerRow(
             Item("Apply layer style", enabled = canApplyStyle(layer)) { vm.applyLayerStyle(layer.id) }
             Item("Clear layer style", enabled = p.style.any) { vm.applyStyleTo(ids, "Clear layer style", com.tim.quartzeditor.engine.LayerStyle()) }
         }
+        val filters = p.smart?.filters.orEmpty()
+        if (filters.isNotEmpty()) Page("Smart filters (${filters.size})") {
+            // Last applied first, like Photoshop's list
+            for (i in filters.indices.reversed()) {
+                val f = filters[i]
+                Page("${i + 1}. ${f.name}${if (!f.enabled) " (off)" else ""}") {
+                    Item("Edit…") { vm.editSmartFilter(layer.id, i) }
+                    Item(if (f.enabled) "Hide" else "Show") { vm.toggleSmartFilter(layer.id, i) }
+                    Divider()
+                    Label("Strength")
+                    for (o in listOf(1f, 0.75f, 0.5f, 0.25f)) {
+                        Item("${(o * 100).roundToInt()}%", checked = abs(f.opacity - o) < 0.01f) { vm.setSmartFilterOpacity(layer.id, i, o) }
+                    }
+                    Divider()
+                    Item("Delete") { vm.deleteSmartFilter(layer.id, i) }
+                }
+            }
+            Divider()
+            Item(if (filters.none { it.enabled }) "Show all" else "Hide all") { vm.toggleSmartFilter(layer.id, -1) }
+            Item("Delete all") { vm.deleteSmartFilter(layer.id, -1) }
+        }
         if (layer.isSmart || !layer.isAdjustment || layer.needsRaster) Page("Convert") {
             if (layer.isSmart) Item("Edit contents") { vm.openSmartContents(layer.id) }
+            if (layer.isSmart) Item("Replace contents…") { vm.replaceContentsFor = layer.id }
+            if (p.smart?.warp != null) Item("Remove warp") { vm.removeSmartWarp(layer.id) }
             if (layer.isSmart && vm.doc?.let { com.tim.quartzeditor.engine.linkedCopies(it, layer).isNotEmpty() } == true) {
                 Item("Unlink from copies") { vm.unlinkSmart(layer.id) }
             }
@@ -694,6 +732,11 @@ private val FX_KIND_LABELS = mapOf(
     FxKind.PHOTO_FILTER to "Photo Filter",
     FxKind.GRADIENT_MAP to "Gradient Map",
     FxKind.VIBRANCE to "Vibrance",
+    FxKind.CHANNEL_MIXER to "Channel Mixer",
+    FxKind.SELECTIVE_COLOR to "Selective Color",
+    FxKind.COLOR_LOOKUP to "Color Lookup",
+    FxKind.POSTERIZE to "Posterize",
+    FxKind.THRESHOLD to "Threshold",
 )
 
 internal fun fxKindIcon(k: FxKind): ImageVector = when (k) {
@@ -707,6 +750,11 @@ internal fun fxKindIcon(k: FxKind): ImageVector = when (k) {
     FxKind.PHOTO_FILTER -> Icons.Outlined.PhotoFilter
     FxKind.GRADIENT_MAP -> Icons.Outlined.Gradient
     FxKind.VIBRANCE -> Icons.Outlined.AutoAwesome
+    FxKind.CHANNEL_MIXER -> Icons.Outlined.Tune
+    FxKind.SELECTIVE_COLOR -> Icons.Outlined.Palette
+    FxKind.COLOR_LOOKUP -> Icons.Outlined.Filter
+    FxKind.POSTERIZE -> Icons.Outlined.Layers
+    FxKind.THRESHOLD -> Icons.Outlined.Contrast
 }
 
 /**

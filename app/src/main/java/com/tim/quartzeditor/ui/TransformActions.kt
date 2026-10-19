@@ -300,7 +300,10 @@ internal fun EditorViewModel.canvasTransform(
                 val vp = if (l.isVector) VectorArt.transformed(oldProps.getValue(l), m) else null
                 // A smart layer's placement turns with it (its pixels turn exactly, below)
                 oldProps.getValue(l).smart?.let { sp ->
-                    synchronized(newProps) { newProps[l] = oldProps.getValue(l).copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, m))) }
+                    synchronized(newProps) { newProps[l] = oldProps.getValue(l).copy(smart = sp.withQuad(SmartSpec.mapped(sp.quad, m)).let { moved ->
+                        // Resized: blurs in its smart filters keep their look
+                        if (styleScale == null) moved else moved.withFilters(sp.filters.map { f -> f.copy(fx = f.fx.copy(blur = f.fx.blur * styleScale)) })
+                    }) }
                 }
                 if (vp != null) synchronized(newProps) { newProps[l] = vp }
                 val grid = if (l in aiLayers) {

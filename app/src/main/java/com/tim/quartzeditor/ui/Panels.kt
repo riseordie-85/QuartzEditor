@@ -196,6 +196,11 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 PopupKind.PHOTO_FILTER -> PhotoFilterPanel(vm)
                 PopupKind.GRADIENT_MAP -> GradientMapPanel(vm)
                 PopupKind.VIBRANCE -> VibrancePanel(vm)
+                PopupKind.CHANNEL_MIXER -> ChannelMixerPanel(vm)
+                PopupKind.SELECTIVE_COLOR -> SelectiveColorPanel(vm)
+                PopupKind.COLOR_LOOKUP -> ColorLookupPanel(vm)
+                PopupKind.POSTERIZE -> PosterizePanel(vm)
+                PopupKind.THRESHOLD -> ThresholdPanel(vm)
                 PopupKind.ENHANCE -> EnhancePanel(vm)
             }
         }
@@ -364,6 +369,16 @@ private fun ColorPanel(vm: EditorViewModel) {
     val (_, sat, value) = hsv(color).let { Triple(it[0], it[1], it[2]) }
     val set: (Int) -> Unit = { vm.setColor(slot, it) }
 
+    ColorTabs(vm)
+    if (vm.colorTab == 1) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SlotChip("Foreground", vm.foreground, slot == ColorSlot.FOREGROUND) { vm.colorSlot = ColorSlot.FOREGROUND }
+            SlotChip("Background", vm.background, slot == ColorSlot.BACKGROUND) { vm.colorSlot = ColorSlot.BACKGROUND }
+        }
+        Spacer(Modifier.height(8.dp))
+        SwatchGrid(vm, color) { set(it); vm.rememberColor(it) }
+        return
+    }
     Row(Modifier.fillMaxWidth().height(170.dp)) {
         SatValSquare(hue, sat, value, onChange = { s, v -> set(AColor.HSVToColor(floatArrayOf(hue, s, v))) }, onDone = { vm.rememberColor(color) }, modifier = Modifier.weight(1f).fillMaxHeight())
         Spacer(Modifier.width(10.dp))

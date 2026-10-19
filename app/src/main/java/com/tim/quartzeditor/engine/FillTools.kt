@@ -17,7 +17,8 @@ import kotlin.math.roundToInt
 
 // ===================================================================== gradients
 
-enum class GradientType(val label: String) { LINEAR("Linear"), RADIAL("Radial"), REFLECTED("Reflected") }
+/** (Saved by position in settings: new ones go at the end.) */
+enum class GradientType(val label: String) { LINEAR("Linear"), RADIAL("Radial"), REFLECTED("Reflected"), ANGLE("Angle"), DIAMOND("Diamond") }
 
 /**
  * A gradient to pick: ready-made ([dynamic] ones use your foreground/background colors), or one
@@ -102,6 +103,46 @@ object GradientPainter {
                     LinearGradient(2 * start.x - end.x, 2 * start.y - end.y, end.x, end.y, mirrored, mp, Shader.TileMode.CLAMP)
                 }
             }
+            GradientType.ANGLE -> {
+                // Around the start point, beginning (and ending) in the direction dragged
+                android.graphics.SweepGradient(start.x, start.y, arr, pos?.toFloatArray()).apply {
+                    val deg = Math.toDegrees(kotlin.math.atan2((end.y - start.y).toDouble(), (end.x - start.x).toDouble())).toFloat()
+                    setLocalMatrix(android.graphics.Matrix().apply { setRotate(deg, start.x, start.y) })
+                }
+            }
+            GradientType.DIAMOND -> diamond(arr, pos, start, end, len)
+        }
+    }
+
+    /**
+     * A diamond gradient (Android has none): colors outward from [start] in a square turned to
+     * point at [end], worked out once as a small picture and stretched (it's smooth anyway).
+     */
+    private fun diamond(cols: IntArray, pos: List<Float>?, start: PointF, end: PointF, len: Float): Shader {
+        // The colors along the way, 256 steps
+        val strip = android.graphics.Bitmap.createBitmap(256, 1, android.graphics.Bitmap.Config.ARGB_8888)
+        Canvas(strip).drawRect(0f, 0f, 256f, 1f, Paint().apply { shader = LinearGradient(0f, 0f, 256f, 0f, cols, pos?.toFloatArray(), Shader.TileMode.CLAMP) })
+        val ramp = IntArray(256).also { strip.getPixels(it, 0, 256, 0, 0, 256, 1) }
+        strip.recycle()
+        // A square of side 2 × len around the start (past its edge everything is the last color)
+        val n = 256
+        val px = IntArray(n * n)
+        for (y in 0 until n) {
+            val dy = abs((y + 0.5f) / n * 2f - 1f)
+            for (x in 0 until n) {
+                val dx = abs((x + 0.5f) / n * 2f - 1f)
+                px[y * n + x] = ramp[((dx + dy).coerceAtMost(1f) * 255f).roundToInt()]
+            }
+        }
+        val bmp = android.graphics.Bitmap.createBitmap(px, n, n, android.graphics.Bitmap.Config.ARGB_8888)
+        val deg = Math.toDegrees(kotlin.math.atan2((end.y - start.y).toDouble(), (end.x - start.x).toDouble())).toFloat()
+        return android.graphics.BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            setLocalMatrix(android.graphics.Matrix().apply {
+                setScale(2f * len / n, 2f * len / n)
+                postTranslate(start.x - len, start.y - len)
+                // Turned so a corner points the way dragged
+                postRotate(deg, start.x, start.y)
+            })
         }
     }
 

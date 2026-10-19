@@ -97,6 +97,13 @@ data class FxParams(
     val blackWhite: BlackWhite? = null,
     val photoFilter: PhotoFilter? = null,
     val gradientMap: GradientMap? = null,
+    val channelMixer: ChannelMixer? = null,
+    val selectiveColor: SelectiveColor? = null,
+    val colorLookup: ColorLookup? = null,
+    /** Posterize: how many levels each channel keeps (0 = off, 2..255). */
+    val posterize: Int = 0,
+    /** Threshold: brighter than this (0..1) is white, the rest black (null = off). */
+    val threshold: Float? = null,
 ) {
     fun adjust(a: Adjust): Float = adjust[a] ?: 0f
 
@@ -109,7 +116,8 @@ data class FxParams(
     /** One of the Photoshop-style color adjustments changes something. */
     val hasColor: Boolean
         get() = (hueSat?.isIdentity == false) || (colorBalance?.isIdentity == false) || blackWhite != null ||
-            (photoFilter?.isIdentity == false) || gradientMap != null
+            (photoFilter?.isIdentity == false) || gradientMap != null || (channelMixer?.isIdentity == false) ||
+            (selectiveColor?.isIdentity == false) || colorLookup != null || posterize >= 2 || threshold != null
 
     /** Vignette strength 0..1 (slider plus the filter's own). */
     val vignette: Float
@@ -133,6 +141,11 @@ data class FxParams(
             .also { o -> blackWhite?.let { o.put("blackWhite", it.toJson()) } }
             .also { o -> photoFilter?.let { o.put("photoFilter", it.toJson()) } }
             .also { o -> gradientMap?.let { o.put("gradientMap", it.toJson()) } }
+            .also { o -> channelMixer?.let { o.put("channelMixer", it.toJson()) } }
+            .also { o -> selectiveColor?.let { o.put("selectiveColor", it.toJson()) } }
+            .also { o -> colorLookup?.let { o.put("colorLookup", it.toJson()) } }
+            .also { o -> if (posterize > 0) o.put("posterize", posterize) }
+            .also { o -> threshold?.let { o.put("threshold", it.toDouble()) } }
     }
 
     companion object {
@@ -156,6 +169,11 @@ data class FxParams(
                 blackWhite = runCatching { BlackWhite.fromJson(o.optJSONObject("blackWhite")) }.getOrNull(),
                 photoFilter = runCatching { PhotoFilter.fromJson(o.optJSONObject("photoFilter")) }.getOrNull(),
                 gradientMap = runCatching { GradientMap.fromJson(o.optJSONObject("gradientMap")) }.getOrNull(),
+                channelMixer = runCatching { ChannelMixer.fromJson(o.optJSONObject("channelMixer")) }.getOrNull(),
+                selectiveColor = runCatching { SelectiveColor.fromJson(o.optJSONObject("selectiveColor")) }.getOrNull(),
+                colorLookup = runCatching { ColorLookup.fromJson(o.optJSONObject("colorLookup")) }.getOrNull(),
+                posterize = o.optInt("posterize", 0),
+                threshold = if (o.has("threshold")) o.optDouble("threshold").toFloat() else null,
             )
         }
     }
@@ -391,6 +409,39 @@ class ColorShader {
         shader.setFloatUniform("pfDensity", pf?.density ?: 0f)
         shader.setFloatUniform("pfPreserve", if (pf?.preserveLuminosity == true) 1f else 0f)
         shader.setFloatUniform("useGM", if (state.gradientMap != null) 1f else 0f)
+        val cm = state.channelMixer?.takeUnless { it.isIdentity }
+        shader.setFloatUniform("useCM", if (cm != null) 1f else 0f)
+        val mix = cm ?: ChannelMixer()
+        shader.setFloatUniform("cmR", mix.red[0], mix.red[1], mix.red[2], mix.red[3])
+        shader.setFloatUniform("cmG", mix.green[0], mix.green[1], mix.green[2], mix.green[3])
+        shader.setFloatUniform("cmB", mix.blue[0], mix.blue[1], mix.blue[2], mix.blue[3])
+        shader.setFloatUniform("cmGray", mix.gray[0], mix.gray[1], mix.gray[2], mix.gray[3])
+        shader.setFloatUniform("cmMono", if (mix.mono) 1f else 0f)
+        val sc = state.selectiveColor?.takeUnless { it.isIdentity }
+        shader.setFloatUniform("useSC", if (sc != null) 1f else 0f)
+        shader.setFloatUniform("scRel", if (sc?.relative != false) 1f else 0f)
+        for (i in 0 until 9) {
+            val r = sc?.ranges?.getOrNull(i) ?: listOf(0f, 0f, 0f, 0f)
+            shader.setFloatUniform("sc$i", r[0], r[1], r[2], r[3])
+        }
+        bindLookup(state)
+        shader.setFloatUniform("posterize", if (state.posterize >= 2) state.posterize.toFloat() else 0f)
+        shader.setFloatUniform("threshold", state.threshold ?: -1f)
+    }
+
+    private var lookupKey: Any? = Unit
+
+    /** Color Lookup's table as a picture (a plain one when there's none). */
+    private fun bindLookup(state: FxParams) {
+        val l = state.colorLookup
+        shader.setFloatUniform("useCL", if (l != null) 1f else 0f)
+        shader.setFloatUniform("clSize", (l?.size ?: 2).toFloat())
+        if (l == lookupKey) return
+        lookupKey = l
+        val bmp = l?.bitmap ?: IDENTITY_LOOKUP.bitmap
+        val s = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        s.filterMode = BitmapShader.FILTER_MODE_LINEAR
+        shader.setInputShader("clut", s)
     }
 
     private fun setUniforms(state: FxParams, unit: Float) {
@@ -432,6 +483,11 @@ class ColorShader {
 
         /** Lookup table that changes nothing. */
         private val IDENTITY_LUT: Bitmap by lazy { Tone.lut(null, null) }
+
+        /** A 3D lookup table that changes nothing (2 per side). */
+        private val IDENTITY_LOOKUP: ColorLookup by lazy {
+            ColorLookup("None", 2, ByteArray(24) { i -> val idx = i / 3; val k = i % 3; val v = when (k) { 0 -> idx and 1; 1 -> (idx shr 1) and 1; else -> (idx shr 2) and 1 }; (v * 255).toByte() })
+        }
 
         private const val AGSL_BASIC = """
 uniform shader image;
@@ -578,6 +634,28 @@ uniform float3 pfColor;
 uniform float pfDensity;
 uniform float pfPreserve;
 uniform float useGM;
+uniform float useCM;
+uniform float4 cmR;
+uniform float4 cmG;
+uniform float4 cmB;
+uniform float4 cmGray;
+uniform float cmMono;
+uniform float useSC;
+uniform float scRel;
+uniform float4 sc0;
+uniform float4 sc1;
+uniform float4 sc2;
+uniform float4 sc3;
+uniform float4 sc4;
+uniform float4 sc5;
+uniform float4 sc6;
+uniform float4 sc7;
+uniform float4 sc8;
+uniform float useCL;
+uniform float clSize;
+uniform shader clut;
+uniform float posterize;
+uniform float threshold;
 
 float3 straight(float4 c) {
     return c.a > 0.0 ? c.rgb / c.a : float3(0.0);
@@ -706,6 +784,60 @@ float3 blackWhite(float3 c) {
     return float3(gray);
 }
 
+float3 channelMixer(float3 c) {
+    if (cmMono > 0.5) {
+        float g = dot(cmGray.rgb, c) + cmGray.a;
+        return clamp(float3(g), 0.0, 1.0);
+    }
+    return clamp(float3(dot(cmR.rgb, c) + cmR.a, dot(cmG.rgb, c) + cmG.a, dot(cmB.rgb, c) + cmB.a), 0.0, 1.0);
+}
+
+// One Selective Color range's inks (cyan, magenta, yellow, black) on a color
+float3 inks(float3 c, float4 a) {
+    float3 ink = 1.0 - c;
+    float3 d = scRel > 0.5 ? a.xyz * ink : a.xyz;
+    float3 o = c - d;
+    float mx = max(o.r, max(o.g, o.b));
+    float k = 1.0 - mx;
+    float dk = scRel > 0.5 ? a.w * (a.w > 0.0 ? 1.0 - k : k) : a.w;
+    // More black darkens everything by the same share; less brightens toward white
+    o = dk >= 0.0 ? o * (1.0 - dk) : o + (1.0 - o) * (-dk);
+    return o;
+}
+
+float3 selectiveColor(float3 c) {
+    float mx = max(c.r, max(c.g, c.b));
+    float mn = min(c.r, min(c.g, c.b));
+    float md = c.r + c.g + c.b - mx - mn;
+    float3 o = c;
+    // Each range counts as much as the color is of it (pure colors fully, grays not at all)
+    if (mx == c.r) o = mix(o, inks(o, sc0), mx - md);
+    if (mn == c.b) o = mix(o, inks(o, sc1), md - mn);
+    if (mx == c.g) o = mix(o, inks(o, sc2), mx - md);
+    if (mn == c.r) o = mix(o, inks(o, sc3), md - mn);
+    if (mx == c.b) o = mix(o, inks(o, sc4), mx - md);
+    if (mn == c.g) o = mix(o, inks(o, sc5), md - mn);
+    float ww = clamp((mn - 0.5) * 2.0, 0.0, 1.0);
+    float wk = clamp((0.5 - mx) * 2.0, 0.0, 1.0);
+    float wn = clamp(1.0 - abs(mx - 0.5) - abs(mn - 0.5), 0.0, 1.0);
+    o = mix(o, inks(o, sc6), ww);
+    o = mix(o, inks(o, sc7), wn);
+    o = mix(o, inks(o, sc8), wk);
+    return clamp(o, 0.0, 1.0);
+}
+
+// A color looked up in the 3D table (slices of blue side by side), smoothly between its steps
+float3 lookup(float3 c) {
+    float n = clSize - 1.0;
+    float3 s = clamp(c, 0.0, 1.0) * n;
+    float b0 = floor(s.b);
+    float b1 = min(b0 + 1.0, n);
+    float t = s.b - b0;
+    float3 lo = float3(clut.eval(float2(s.r + b0 * clSize + 0.5, s.g + 0.5)).rgb);
+    float3 hi = float3(clut.eval(float2(s.r + b1 * clSize + 0.5, s.g + 0.5)).rgb);
+    return mix(lo, hi, t);
+}
+
 float3 photoFilter(float3 c) {
     float3 o = mix(c, c * pfColor * 1.6, pfDensity);
     if (pfPreserve > 0.5) o = o + (luma(c) - luma(o));
@@ -760,9 +892,14 @@ half4 main(float2 p) {
 
     if (useHS > 0.5) c = clamp(hueSat(c), 0.0, 1.0);
     if (useCB > 0.5) c = colorBalance(c);
+    if (useCM > 0.5) c = channelMixer(c);
+    if (useSC > 0.5) c = selectiveColor(c);
     if (pfDensity > 0.0) c = photoFilter(c);
     if (useBW > 0.5) c = blackWhite(c);
     if (useGM > 0.5) c = float3(gmap.eval(float2(clamp(luma(c), 0.0, 1.0) * 255.0 + 0.5, 0.5)).rgb);
+    if (useCL > 0.5) c = lookup(c);
+    if (posterize >= 2.0) c = clamp(floor(clamp(c, 0.0, 1.0) * posterize) / (posterize - 1.0), 0.0, 1.0);
+    if (threshold >= 0.0) c = float3(lum3(c) >= threshold ? 1.0 : 0.0);
 
     float3 f = float3(dot(fr.rgb, c) + fr.a, dot(fg.rgb, c) + fg.a, dot(fb.rgb, c) + fb.a);
     if (duo > 0.5) {

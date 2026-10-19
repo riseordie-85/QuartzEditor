@@ -101,6 +101,108 @@ fun EditorViewModel.placeImage(uri: Uri) {
     }
 }
 
+// ===================================================================== replacing contents
+
+/**
+ * Smart layer [replaceContentsFor]'s contents become the file at [uri] (a picture, or a Photoshop
+ * or TIFF file with its layers), at the same scale and place, warp and smart filters kept. Linked
+ * copies change too, like Photoshop's Replace Contents.
+ */
+fun EditorViewModel.replaceSmartContents(uri: Uri?) {
+    val id = replaceContentsFor
+    replaceContentsFor = null
+    if (uri == null || id == null) return
+    replaceContentsOf(id, uri)
+}
+
+private fun EditorViewModel.replaceContentsOf(id: Long, uri: Uri) {
+    val d = doc ?: return
+    val l = d.layer(id)?.takeIf { it.isSmart } ?: return
+    if (pendingFirst { replaceContentsOf(id, uri) }) return
+    val old = l.props.smart ?: return
+    runBusy("Replacing contents…") {
+        val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }.substringBeforeLast('.').ifBlank { "Contents" }
+        val contents: Doc = withContext(Dispatchers.IO) {
+            val layered = runCatching { isPsd(uri) }.getOrDefault(false)
+            val fromPsd = if (layered) {
+                val tmp = java.io.File(ctx.cacheDir, "replace.psd")
+                try {
+                    ctx.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
+                        ?: throw IllegalArgumentException("Couldn't read that file.")
+                    try {
+                        com.tim.quartzeditor.engine.PsdImport.read(tmp, name).doc
+                    } catch (e: com.tim.quartzeditor.engine.TiffRawException) {
+                        null
+                    }
+                } finally {
+                    tmp.delete()
+                }
+            } else null
+            fromPsd ?: run {
+                val bmp = Media.decodeUpright(ctx, uri, Doc.MAX_SIDE)
+                Doc(bmp.width, bmp.height, name).also { c ->
+                    val inner = Layer(c.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false))
+                    bmp.recycle()
+                    c.layers.add(inner)
+                    c.activeId = inner.id
+                }
+            }
+        }
+        if (doc !== d || l.props.smart !== old) return@runBusy
+        // The new contents at the old one's scale, centered where it was
+        fun placed(sp: SmartSpec): SmartSpec {
+            val ow = sp.contents.width.toFloat()
+            val oh = sp.contents.height.toFloat()
+            val sx = (ow - contents.width) / 2f
+            val sy = (oh - contents.height) / 2f
+            val corners = floatArrayOf(sx, sy, sx + contents.width, sy, sx + contents.width, sy + contents.height, sx, sy + contents.height)
+            sp.matrix().mapPoints(corners)
+            return sp.withContents(contents, corners)
+        }
+        val targets = listOf(l) + linkedCopies(d, l)
+        val made = withContext(Dispatchers.Default) {
+            targets.map { t ->
+                val sp = placed(t.props.smart!!)
+                val clip = Transformer.limitFor(d.width, d.height).apply { offset(-t.x, -t.y) }
+                Triple(t, sp, SmartArt.rasterize(sp, clip))
+            }
+        }
+        stackEdit("Replace contents") {
+            for ((t, sp, grid) in made) {
+                t.props = t.props.copy(smart = sp)
+                t.tiles = grid
+            }
+        }
+        // A tab showing the old contents no longer belongs to anything
+        val here = currentTab
+        if (here != null) {
+            val gone = tabs.filter { it.doc === old.contents && it.parent === here }
+            if (gone.isNotEmpty()) {
+                tabs = tabs.filter { t -> gone.none { g -> t === g || isInside(t, g) } }
+                tabIndex = tabs.indexOf(here).coerceAtLeast(0)
+            }
+        }
+    }
+}
+
+/** Takes the warp off smart layer [layerId] (its contents placed flat again). */
+fun EditorViewModel.removeSmartWarp(layerId: Long) {
+    val d = doc ?: return
+    val l = d.layer(layerId) ?: return
+    val sp = l.props.smart?.takeIf { it.warp != null } ?: return
+    if (pendingFirst { removeSmartWarp(layerId) }) return
+    runBusy("Removing warp…") {
+        val spec = sp.withWarp(null)
+        val clip = Transformer.limitFor(d.width, d.height).apply { offset(-l.x, -l.y) }
+        val grid = withContext(Dispatchers.Default) { SmartArt.rasterize(spec, clip) }
+        if (doc !== d || l.props.smart !== sp) return@runBusy
+        stackEdit("Remove warp") {
+            l.props = l.props.copy(smart = spec)
+            l.tiles = grid
+        }
+    }
+}
+
 // ===================================================================== converting
 
 /**
@@ -146,7 +248,7 @@ fun EditorViewModel.convertToSmart() {
         val inner = java.util.IdentityHashMap<Doc, Doc>()
         for (l in block) {
             val parent = ids[l.props.parent] ?: 0L
-            val smart = l.props.smart?.let { sp -> SmartSpec(inner.getOrPut(sp.contents) { sp.contents.shallowCopy() }, sp.quad.copyOf()) }
+            val smart = l.props.smart?.let { sp -> sp.withContents(inner.getOrPut(sp.contents) { sp.contents.shallowCopy() }) }
             val copy = Layer(
                 ids.getValue(l.id), l.props.copy(parent = parent, locked = false, smart = smart),
                 TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }, l.x - box.left, l.y - box.top,
@@ -181,7 +283,7 @@ fun EditorViewModel.unlinkSmart(layerId: Long) {
         toast("This smart layer isn't linked to any others")
         return
     }
-    stackEdit("Unlink smart layer") { l.props = l.props.copy(smart = SmartSpec(sp.contents.shallowCopy(), sp.quad.copyOf())) }
+    stackEdit("Unlink smart layer") { l.props = l.props.copy(smart = sp.withContents(sp.contents.shallowCopy())) }
     toast("\"${l.props.name}\" has contents of its own now")
 }
 

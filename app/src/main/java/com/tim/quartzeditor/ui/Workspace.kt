@@ -95,6 +95,17 @@ fun Workspace(vm: EditorViewModel) {
     val saveProject = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(ProjectIO.MIME)) { uri: Uri? ->
         uri?.let { vm.saveProjectFile(it) }
     }
+    // Replace Contents: any picture, or a Photoshop or TIFF file
+    val replaceContents = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> vm.replaceSmartContents(uri) }
+    LaunchedEffect(vm.replaceContentsFor) {
+        if (vm.replaceContentsFor != null) {
+            try {
+                replaceContents.launch(arrayOf("image/*", "application/octet-stream", "application/x-photoshop", "image/vnd.adobe.photoshop"))
+            } catch (e: android.content.ActivityNotFoundException) {
+                vm.replaceContentsFor = null
+            }
+        }
+    }
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }

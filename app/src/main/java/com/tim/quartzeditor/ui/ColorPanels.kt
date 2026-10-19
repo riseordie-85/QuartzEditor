@@ -335,3 +335,172 @@ internal fun GradientMapPanel(vm: EditorViewModel) {
     }
     FxButtons(vm)
 }
+
+// ===================================================================== Channel Mixer
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ChannelMixerPanel(vm: EditorViewModel) {
+    Applies(vm)
+    val fx = vm.currentFx()
+    val cm = fx.channelMixer ?: com.tim.quartzeditor.engine.ChannelMixer()
+    fun edit(n: com.tim.quartzeditor.engine.ChannelMixer) = vm.editFx(fx.copy(channelMixer = n, kind = vm.kindOf(fx, FxKind.CHANNEL_MIXER)))
+    androidx.compose.runtime.LaunchedEffect(Unit) { if (fx.channelMixer == null) edit(cm) }
+    var out by remember { mutableStateOf(0) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.tim.quartzeditor.engine.ChannelMixer.PRESETS.forEach { (name, p) ->
+            SmallButton(name, primary = cm == p) {
+                edit(p)
+                vm.editFxDone()
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    ToggleRow("Monochrome", cm.mono) {
+        edit(cm.copy(mono = it))
+        vm.editFxDone()
+    }
+    val channel = if (cm.mono) 3 else out.coerceIn(0, 2)
+    if (!cm.mono) {
+        Text("Output channel", color = Q.textDim, fontSize = 13.sp)
+        Spacer(Modifier.height(4.dp))
+        ChipRow(com.tim.quartzeditor.engine.ChannelMixer.NAMES.take(3), channel) { out = it }
+        Spacer(Modifier.height(6.dp))
+    }
+    val row = cm[channel]
+    listOf("Red", "Green", "Blue", "Constant").forEachIndexed { i, label ->
+        PanelSlider(
+            label, row[i], -2f..2f, signed(row[i]) + "%",
+            onChange = { v -> edit(cm.with(channel, row.mapIndexed { k, x -> if (k == i) v else x })) },
+            onDone = { vm.editFxDone() },
+            fromTyped = { (it / 100f).coerceIn(-2f, 2f) },
+        )
+    }
+    val total = (row[0] + row[1] + row[2]) * 100f
+    Text(
+        "Total: ${total.roundToInt()}%" + if (kotlin.math.abs(total - 100f) > 0.5f) " (100% keeps the brightness)" else "",
+        color = if (kotlin.math.abs(total) > 200f) Color(0xFFE57373) else Q.textDim, fontSize = 12.sp,
+    )
+    FxButtons(vm)
+}
+
+// ===================================================================== Selective Color
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SelectiveColorPanel(vm: EditorViewModel) {
+    Applies(vm)
+    val fx = vm.currentFx()
+    val sc = fx.selectiveColor ?: com.tim.quartzeditor.engine.SelectiveColor()
+    fun edit(n: com.tim.quartzeditor.engine.SelectiveColor) = vm.editFx(fx.copy(selectiveColor = n, kind = vm.kindOf(fx, FxKind.SELECTIVE_COLOR)))
+    androidx.compose.runtime.LaunchedEffect(Unit) { if (fx.selectiveColor == null) edit(sc) }
+    var range by remember { mutableStateOf(com.tim.quartzeditor.engine.SelectiveRange.REDS) }
+    Text("Colors", color = Q.textDim, fontSize = 13.sp)
+    Spacer(Modifier.height(4.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.tim.quartzeditor.engine.SelectiveRange.entries.forEach { r ->
+            val sel = r == range
+            val changed = sc[r].any { it != 0f }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (sel) Q.accent else Q.field)
+                    .clickable { range = r }
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+            ) {
+                Box(Modifier.size(12.dp).clip(CircleShape).background(Color(r.color)).border(1.dp, Q.text.copy(alpha = 0.3f), CircleShape))
+                Spacer(Modifier.width(5.dp))
+                Text(r.label + if (changed) " •" else "", color = if (sel) Color.White else Q.text, fontSize = 12.sp)
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    val v = sc[range]
+    com.tim.quartzeditor.engine.SelectiveColor.INKS.forEachIndexed { i, ink ->
+        PanelSlider(
+            ink, v[i], -1f..1f, signed(v[i]) + "%",
+            onChange = { nv -> edit(sc.with(range, v.mapIndexed { k, x -> if (k == i) nv else x })) },
+            onDone = { vm.editFxDone() },
+            fromTyped = { (it / 100f).coerceIn(-1f, 1f) },
+        )
+    }
+    Spacer(Modifier.height(4.dp))
+    ChipRow(listOf("Relative", "Absolute"), if (sc.relative) 0 else 1) {
+        edit(sc.copy(relative = it == 0))
+        vm.editFxDone()
+    }
+    Text(
+        if (sc.relative) "Relative: changes the ink by a share of what's there (none stays none)." else "Absolute: adds or takes away that much ink.",
+        color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
+    )
+    FxButtons(vm)
+}
+
+// ===================================================================== Color Lookup
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ColorLookupPanel(vm: EditorViewModel) {
+    Applies(vm)
+    val fx = vm.currentFx()
+    val cl = fx.colorLookup
+    fun edit(n: com.tim.quartzeditor.engine.ColorLookup) = vm.editFx(fx.copy(colorLookup = n, kind = vm.kindOf(fx, FxKind.COLOR_LOOKUP)))
+    val presets = com.tim.quartzeditor.engine.ColorLookup.PRESETS
+    androidx.compose.runtime.LaunchedEffect(Unit) { if (fx.colorLookup == null) edit(presets.first()) }
+    val load = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { u -> vm.loadColorLookup(u) { edit(it); vm.editFxDone() } }
+    }
+    Text("Looks", color = Q.textDim, fontSize = 13.sp)
+    Spacer(Modifier.height(4.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        presets.forEach { p ->
+            SmallButton(p.name, primary = cl == p) {
+                edit(p)
+                vm.editFxDone()
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    if (cl != null && cl.preset == null) {
+        Text("Using \"${cl.name}\" (${cl.size}×${cl.size}×${cl.size})", color = Q.text, fontSize = 13.sp)
+        Spacer(Modifier.height(4.dp))
+    }
+    SmallButton("Load a .cube or .3dl file…") { load.launch(arrayOf("*/*")) }
+    Text("Lookup tables (LUTs) from Photoshop, Lightroom, Resolve and film-look packs.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+    FxButtons(vm)
+}
+
+// ===================================================================== Posterize, Threshold
+
+@Composable
+internal fun PosterizePanel(vm: EditorViewModel) {
+    Applies(vm)
+    val fx = vm.currentFx()
+    fun edit(n: Int) = vm.editFx(fx.copy(posterize = n, kind = vm.kindOf(fx, FxKind.POSTERIZE)))
+    androidx.compose.runtime.LaunchedEffect(Unit) { if (fx.posterize < 2) edit(4) }
+    val levels = fx.posterize.coerceIn(2, 255)
+    PanelSlider(
+        "Levels", levels.toFloat(), 2f..64f, "$levels",
+        onChange = { edit(it.roundToInt()) }, onDone = { vm.editFxDone() },
+        fromTyped = { it.coerceIn(2f, 255f) },
+    )
+    Text("How many steps each color keeps: fewer for a flat, poster look.", color = Q.textDim, fontSize = 12.sp)
+    FxButtons(vm)
+}
+
+@Composable
+internal fun ThresholdPanel(vm: EditorViewModel) {
+    Applies(vm)
+    val fx = vm.currentFx()
+    fun edit(t: Float) = vm.editFx(fx.copy(threshold = t, kind = vm.kindOf(fx, FxKind.THRESHOLD)))
+    androidx.compose.runtime.LaunchedEffect(Unit) { if (fx.threshold == null) edit(128f / 255f) }
+    val t = fx.threshold ?: (128f / 255f)
+    PanelSlider(
+        "Threshold level", t * 255f, 1f..255f, "${(t * 255f).roundToInt()}",
+        onChange = { edit(it.roundToInt() / 255f) }, onDone = { vm.editFxDone() },
+        fromTyped = { it.coerceIn(1f, 255f) },
+    )
+    Text("Brighter than this turns white, the rest black.", color = Q.textDim, fontSize = 12.sp)
+    FxButtons(vm)
+}

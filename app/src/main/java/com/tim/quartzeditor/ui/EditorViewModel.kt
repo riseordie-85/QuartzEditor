@@ -46,7 +46,8 @@ enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Propert
 enum class PopupKind(val title: String) {
     STYLE("Layer Style"), ADJUSTMENTS("Adjustments"), LEVELS("Levels"), CURVES("Curves"), BLUR("Gaussian Blur"), FILTERS("Filters"),
     HUE_SAT("Hue/Saturation"), COLOR_BALANCE("Color Balance"), BLACK_WHITE("Black & White"), PHOTO_FILTER("Photo Filter"),
-    GRADIENT_MAP("Gradient Map"), VIBRANCE("Vibrance"), ENHANCE("Enhance");
+    GRADIENT_MAP("Gradient Map"), VIBRANCE("Vibrance"), CHANNEL_MIXER("Channel Mixer"), SELECTIVE_COLOR("Selective Color"),
+    COLOR_LOOKUP("Color Lookup"), POSTERIZE("Posterize"), THRESHOLD("Threshold"), ENHANCE("Enhance");
 
     /** Changes pixels (or an adjustment layer), as opposed to Layer Style and Enhance. */
     val isFx: Boolean get() = this != STYLE && this != ENHANCE
@@ -64,6 +65,11 @@ enum class PopupKind(val title: String) {
             com.tim.quartzeditor.engine.FxKind.PHOTO_FILTER -> PHOTO_FILTER
             com.tim.quartzeditor.engine.FxKind.GRADIENT_MAP -> GRADIENT_MAP
             com.tim.quartzeditor.engine.FxKind.VIBRANCE -> VIBRANCE
+            com.tim.quartzeditor.engine.FxKind.CHANNEL_MIXER -> CHANNEL_MIXER
+            com.tim.quartzeditor.engine.FxKind.SELECTIVE_COLOR -> SELECTIVE_COLOR
+            com.tim.quartzeditor.engine.FxKind.COLOR_LOOKUP -> COLOR_LOOKUP
+            com.tim.quartzeditor.engine.FxKind.POSTERIZE -> POSTERIZE
+            com.tim.quartzeditor.engine.FxKind.THRESHOLD -> THRESHOLD
         }
     }
 }
@@ -400,6 +406,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Adjustments/filter being tried on the active layer (null = none). */
     var pendingFx by mutableStateOf<FxParams?>(null)
+
+    /** The smart filter the panels are trying on smart layer [smartFilterLayer]: its place in the list (its size: a new one), or −1. */
+    internal var smartFilterIndex = -1
+    internal var smartFilterLayer = 0L
+
+    /** The smart layer whose contents a file being picked will replace. */
+    var replaceContentsFor by mutableStateOf<Long?>(null)
         internal set
 
     /** A small copy of the active layer for filter previews. */
@@ -414,6 +427,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var message by mutableStateOf<String?>(null)
     /** After opening a Photoshop file: its name and what didn't come across exactly (shown once). */
     var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
+    /** Your swatches and the ones you imported (SwatchPanel.kt); null until first needed. */
+    var swatchGroups by mutableStateOf<List<com.tim.quartzeditor.engine.SwatchGroup>?>(null)
+    /** Color pickers' tab: 0 the picker, 1 swatches (the same in every picker). */
+    var colorTab by mutableIntStateOf(prefs.getInt("colorTab", 0))
     /** What Copy or Cut last took (ClipboardActions.kt). */
     var clip by mutableStateOf<ClipItem?>(null)
     /** A very big Photoshop file waiting for "Open anyway" (its address and size in bytes). */
@@ -789,7 +806,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val a = doc?.active
-        if (k.isFx && a != null && a.needsRaster) {
+        // (a smart layer keeps them as smart filters)
+        if (k.isFx && a != null && a.needsRaster && !a.isSmart) {
             askRasterize(a) { openPopup(k) }
             return
         }

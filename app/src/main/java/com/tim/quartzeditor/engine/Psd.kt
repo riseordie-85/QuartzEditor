@@ -41,7 +41,15 @@ class PsdSubpath(val knots: List<PsdKnot>, val closed: Boolean, val op: Int = -1
 class PsdPattern(val id: String, val name: String, val mode: Int, val offset: Long, val end: Long)
 
 /** A smart object's embedded file: where its bytes are in the .psd. */
-class PsdLinked(val id: String, val name: String, val type: String, val offset: Long, val length: Long)
+class PsdLinked(
+    val id: String,
+    val name: String,
+    val type: String,
+    val offset: Long,
+    val length: Long,
+    /** A file kept outside the .psd (only its name is here). */
+    val external: Boolean = false,
+)
 
 class PsdVectorMask(val paths: List<PsdSubpath>, val invert: Boolean, val disabled: Boolean)
 
@@ -127,7 +135,7 @@ class PsdFile(
     val width: Int,
     val height: Int,
     val depth: Int,
-    /** 1 grayscale, 3 RGB, 4 CMYK. */
+    /** 0 bitmap (black and white), 1 grayscale, 2 indexed, 3 RGB, 4 CMYK, 8 duotone, 9 Lab. */
     val mode: Int,
     val channelCount: Int,
     val layers: List<PsdLayer>,
@@ -142,6 +150,10 @@ class PsdFile(
     val linked: Map<String, PsdLinked> = emptyMap(),
     /** Patterns, by id. */
     val patterns: Map<String, PsdPattern> = emptyMap(),
+    /** Indexed files: the 256 colors (ARGB). */
+    val palette: IntArray? = null,
+    /** Indexed files: the palette entry that's see-through (−1 = none). */
+    val transparentIndex: Int = -1,
 ) {
     val psb: Boolean get() = version == 2
     /** Big-endian, as in .psd files, except in layered TIFFs saved in PC byte order. */
@@ -165,15 +177,25 @@ object PsdReader {
         val width = r.i32()
         val depth = r.u16()
         val mode = r.u16()
-        if (depth != 8 && depth != 16) throw PsdException("This file is ${depth}-bit. Save it as 8 or 16 bits per channel in Photoshop (Image › Mode) and try again.")
-        if (mode != 1 && mode != 3 && mode != 4) throw PsdException("This file's color mode isn't supported. Save it as RGB in Photoshop (Image › Mode › RGB Color) and try again.")
+        // 1-bit is only for Bitmap mode (black and white)
+        if (!(depth == 8 || depth == 16 || (depth == 1 && mode == 0))) throw PsdException("This file is ${depth}-bit. Save it as 8 or 16 bits per channel in Photoshop (Image › Mode) and try again.")
+        // Bitmap, Grayscale, Indexed, RGB, CMYK, Duotone and Lab
+        if (mode !in intArrayOf(0, 1, 2, 3, 4, 8, 9)) throw PsdException("This file's color mode (Multichannel) isn't supported. Save it as RGB in Photoshop (Image › Mode › RGB Color) and try again.")
         if (width <= 0 || height <= 0) throw PsdException("This Photoshop file has no picture.")
 
-        // Color mode data (palettes): not needed
-        r.skip(r.u32())
+        // Color mode data: an Indexed file's palette (256 reds, then greens, then blues)
+        val cmLen = r.u32()
+        val cmAt = r.pos
+        var palette: IntArray? = null
+        if (mode == 2 && cmLen >= 768) {
+            val bytes = IntArray(768) { r.u8() }
+            palette = IntArray(256) { i -> (0xFF shl 24) or (bytes[i] shl 16) or (bytes[256 + i] shl 8) or bytes[512 + i] }
+        }
+        r.pos = cmAt + cmLen
         // Image resources: the global light angle and altitude for layer styles
         val resLen = r.u32()
         val (angle, altitude) = lightAngles(r, r.pos + resLen)
+        val clear = transparentIndex(r, r.pos + resLen)
         r.pos += resLen
 
         // Layer and mask information
@@ -194,7 +216,28 @@ object PsdReader {
             readBlocks(r, lmEnd, psb, depth, blocks)
         }
         r.pos = lmEnd
-        return PsdFile(buf, version, width, height, depth, mode, channels, blocks.layers, r.pos, angle, altitude, blocks.mergedAlpha, blocks.linked, blocks.patterns)
+        return PsdFile(buf, version, width, height, depth, mode, channels, blocks.layers, r.pos, angle, altitude, blocks.mergedAlpha, blocks.linked, blocks.patterns, palette, clear)
+    }
+
+    /** An Indexed file's see-through palette entry (image resource 1047), or −1. */
+    private fun transparentIndex(r: Reader, end: Long): Int {
+        val start = r.pos
+        var out = -1
+        try {
+            while (r.pos + 12 <= end) {
+                if (r.ascii(4) != "8BIM") break
+                val id = r.u16()
+                val nameLen = r.u8()
+                r.skip(nameLen + if ((nameLen + 1) % 2 != 0) 1 else 0)
+                val size = r.u32()
+                val dataAt = r.pos
+                if (id == 1047 && size >= 2) out = r.u16()
+                r.pos = dataAt + size + (size and 1)
+            }
+        } catch (e: PsdException) {
+        }
+        r.pos = start
+        return out
     }
 
     /** What the extra blocks after the layer records hold. */
@@ -399,7 +442,10 @@ object PsdReader {
         null
     }
 
-    /** Smart objects' files: embedded ones ("liFD") keep their bytes here, found by the smart object's id. */
+    /**
+     * Smart objects' files, found by the smart object's id: embedded ones ("liFD") keep their bytes
+     * here; linked ones kept outside the .psd ("liFE", "liFA") only their names.
+     */
     private fun readLinked(r: Reader, end: Long, out: MutableMap<String, PsdLinked>) {
         while (r.pos + 8 < end) {
             val len = r.u64()
@@ -416,6 +462,7 @@ object PsdReader {
                 Descriptors.read(r)
             }
             if (kind == "liFD" && dataLen > 0 && r.pos + dataLen <= end) out[id] = PsdLinked(id, name, type, r.pos, dataLen)
+            else if (kind == "liFE" || kind == "liFA") out.putIfAbsent(id, PsdLinked(id, name, type, 0L, 0L, external = true))
             r.pos = start + len
             while ((r.pos - start) % 4 != 0L) r.pos++
             if (version < 0) break
@@ -589,15 +636,19 @@ object PsdReader {
                 var warpStyle: String? = null
                 var warpValue = 0.0
                 var warpHorizontal = true
+                var warpH = 0.0
+                var warpV = 0.0
                 try {
                     r.skip(6)
                     val warp = Descriptors.read(r)
                     warpStyle = (warp["warpStyle"] as? PsdEnum)?.value
                     warpValue = (warp["warpValue"] as? Number)?.toDouble() ?: 0.0
                     warpHorizontal = (warp["warpRotate"] as? PsdEnum)?.value != "Vrtc"
+                    warpH = (warp["warpPerspective"] as? Number)?.toDouble() ?: 0.0
+                    warpV = (warp["warpPerspectiveOther"] as? Number)?.toDouble() ?: 0.0
                 } catch (e: Exception) {
                 }
-                l.text = PsdText.from(tf, desc, warpStyle, warpValue, warpHorizontal)
+                l.text = PsdText.from(tf, desc, warpStyle, warpValue, warpHorizontal, warpH, warpV)
             }
             "PlLd" -> {
                 r.skip(8) // "plcL", version
@@ -657,7 +708,7 @@ object PsdReader {
         private val rowCounts: IntArray?,
         private val inflater: Inflater?,
     ) {
-        private val rowBytes = width * (depth / 8)
+        private val rowBytes = rowBytesFor(width, depth)
         private val raw = ByteArray(rowBytes)
         /** 16-bit values stored low byte first (a layered TIFF in PC byte order). */
         private val le = buf.order() == ByteOrder.LITTLE_ENDIAN
@@ -700,6 +751,9 @@ object PsdReader {
             row++
             if (depth == 8) {
                 System.arraycopy(raw, 0, out, 0, width)
+            } else if (depth == 1) {
+                // Bitmap mode: a set bit is black
+                for (x in 0 until width) out[x] = if ((raw[x shr 3].toInt() shr (7 - (x and 7))) and 1 == 1) 0 else -1
             } else {
                 // 16-bit: the high byte, rounded
                 for (x in 0 until width) {
@@ -766,6 +820,9 @@ object PsdReader {
         }
 
         companion object {
+            /** How many bytes a row of [width] values of [depth] bits takes. */
+            fun rowBytesFor(width: Int, depth: Int): Int = if (depth == 1) (width + 7) / 8 else width * (depth / 8)
+
             /** A layer channel ([c]) covering [width]×[height]. */
             fun layer(file: PsdFile, c: PsdChannel, width: Int, height: Int): ChannelRows? {
                 if (width <= 0 || height <= 0 || c.length < 2) return null
@@ -804,7 +861,7 @@ object PsdReader {
                 val w = file.width
                 val h = file.height
                 val n = file.channelCount
-                val rowBytes = w * (file.depth / 8)
+                val rowBytes = rowBytesFor(w, file.depth)
                 return when (compression) {
                     0 -> List(n) { c -> ChannelRows(buf, w, h, file.depth, 0, pos + c.toLong() * h * rowBytes, null, null) }
                     1 -> {
@@ -1044,15 +1101,21 @@ class PsdText(
     val allCaps: Boolean,
     val box: DoubleArray?,
     val mixed: Boolean,
-    /** A warp we can't do (Arc is turned into our curve). */
+    /** A warp we can't do. */
     val warped: Boolean,
-    /** Arc warp: −1 … 1 like our curve. */
+    /** Arc warp: −1 … 1 like our curve (no longer used: every warp style is read as [warpStyle]). */
     val arc: Double,
     /** Each style run (how many characters, and how they look), in order. */
     val runs: List<PsdTextRun> = emptyList(),
+    /** Warp Text: Photoshop's style ("warpArc", "warpFlag"…), bend and distortion (percent), and direction. */
+    val warpStyle: String? = null,
+    val warpBend: Double = 0.0,
+    val warpHorizontal: Double = 0.0,
+    val warpVertical: Double = 0.0,
+    val warpVerticalOrientation: Boolean = false,
 ) {
     companion object {
-        fun from(tf: DoubleArray, desc: Map<String, Any?>, warpStyle: String?, warpValue: Double, warpHorizontal: Boolean): PsdText {
+        fun from(tf: DoubleArray, desc: Map<String, Any?>, warpStyle: String?, warpValue: Double, warpHorizontal: Boolean, warpH: Double = 0.0, warpV: Double = 0.0): PsdText {
             val txt = ((desc["Txt "] as? String) ?: "").trimEnd('\u0000').replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
             val engine = (desc["EngineData"] as? ByteArray)?.let { runCatching { EngineData.parse(it) }.getOrNull() } as? Map<*, *>
             fun Any?.m(key: String): Any? = (this as? Map<*, *>)?.get(key)
@@ -1128,9 +1191,14 @@ class PsdText(
                 allCaps = (v("FontCaps") as? Number)?.toInt() == 2,
                 box = box,
                 mixed = mixed,
-                warped = warpStyle != null && warpStyle != "warpNone" && !(arc && box == null),
-                arc = if (arc) (warpValue / 100.0).coerceIn(-1.0, 1.0) else 0.0,
+                warped = false,
+                arc = 0.0,
                 runs = styleRuns,
+                warpStyle = warpStyle?.takeIf { it != "warpNone" },
+                warpBend = warpValue,
+                warpHorizontal = warpH,
+                warpVertical = warpV,
+                warpVerticalOrientation = !warpHorizontal,
             )
         }
     }
@@ -1308,6 +1376,12 @@ sealed class PsdAdjust {
     object Invert : PsdAdjust()
     class Posterize(val levels: Int) : PsdAdjust()
     class Threshold(val level: Int) : PsdAdjust()
+    /** Per output channel: amounts of each input channel (percent) and a constant (percent). */
+    class ChannelMixer(val monochrome: Boolean, val channels: List<IntArray>) : PsdAdjust()
+    /** [absolute] or relative; nine ranges (Reds … Blacks) of cyan, magenta, yellow, black (percent). */
+    class SelectiveColor(val absolute: Boolean, val ranges: List<IntArray>) : PsdAdjust()
+    /** A lookup table file's bytes and its format (CUBE, 3DL, LOOK…), or none when it's a profile. */
+    class ColorLookup(val name: String, val format: String?, val data: ByteArray?) : PsdAdjust()
 
     companion object {
         /** The settings of [l], or null when they can't be read (or aren't a kind we turn into ours). */
@@ -1369,6 +1443,30 @@ sealed class PsdAdjust {
                     "nvrt" -> Invert
                     "post" -> Posterize(b.short.toInt())
                     "thrs" -> Threshold(b.short.toInt())
+                    "mixr" -> {
+                        b.short // version
+                        val mono = b.short.toInt() != 0
+                        // Records of five: the four channels in and a constant
+                        val recs = ArrayList<IntArray>()
+                        while (b.remaining() >= 10) recs.add(IntArray(5) { b.short.toInt() })
+                        ChannelMixer(mono, recs)
+                    }
+                    "selc" -> {
+                        b.short // version
+                        val absolute = b.short.toInt() == 1
+                        // Ten records of four; the first is unused
+                        val recs = List(10) { IntArray(4) { if (b.remaining() >= 2) b.short.toInt() else 0 } }
+                        SelectiveColor(absolute, recs.drop(1))
+                    }
+                    "clrL" -> {
+                        val r = PsdReader.Reader(b)
+                        r.skip(6) // version, descriptor version
+                        val d = Descriptors.read(r)
+                        val fmt = (d["LUTFormat"] as? PsdEnum)?.value
+                        val bytes = d["LUT3DFileData"] as? ByteArray
+                        val name = (d["LUT3DFileName"] as? String) ?: (d["Nm  "] as? String) ?: "Look"
+                        ColorLookup(name.substringBeforeLast('.').ifBlank { "Look" }, fmt, bytes)
+                    }
                     else -> null
                 }
             } catch (e: Exception) {

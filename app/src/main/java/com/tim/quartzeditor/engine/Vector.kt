@@ -156,6 +156,12 @@ data class ShapeSpec(
     val strokeWidth: Float = 6f,
     val strokeAlign: StrokeAlign = StrokeAlign.CENTER,
     val matrix: Affine = AFFINE_IDENTITY,
+    /** Filled with a gradient instead of [fill]'s color (across the shape's box; [fill] still says it's filled). */
+    val fillGradient: GradientFx? = null,
+    /** Filled with a pattern instead (it stays put on the picture as the shape moves). */
+    val fillPattern: PatternFx? = null,
+    /** Dashed outline: dash and gap lengths, in outline widths (null = solid). */
+    val dash: List<Float>? = null,
 ) {
     val hasFill: Boolean get() = fill != null && closed
     val hasStroke: Boolean get() = stroke != null && strokeWidth > 0f
@@ -195,6 +201,13 @@ data class ShapeSpec(
         .put("strokeWidth", strokeWidth.toDouble())
         .put("strokeAlign", strokeAlign.name)
         .put("matrix", matrix.toJson())
+        .also { o -> fillGradient?.let { o.put("fillGradient", LayerStyle.gradientJson(it)) } }
+        .also { o ->
+            fillPattern?.let { p ->
+                o.put("fillPattern", JSONObject().put("key", p.key).put("a", p.colorA.toLong() and 0xFFFFFFFFL).put("b", p.colorB.toLong() and 0xFFFFFFFFL).put("scale", p.scale.toDouble()))
+            }
+        }
+        .also { o -> dash?.let { d -> o.put("dash", JSONArray().also { a -> d.forEach { a.put(it.toDouble()) } }) } }
 
     companion object {
         fun fromJson(o: JSONObject): ShapeSpec {
@@ -242,6 +255,11 @@ data class ShapeSpec(
                 strokeWidth = o.optDouble("strokeWidth", 6.0).toFloat(),
                 strokeAlign = StrokeAlign.entries.firstOrNull { it.name == o.optString("strokeAlign") } ?: StrokeAlign.CENTER,
                 matrix = affineFrom(o.optJSONArray("matrix")),
+                fillGradient = o.optJSONObject("fillGradient")?.let { LayerStyle.gradientFrom(it, GradientFx(on = true)) },
+                fillPattern = o.optJSONObject("fillPattern")?.let { p ->
+                    PatternFx(true, p.optString("key", "b:checker"), p.optLong("a", 0xFF000000L).toInt(), p.optLong("b", 0xFFFFFFFFL).toInt(), p.optDouble("scale", 1.0).toFloat())
+                },
+                dash = o.optJSONArray("dash")?.let { a -> List(a.length()) { a.optDouble(it).toFloat() } }?.takeIf { it.isNotEmpty() },
             )
         }
 
@@ -500,6 +518,8 @@ data class TextSpec(
     val psdFont: String? = null,
     /** Parts styled differently (several fonts, sizes or colors in one layer, from Photoshop). */
     val runs: List<TextRun> = emptyList(),
+    /** Warp Text: bent into a shape (null = straight; takes the place of [curve]). */
+    val warp: TextWarp? = null,
 ) {
     /** Every font it uses. */
     val fonts: Set<String> get() = if (runs.isEmpty()) setOf(fontKey) else setOf(fontKey) + runs.mapNotNull { it.fontKey }
@@ -542,6 +562,7 @@ data class TextSpec(
         .put("box", boxWidth.toDouble())
         .also { o -> psdFont?.let { o.put("psdFont", it) } }
         .also { o -> if (runs.isNotEmpty()) o.put("runs", JSONArray().also { a -> runs.forEach { a.put(it.toJson()) } }) }
+        .also { o -> warp?.let { o.put("warp", it.toJson()) } }
 
     /** Shown in the Layers panel. */
     val title: String get() = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40) ?: "Text"
@@ -564,6 +585,7 @@ data class TextSpec(
             boxWidth = o.optDouble("box", 0.0).toFloat(),
             psdFont = if (o.has("psdFont")) o.optString("psdFont") else null,
             runs = o.optJSONArray("runs")?.let { a -> List(a.length()) { TextRun.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
+            warp = runCatching { TextWarp.fromJson(o.optJSONObject("warp")) }.getOrNull(),
         )
     }
 }
@@ -580,7 +602,13 @@ class TextBuilt(
     val top: Float,
     /** Generous bounds of the glyphs. */
     val bounds: RectF,
-)
+    /** Warped text: the warp, and the straight text's box it bends. */
+    val warp: TextWarp? = null,
+    val box: RectF? = null,
+) {
+    /** Warped text drawn straight (for bending), at [scale]; made once per scale. */
+    internal var straight: Pair<Float, Bitmap>? = null
+}
 
 // ===================================================================== drawing
 
@@ -603,7 +631,8 @@ object VectorArt {
         val fm = paint.fontMetrics
         val slack = size * 0.35f
         val curve = t.curve.coerceIn(-1f, 1f)
-        if (abs(curve) >= 0.02f && !text.contains('\n')) {
+        val warp = t.warp?.takeIf { it.active }
+        if (warp == null && abs(curve) >= 0.02f && !text.contains('\n')) {
             val tw = max(1f, paint.measureText(text))
             val theta = abs(curve) * Math.PI.toFloat()
             val r = tw / theta
@@ -672,6 +701,13 @@ object VectorArt {
         val left = if (box) 0f else -width * t.align.anchor
         val top = if (box) 0f else -layout.getLineBaseline(0).toFloat()
         val b = RectF(left, top, left + width, top + layout.height)
+        if (warp != null) {
+            // Bent: the box of the glyphs (ink and all) is what bends
+            val box = RectF(left, top + fm.ascent - fm.top, left + width, top + layout.height + (fm.bottom - fm.descent))
+            val wb = warp.bounds(box)
+            wb.inset(-slack, -slack)
+            return TextBuilt(paint, layout, null, text, left, top, wb, warp, box)
+        }
         b.inset(-slack, -slack)
         return TextBuilt(paint, layout, null, text, left, top, b)
     }
@@ -686,7 +722,32 @@ object VectorArt {
         val b = built ?: buildText(t)
         c.save()
         c.concat(t.matrix.toMatrix())
-        if (b.arc != null) {
+        val warp = b.warp
+        val box = b.box
+        if (warp != null && box != null) {
+            // Drawn straight at about the size it shows, then bent
+            @Suppress("DEPRECATION") val m = Matrix(c.matrix).apply { preConcat(t.matrix.toMatrix()) }
+            val v = floatArrayOf(1f, 0f, 0f, 1f)
+            m.mapVectors(v)
+            var scale = max(kotlin.math.hypot(v[0], v[1]), kotlin.math.hypot(v[2], v[3])).coerceIn(0.05f, 8f)
+            // No bigger than about 4096 × 4096
+            val most = 4096f / max(box.width(), box.height())
+            if (scale > most) scale = most
+            val cached = b.straight
+            val bmp = if (cached != null && abs(cached.first - scale) / scale < 0.05f) cached.second else {
+                val bw = (box.width() * scale).toInt().coerceIn(1, 8192)
+                val bh = (box.height() * scale).toInt().coerceIn(1, 8192)
+                val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+                val oc = Canvas(out)
+                oc.scale(bw / box.width(), bh / box.height())
+                oc.translate(-box.left, -box.top)
+                oc.translate(b.left, b.top)
+                b.layout?.draw(oc)
+                b.straight = scale to out
+                out
+            }
+            warp.draw(c, bmp, box)
+        } else if (b.arc != null) {
             b.paint.textAlign = Paint.Align.LEFT
             c.drawTextOnPath(b.text, b.arc, 0f, 0f, b.paint)
         } else {
@@ -702,7 +763,7 @@ object VectorArt {
     fun drawShape(c: Canvas, s: ShapeSpec) {
         val path = shapeOutline(s)
         if (s.hasFill) {
-            c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = s.fill!! })
+            c.drawPath(path, fillPaint(s, path))
         }
         if (s.hasStroke) {
             // Open lines (a pen line, or the lines of a custom shape) have no inside: outlined down the middle
@@ -715,6 +776,14 @@ object VectorArt {
                 strokeJoin = if ((s.kind == ShapeKind.RECT && s.radius <= 0f) || s.kind == ShapeKind.ARROW) Paint.Join.MITER else Paint.Join.ROUND
                 strokeMiter = 10f
                 strokeCap = Paint.Cap.ROUND
+                s.dash?.let { d ->
+                    // Lengths are in outline widths (the shown width, even when drawn double for inside/outside)
+                    val unit = s.strokeWidth.coerceAtLeast(0.5f)
+                    val arr = (if (d.size % 2 == 1) d + d else d).map { (it * unit).coerceAtLeast(0.01f) }.toFloatArray()
+                    // A zero-length dash with round ends is a dot
+                    pathEffect = android.graphics.DashPathEffect(arr, 0f)
+                    strokeCap = if (d.firstOrNull() == 0f) Paint.Cap.ROUND else Paint.Cap.BUTT
+                }
             }
             if (align == StrokeAlign.CENTER) {
                 c.drawPath(path, stroke)
@@ -726,6 +795,28 @@ object VectorArt {
                     xfermode = PorterDuffXfermode(if (align == StrokeAlign.INSIDE) PorterDuff.Mode.DST_IN else PorterDuff.Mode.DST_OUT)
                 })
                 c.restore()
+            }
+        }
+    }
+
+    /** How a shape is filled: its color, or its gradient or pattern. */
+    private fun fillPaint(s: ShapeSpec, path: Path): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = s.fill ?: Color.BLACK
+        val g = s.fillGradient
+        val p = s.fillPattern
+        if (g != null) {
+            val r = RectF()
+            path.computeBounds(r, true)
+            if (r.width() < 1f) r.right = r.left + 1f
+            if (r.height() < 1f) r.bottom = r.top + 1f
+            color = Color.BLACK
+            alpha = (g.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+            shader = Effects.gradientShader(g, r)
+        } else if (p != null) {
+            val bmp = Patterns.bitmapFor(p.key, p.colorA, p.colorB)
+            if (bmp != null) {
+                color = Color.BLACK
+                shader = Patterns.paint(bmp, p.scale, 0f, 0f).shader
             }
         }
     }

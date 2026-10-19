@@ -226,3 +226,280 @@ data class GradientMap(
         }
     }
 }
+
+/**
+ * Channel Mixer: each color going out as amounts of the red, green and blue coming in (1 = 100%,
+ * −2 … 2 like Photoshop) plus a constant (−1 … 1). [mono] makes one gray, from [gray].
+ */
+data class ChannelMixer(
+    val red: List<Float> = listOf(1f, 0f, 0f, 0f),
+    val green: List<Float> = listOf(0f, 1f, 0f, 0f),
+    val blue: List<Float> = listOf(0f, 0f, 1f, 0f),
+    val gray: List<Float> = listOf(0.4f, 0.4f, 0.2f, 0f),
+    val mono: Boolean = false,
+) {
+    val isIdentity: Boolean get() = !mono && red == IDENTITY[0] && green == IDENTITY[1] && blue == IDENTITY[2]
+
+    /** Output channel [i]: 0 red, 1 green, 2 blue, 3 gray (Monochrome). */
+    operator fun get(i: Int): List<Float> = when (i) {
+        0 -> red
+        1 -> green
+        2 -> blue
+        else -> gray
+    }
+
+    fun with(i: Int, v: List<Float>): ChannelMixer = when (i) {
+        0 -> copy(red = v)
+        1 -> copy(green = v)
+        2 -> copy(blue = v)
+        else -> copy(gray = v)
+    }
+
+    fun toJson(): JSONObject = JSONObject().put("mono", mono).also { o ->
+        listOf("red" to red, "green" to green, "blue" to blue, "gray" to gray).forEach { (k, v) ->
+            o.put(k, JSONArray().also { a -> v.forEach { a.put(it.toDouble()) } })
+        }
+    }
+
+    companion object {
+        val IDENTITY = listOf(listOf(1f, 0f, 0f, 0f), listOf(0f, 1f, 0f, 0f), listOf(0f, 0f, 1f, 0f))
+        val NAMES = listOf("Red", "Green", "Blue", "Gray")
+
+        /** Photoshop's ready-made mixes (monochrome ones make the gray). */
+        val PRESETS: List<Pair<String, ChannelMixer>> = listOf(
+            "Default" to ChannelMixer(),
+            "Black & white infrared (RGB)" to ChannelMixer(mono = true, gray = listOf(-0.7f, 2f, -0.3f, 0f)),
+            "Black & white with blue filter" to ChannelMixer(mono = true, gray = listOf(0f, 0f, 1f, 0f)),
+            "Black & white with green filter" to ChannelMixer(mono = true, gray = listOf(0f, 1f, 0f, 0f)),
+            "Black & white with orange filter" to ChannelMixer(mono = true, gray = listOf(0.5f, 0.5f, 0f, 0f)),
+            "Black & white with red filter" to ChannelMixer(mono = true, gray = listOf(1f, 0f, 0f, 0f)),
+            "Black & white with yellow filter" to ChannelMixer(mono = true, gray = listOf(0.34f, 0.66f, 0f, 0f)),
+            "Swap red and blue" to ChannelMixer(red = listOf(0f, 0f, 1f, 0f), blue = listOf(1f, 0f, 0f, 0f)),
+        )
+
+        fun fromJson(o: JSONObject?): ChannelMixer? = o?.let {
+            fun row(k: String, d: List<Float>) = it.optJSONArray(k)?.let { a -> List(4) { i -> a.optDouble(i, d[i].toDouble()).toFloat() } } ?: d
+            val def = ChannelMixer()
+            ChannelMixer(row("red", def.red), row("green", def.green), row("blue", def.blue), row("gray", def.gray), it.optBoolean("mono"))
+        }
+    }
+}
+
+/** The colors Selective Color can change. */
+enum class SelectiveRange(val label: String, val color: Int) {
+    REDS("Reds", 0xFFE53935.toInt()),
+    YELLOWS("Yellows", 0xFFFDD835.toInt()),
+    GREENS("Greens", 0xFF43A047.toInt()),
+    CYANS("Cyans", 0xFF00ACC1.toInt()),
+    BLUES("Blues", 0xFF1E88E5.toInt()),
+    MAGENTAS("Magentas", 0xFFD81B60.toInt()),
+    WHITES("Whites", 0xFFFFFFFF.toInt()),
+    NEUTRALS("Neutrals", 0xFF888888.toInt()),
+    BLACKS("Blacks", 0xFF000000.toInt()),
+}
+
+/**
+ * Selective Color: for each range of colors ([SelectiveRange]), more or less cyan, magenta,
+ * yellow and black ink (each −1 … 1 = ±100%). [relative] changes ink by a share of what's there;
+ * otherwise by an absolute amount.
+ */
+data class SelectiveColor(
+    val ranges: List<List<Float>> = List(9) { listOf(0f, 0f, 0f, 0f) },
+    val relative: Boolean = true,
+) {
+    val isIdentity: Boolean get() = ranges.all { r -> r.all { it == 0f } }
+
+    operator fun get(r: SelectiveRange): List<Float> = ranges.getOrElse(r.ordinal) { listOf(0f, 0f, 0f, 0f) }
+    fun with(r: SelectiveRange, v: List<Float>): SelectiveColor = copy(ranges = ranges.mapIndexed { i, x -> if (i == r.ordinal) v else x })
+
+    fun toJson(): JSONObject = JSONObject().put("relative", relative)
+        .put("ranges", JSONArray().also { a -> ranges.forEach { r -> a.put(JSONArray().also { b -> r.forEach { b.put(it.toDouble()) } }) } })
+
+    companion object {
+        val INKS = listOf("Cyan", "Magenta", "Yellow", "Black")
+
+        fun fromJson(o: JSONObject?): SelectiveColor? = o?.let {
+            val a = it.optJSONArray("ranges")
+            SelectiveColor(List(9) { i -> List(4) { k -> a?.optJSONArray(i)?.optDouble(k, 0.0)?.toFloat() ?: 0f } }, it.optBoolean("relative", true))
+        }
+    }
+}
+
+/**
+ * Color Lookup: a 3D lookup table ([size]³ colors, red changing fastest, then green, then blue;
+ * 8 bits each) that every color is looked up in. Ready-made looks keep only their [preset] key.
+ */
+class ColorLookup(val name: String, val size: Int, val rgb: ByteArray, val preset: String? = null) {
+    private val hash = 31 * (31 * name.hashCode() + size) + rgb.contentHashCode()
+    override fun equals(other: Any?): Boolean = other is ColorLookup && other.hash == hash && other.size == size && other.name == name && other.rgb.contentEquals(rgb)
+    override fun hashCode(): Int = hash
+
+    /** As a picture for the GPU: [size] slices of [size]×[size] side by side (one per blue level). */
+    val bitmap: Bitmap by lazy {
+        val n = size
+        val px = IntArray(n * n * n)
+        for (b in 0 until n) for (g in 0 until n) for (r in 0 until n) {
+            val i = ((b * n + g) * n + r) * 3
+            px[g * n * n + b * n + r] = (0xFF shl 24) or ((rgb[i].toInt() and 0xFF) shl 16) or ((rgb[i + 1].toInt() and 0xFF) shl 8) or (rgb[i + 2].toInt() and 0xFF)
+        }
+        Bitmap.createBitmap(px, n * n, n, Bitmap.Config.ARGB_8888)
+    }
+
+    fun toJson(): JSONObject = JSONObject().put("name", name).also { o ->
+        if (preset != null) o.put("preset", preset)
+        else o.put("size", size).put("data", android.util.Base64.encodeToString(rgb, android.util.Base64.NO_WRAP))
+    }
+
+    companion object {
+        private const val PRESET_SIZE = 25
+
+        /** Ready-made looks: (key, name, what it does to a color in 0..1). */
+        private val LOOKS: List<Triple<String, String, (FloatArray) -> Unit>> = listOf(
+            Triple("warmfilm", "Warm film", { c -> curveAll(c, 0.04f, 0.97f); tint(c, 0.06f, 0.02f, -0.05f); desat(c, 0.12f) }),
+            Triple("tealorange", "Teal & orange", { c -> split(c, floatArrayOf(-0.06f, 0.02f, 0.07f), floatArrayOf(0.07f, 0.02f, -0.06f)); sCurve(c, 0.15f) }),
+            Triple("coolmorning", "Cool morning", { c -> tint(c, -0.04f, 0.0f, 0.06f); curveAll(c, 0.03f, 1f); desat(c, 0.08f) }),
+            Triple("faded", "Faded", { c -> curveAll(c, 0.12f, 0.93f); desat(c, 0.2f) }),
+            Triple("bleach", "Bleach bypass", { c -> desat(c, 0.45f); sCurve(c, 0.35f) }),
+            Triple("vintage", "Vintage", { c -> split(c, floatArrayOf(0.03f, 0.0f, 0.08f), floatArrayOf(0.08f, 0.05f, -0.06f)); curveAll(c, 0.08f, 0.95f); desat(c, 0.25f) }),
+            Triple("night", "Night", { c -> desat(c, 0.35f); tint(c, -0.08f, -0.02f, 0.1f); for (i in 0..2) c[i] *= 0.75f }),
+            Triple("crisp", "Crisp", { c -> sCurve(c, 0.25f); desat(c, -0.15f) }),
+            Triple("mono", "Rich black & white", { c -> val l = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2]; c[0] = l; c[1] = l; c[2] = l; sCurve(c, 0.3f) }),
+            Triple("sepia", "Sepia print", { c -> val l = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2]; c[0] = l * 1.07f + 0.03f; c[1] = l * 0.95f + 0.02f; c[2] = l * 0.78f; curveAll(c, 0.05f, 0.96f) }),
+        )
+
+        val PRESETS: List<ColorLookup> by lazy { LOOKS.map { (k, n, f) -> build(n, k, f) } }
+
+        fun preset(key: String): ColorLookup? = PRESETS.firstOrNull { it.preset == key }
+
+        private fun build(name: String, key: String, f: (FloatArray) -> Unit): ColorLookup {
+            val n = PRESET_SIZE
+            val out = ByteArray(n * n * n * 3)
+            val c = FloatArray(3)
+            for (b in 0 until n) for (g in 0 until n) for (r in 0 until n) {
+                c[0] = r / (n - 1f); c[1] = g / (n - 1f); c[2] = b / (n - 1f)
+                f(c)
+                val i = ((b * n + g) * n + r) * 3
+                for (k in 0..2) out[i + k] = (c[k].coerceIn(0f, 1f) * 255f + 0.5f).toInt().toByte()
+            }
+            return ColorLookup(name, n, out, key)
+        }
+
+        private fun curveAll(c: FloatArray, black: Float, white: Float) {
+            for (i in 0..2) c[i] = black + c[i] * (white - black)
+        }
+
+        private fun tint(c: FloatArray, r: Float, g: Float, b: Float) {
+            c[0] += r; c[1] += g; c[2] += b
+        }
+
+        private fun desat(c: FloatArray, amount: Float) {
+            val l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]
+            for (i in 0..2) c[i] = c[i] + (l - c[i]) * amount
+        }
+
+        private fun sCurve(c: FloatArray, amount: Float) {
+            for (i in 0..2) {
+                val v = c[i].coerceIn(0f, 1f)
+                val s = v * v * (3f - 2f * v)
+                c[i] = v + (s - v) * amount * 2f
+            }
+        }
+
+        /** Shadows toward [shadow], highlights toward [highlight] (amounts added). */
+        private fun split(c: FloatArray, shadow: FloatArray, highlight: FloatArray) {
+            val l = (0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]).coerceIn(0f, 1f)
+            val ws = (1f - l) * (1f - l)
+            val wh = l * l
+            for (i in 0..2) c[i] += shadow[i] * ws + highlight[i] * wh
+        }
+
+        /**
+         * A lookup table file: .cube (Adobe/Resolve), or .3dl (Autodesk/Lustre). Null when it isn't
+         * one we can read. Tables bigger than 64 are thinned to 64.
+         */
+        fun parse(text: String, name: String): ColorLookup? = parseCube(text, name) ?: parse3dl(text, name)
+
+        private fun parseCube(text: String, name: String): ColorLookup? {
+            var n = 0
+            var min = floatArrayOf(0f, 0f, 0f)
+            var max = floatArrayOf(1f, 1f, 1f)
+            val values = ArrayList<Float>()
+            for (raw in text.lineSequence()) {
+                val line = raw.substringBefore('#').trim()
+                if (line.isEmpty()) continue
+                val parts = line.split(Regex("\\s+"))
+                when (parts[0].uppercase()) {
+                    "LUT_3D_SIZE" -> n = parts.getOrNull(1)?.toIntOrNull() ?: return null
+                    "LUT_1D_SIZE" -> return null
+                    "DOMAIN_MIN" -> min = FloatArray(3) { parts.getOrNull(it + 1)?.toFloatOrNull() ?: 0f }
+                    "DOMAIN_MAX" -> max = FloatArray(3) { parts.getOrNull(it + 1)?.toFloatOrNull() ?: 1f }
+                    "TITLE", "LUT_3D_INPUT_RANGE", "LUT_1D_INPUT_RANGE" -> Unit
+                    else -> {
+                        if (parts.size >= 3) {
+                            val r = parts[0].toFloatOrNull()
+                            val g = parts[1].toFloatOrNull()
+                            val b = parts[2].toFloatOrNull()
+                            if (r != null && g != null && b != null) {
+                                values.add(r); values.add(g); values.add(b)
+                            }
+                        }
+                    }
+                }
+            }
+            if (n < 2 || n > 256 || values.size < n * n * n * 3) return null
+            val out = ByteArray(n * n * n * 3)
+            for (i in 0 until n * n * n) for (k in 0..2) {
+                val v = (values[i * 3 + k] - min[k]) / (max[k] - min[k]).let { if (it == 0f) 1f else it }
+                out[i * 3 + k] = (v.coerceIn(0f, 1f) * 255f + 0.5f).toInt().toByte()
+            }
+            return thin(ColorLookup(name, n, out))
+        }
+
+        private fun parse3dl(text: String, name: String): ColorLookup? {
+            val rows = text.lineSequence().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }
+                .map { l -> l.split(Regex("\\s+")).mapNotNull { it.toIntOrNull() } }.filter { it.isNotEmpty() }.toList()
+            if (rows.isEmpty()) return null
+            // The first line lists the input steps (as many as the table's size)
+            val mesh = rows[0]
+            val n = mesh.size
+            val data = rows.drop(1).filter { it.size >= 3 }
+            if (n < 2 || n > 256 || data.size < n * n * n) return null
+            val top = data.maxOf { maxOf(it[0], it[1], it[2]) }
+            var full = 1
+            while (full < top) full = full * 2 + 1
+            val out = ByteArray(n * n * n * 3)
+            // Blue changes fastest in .3dl; ours has red fastest
+            for (r in 0 until n) for (g in 0 until n) for (b in 0 until n) {
+                val row = data[(r * n + g) * n + b]
+                val i = ((b * n + g) * n + r) * 3
+                for (k in 0..2) out[i + k] = (row[k] * 255f / full + 0.5f).toInt().coerceIn(0, 255).toByte()
+            }
+            return thin(ColorLookup(name, n, out))
+        }
+
+        /** Tables over 64 per side (rare) thinned to 64: plenty with the smooth lookups in between. */
+        private fun thin(l: ColorLookup): ColorLookup {
+            if (l.size <= 64) return l
+            val n = 64
+            val s = l.size
+            val out = ByteArray(n * n * n * 3)
+            for (b in 0 until n) for (g in 0 until n) for (r in 0 until n) {
+                fun at(v: Int) = (v * (s - 1f) / (n - 1f)).roundToIntSafe().coerceIn(0, s - 1)
+                val src = ((at(b) * s + at(g)) * s + at(r)) * 3
+                val dst = ((b * n + g) * n + r) * 3
+                for (k in 0..2) out[dst + k] = l.rgb[src + k]
+            }
+            return ColorLookup(l.name, n, out)
+        }
+
+        private fun Float.roundToIntSafe(): Int = (this + 0.5f).toInt()
+
+        fun fromJson(o: JSONObject?): ColorLookup? = o?.let {
+            it.optString("preset").takeIf { k -> k.isNotEmpty() }?.let { k -> return preset(k) }
+            val n = it.optInt("size")
+            val data = runCatching { android.util.Base64.decode(it.optString("data"), android.util.Base64.NO_WRAP) }.getOrNull() ?: return null
+            if (n < 2 || data.size < n * n * n * 3) return null
+            ColorLookup(it.optString("name", "Look"), n, data)
+        }
+    }
+}

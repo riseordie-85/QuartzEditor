@@ -263,8 +263,9 @@ object ProjectIO {
                 val quad = so?.optJSONArray("quad")?.let { a -> FloatArray(8) { a.optDouble(it).toFloat() } }
                 // A linked copy shares the contents of the layer they were written with
                 val linked = so?.optLong("linkTo", -1L)?.takeIf { it >= 0 }?.let { doc.layer(it)?.props?.smart?.contents }
-                if (quad != null && linked != null) props = props.copy(smart = SmartSpec(linked, quad))
-                else if (quad != null && jsons.containsKey(sp)) props = props.copy(smart = SmartSpec(buildDoc(jsons, tiles, sp), quad))
+                val (warp, filters) = SmartSpec.extrasFrom(so)
+                if (quad != null && linked != null) props = props.copy(smart = SmartSpec(linked, quad, warp, filters))
+                else if (quad != null && jsons.containsKey(sp)) props = props.copy(smart = SmartSpec(buildDoc(jsons, tiles, sp), quad, warp, filters))
                 else kind = LayerKind.PIXELS
             }
             doc.layers.add(Layer(id, props, grid, o.optInt("x"), o.optInt("y"), mask, kind).also { it.collapsed = o.optBoolean("collapsed") })

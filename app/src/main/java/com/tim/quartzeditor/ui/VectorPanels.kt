@@ -236,6 +236,7 @@ fun ShapeOptions(vm: EditorViewModel) {
                 set(if (on) "Fill on" else "Fill off") { it.copy(fill = if (on) c else null) }
             },
             onPick = { picking = "fill" })
+        if (spec.fill != null) ShapeFillKind(vm, spec, done = { done(it) }) { label, live, change -> set(label, live, change) }
     }
     ColorToggleRow("Outline", spec.stroke,
         onToggle = { on ->
@@ -254,6 +255,18 @@ fun ShapeOptions(vm: EditorViewModel) {
             ChipRow(StrokeAlign.entries.map { it.label }, spec.strokeAlign.ordinal) { i -> set("Outline position") { it.copy(strokeAlign = StrokeAlign.entries[i]) } }
             Spacer(Modifier.height(6.dp))
         }
+        // Solid, dashed or dotted
+        val dashes = listOf<List<Float>?>(null, listOf(3f, 2f), listOf(0f, 2f))
+        val which = dashes.indexOfFirst { it == spec.dash }.let { if (it < 0) 1 else it }
+        ChipRow(listOf("Solid", "Dashed", "Dotted"), which) { i -> set("Outline style") { it.copy(dash = dashes[i]) } }
+        if (spec.dash != null && spec.dash != dashes[2]) {
+            val d = spec.dash
+            PanelSlider("Dash", d.getOrElse(0) { 3f }, 0.5f..12f, String.format(java.util.Locale.US, "%.1f×", d.getOrElse(0) { 3f }),
+                onChange = { v -> set("Dash", live = true) { it.copy(dash = listOf(v, d.getOrElse(1) { 2f })) } }, onDone = { done("Dash") })
+            PanelSlider("Gap", d.getOrElse(1) { 2f }, 0.5f..12f, String.format(java.util.Locale.US, "%.1f×", d.getOrElse(1) { 2f }),
+                onChange = { v -> set("Gap", live = true) { it.copy(dash = listOf(d.getOrElse(0) { 3f }, v)) } }, onDone = { done("Gap") })
+        }
+        Spacer(Modifier.height(6.dp))
     }
     if (layer != null) {
         Spacer(Modifier.height(6.dp))
@@ -401,9 +414,10 @@ fun TextOptions(vm: EditorViewModel) {
         onChange = { v -> set("Line spacing", live = true) { it.copy(leading = if (kotlin.math.abs(v - 1f) < 0.03f) 1f else v) } }, onDone = { done("Line spacing") })
     PanelSlider("Arc", spec.curve, -1f..1f, if (kotlin.math.abs(spec.curve) < 0.02f) "Straight" else "${(spec.curve * 100).roundToInt()}%",
         onChange = { v -> set("Arc", live = true) { it.copy(curve = if (kotlin.math.abs(v) < 0.04f) 0f else v) } }, onDone = { done("Arc") })
-    if (spec.curve != 0f && spec.text.contains('\n')) {
+    if (spec.curve != 0f && spec.text.contains('\n') && spec.warp == null) {
         Text("Arcs work on one line of text.", color = Q.textDim, fontSize = 11.sp)
     }
+    if (layer != null) TextWarpOptions(vm, layer, spec)
     if (layer != null) {
         Spacer(Modifier.height(6.dp))
         Text("Outline, shadow and glow: Layer Style (fx). Scale or rotate it with Transform; it stays sharp.", color = Q.textDim, fontSize = 12.sp)
@@ -613,7 +627,11 @@ fun ColorPickDialog(
                 Text(title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
                 Box(Modifier.size(width = 44.dp, height = 28.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)).border(1.dp, Q.text.copy(alpha = 0.4f), RoundedCornerShape(8.dp)))
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
+            ColorTabs(vm)
+            if (vm.colorTab == 1) {
+                SwatchGrid(vm, color) { pick(it) }
+            } else {
             val h = hsv(color)
             Row(Modifier.fillMaxWidth().height(190.dp)) {
                 SatValSquare(hue, h[1], h[2], onChange = { s, v -> pick(AColor.HSVToColor(floatArrayOf(hue, s, v)), keepHue = true) }, onDone = {}, modifier = Modifier.weight(1f).height(190.dp))
@@ -634,6 +652,7 @@ fun ColorPickDialog(
             ColorDots((listOf(vm.foreground, vm.background) + vm.recentColors).distinct().take(12), color) { pick(it) }
             Spacer(Modifier.height(8.dp))
             ColorDots(BASIC_COLORS, color) { pick(it) }
+            }
             Spacer(Modifier.height(12.dp))
             Row {
                 Spacer(Modifier.weight(1f))
@@ -752,5 +771,109 @@ fun FontPickDialog(selected: String, onDismiss: () -> Unit, onPick: (String) -> 
                 }
             }
         }
+    }
+}
+
+
+/** Warp Text (like Photoshop's): a shape the text layer bends into, with its bend and distortion. */
+@Composable
+private fun TextWarpOptions(vm: EditorViewModel, layer: com.tim.quartzeditor.engine.Layer, spec: TextSpec) {
+    // Only this layer bends (new text starts straight)
+    fun set(label: String, live: Boolean, change: (com.tim.quartzeditor.engine.TextWarp?) -> com.tim.quartzeditor.engine.TextWarp?) {
+        if (live) vm.editVectorLive(layer.id) { p -> p.copy(text = p.text?.let { it.copy(warp = change(it.warp)) }) }
+        else vm.editVector(layer.id, label) { p -> p.copy(text = p.text?.let { it.copy(warp = change(it.warp)) }) }
+    }
+    val w = spec.warp
+    var open by remember { mutableStateOf(false) }
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Warp", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(52.dp))
+        Box(Modifier.weight(1f)) {
+            Text(
+                w?.style?.label ?: "None",
+                color = Q.text, fontSize = 14.sp,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Q.field).clickable { open = true }.padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                androidx.compose.material3.DropdownMenuItem(text = { Text("None") }, onClick = {
+                    open = false
+                    set("Warp text", live = false) { null }
+                })
+                com.tim.quartzeditor.engine.WarpStyle.entries.forEach { st ->
+                    androidx.compose.material3.DropdownMenuItem(text = { Text(st.label) }, onClick = {
+                        open = false
+                        set("Warp text", live = false) { it?.copy(style = st) ?: com.tim.quartzeditor.engine.TextWarp(st) }
+                    })
+                }
+            }
+        }
+    }
+    if (w == null) return
+    fun pct(v: Float) = (if (v > 0.005f) "+" else "") + "${(v * 100).roundToInt()}%"
+    PanelSlider("Bend", w.bend, -1f..1f, pct(w.bend),
+        onChange = { v -> set("Warp text", live = true) { it?.copy(bend = v) } }, onDone = { vm.commitVector("Warp text") }, fromTyped = { it / 100f })
+    PanelSlider("Horizontal distortion", w.horizontal, -1f..1f, pct(w.horizontal),
+        onChange = { v -> set("Warp text", live = true) { it?.copy(horizontal = v) } }, onDone = { vm.commitVector("Warp text") }, fromTyped = { it / 100f })
+    PanelSlider("Vertical distortion", w.vertical, -1f..1f, pct(w.vertical),
+        onChange = { v -> set("Warp text", live = true) { it?.copy(vertical = v) } }, onDone = { vm.commitVector("Warp text") }, fromTyped = { it / 100f })
+    ChipRow(listOf("Horizontal", "Vertical"), if (w.verticalOrientation) 1 else 0) { i ->
+        set("Warp text", live = false) { it?.copy(verticalOrientation = i == 1) }
+    }
+}
+
+
+/** A shape's fill: its color, a gradient or a pattern. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ShapeFillKind(vm: EditorViewModel, spec: com.tim.quartzeditor.engine.ShapeSpec, done: (String) -> Unit, set: (String, Boolean, (com.tim.quartzeditor.engine.ShapeSpec) -> com.tim.quartzeditor.engine.ShapeSpec) -> Unit) {
+    val kind = when {
+        spec.fillGradient != null -> 1
+        spec.fillPattern != null -> 2
+        else -> 0
+    }
+    ChipRow(listOf("Color", "Gradient", "Pattern"), kind) { i ->
+        when (i) {
+            0 -> set("Fill color", false) { it.copy(fillGradient = null, fillPattern = null) }
+            1 -> set("Gradient fill", false) {
+                it.copy(fillPattern = null, fillGradient = it.fillGradient ?: com.tim.quartzeditor.engine.GradientFx(on = true, colors = listOf(vm.foreground or 0xFF000000.toInt(), vm.background or 0xFF000000.toInt())))
+            }
+            else -> set("Pattern fill", false) {
+                val a = vm.foreground or 0xFF000000.toInt()
+                val b = vm.background or 0xFF000000.toInt()
+                vm.warmPattern("b:checker", a, b)
+                it.copy(fillGradient = null, fillPattern = it.fillPattern ?: com.tim.quartzeditor.engine.PatternFx(true, "b:checker", a, b))
+            }
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    spec.fillGradient?.let { g ->
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            vm.allGradients.forEach { p ->
+                val cols = p.resolve(vm.foreground, vm.background)
+                val sel = cols == g.colors && (p.positions ?: emptyList<Float>()) == (g.positions ?: emptyList<Float>())
+                GradientTile(vm, p, sel, 52.dp, 26.dp, onPick = {
+                    set("Gradient fill", false) { it.copy(fillGradient = it.fillGradient?.copy(colors = cols, positions = p.positions)) }
+                }, userIndex = null, onEdit = {})
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        ChipRow(com.tim.quartzeditor.engine.GradientType.entries.map { it.label }, g.type.ordinal) { i ->
+            set("Gradient fill", false) { it.copy(fillGradient = it.fillGradient?.copy(type = com.tim.quartzeditor.engine.GradientType.entries[i])) }
+        }
+        PanelSlider("Angle", g.angle, -180f..180f, "${g.angle.roundToInt()}°",
+            onChange = { v -> set("Gradient angle", true) { it.copy(fillGradient = it.fillGradient?.copy(angle = v.roundToInt().toFloat())) } }, onDone = { done("Gradient angle") })
+        PanelSlider("Scale", g.scale, 0.1f..2f, "${(g.scale * 100).roundToInt()}%",
+            onChange = { v -> set("Gradient scale", true) { it.copy(fillGradient = it.fillGradient?.copy(scale = v)) } }, onDone = { done("Gradient scale") })
+        ToggleRow("Reverse", g.reverse) { r -> set("Gradient fill", false) { it.copy(fillGradient = it.fillGradient?.copy(reverse = r)) } }
+    }
+    spec.fillPattern?.let { p ->
+        PatternGrid(vm, selected = p.key, colorA = p.colorA, colorB = p.colorB) { key ->
+            val a = vm.foreground or 0xFF000000.toInt()
+            val b = vm.background or 0xFF000000.toInt()
+            vm.warmPattern(key, a, b)
+            set("Pattern fill", false) { it.copy(fillPattern = it.fillPattern?.copy(key = key, colorA = a, colorB = b)) }
+        }
+        PanelSlider("Pattern size", p.scale, 0.1f..4f, "${(p.scale * 100).roundToInt()}%",
+            onChange = { v -> set("Pattern size", true) { it.copy(fillPattern = it.fillPattern?.copy(scale = v)) } }, onDone = { done("Pattern size") })
     }
 }

@@ -96,13 +96,9 @@ fun GradientsPanel(vm: EditorViewModel) {
 
 @Composable
 private fun GradientOptions(vm: EditorViewModel) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        GradientType.entries.forEach { t ->
-            SmallButton(t.label, primary = t == vm.gradientType) {
-                vm.gradientType = t
-                vm.saveGradientPrefs()
-            }
-        }
+    ChipRow(GradientType.entries.map { it.label }, vm.gradientType.ordinal) { i ->
+        vm.gradientType = GradientType.entries[i]
+        vm.saveGradientPrefs()
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Reverse", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))

@@ -100,6 +100,11 @@ fun EditorViewModel.addAdjustmentLayer(kind: com.tim.quartzeditor.engine.FxKind 
         com.tim.quartzeditor.engine.FxKind.PHOTO_FILTER -> "Photo Filter" to FxParams(kind = kind, photoFilter = com.tim.quartzeditor.engine.PhotoFilter())
         com.tim.quartzeditor.engine.FxKind.GRADIENT_MAP -> "Gradient Map" to FxParams(kind = kind, gradientMap = com.tim.quartzeditor.engine.GradientMap(listOf(foreground or 0xFF000000.toInt(), background or 0xFF000000.toInt())))
         com.tim.quartzeditor.engine.FxKind.VIBRANCE -> "Vibrance" to FxParams(kind = kind)
+        com.tim.quartzeditor.engine.FxKind.CHANNEL_MIXER -> "Channel Mixer" to FxParams(kind = kind, channelMixer = com.tim.quartzeditor.engine.ChannelMixer())
+        com.tim.quartzeditor.engine.FxKind.SELECTIVE_COLOR -> "Selective Color" to FxParams(kind = kind, selectiveColor = com.tim.quartzeditor.engine.SelectiveColor())
+        com.tim.quartzeditor.engine.FxKind.COLOR_LOOKUP -> "Color Lookup" to FxParams(kind = kind, colorLookup = com.tim.quartzeditor.engine.ColorLookup.PRESETS.first())
+        com.tim.quartzeditor.engine.FxKind.POSTERIZE -> "Posterize" to FxParams(kind = kind, posterize = 4)
+        com.tim.quartzeditor.engine.FxKind.THRESHOLD -> "Threshold" to FxParams(kind = kind, threshold = 128f / 255f)
     }
     fun make(mask: TileGrid?) {
         stackEdit("New $name layer") {
@@ -171,7 +176,7 @@ fun EditorViewModel.duplicateLayer() {
             val name = if (src === l) "${src.props.name} copy" else src.props.name
             // A smart layer's copy is linked to it, like Photoshop's: they share their contents, so
             // editing one changes both ("Unlink from copies" gives one contents of its own)
-            val smart = src.props.smart?.let { sp -> com.tim.quartzeditor.engine.SmartSpec(sp.contents, sp.quad.copyOf()) }
+            val smart = src.props.smart?.let { sp -> sp.withContents(sp.contents) }
             Layer(id, src.props.copy(name = name, locked = false, parent = parent, smart = smart), src.tiles.copy(), src.x, src.y, src.mask?.copy(), src.kind)
         }
         d.layers.addAll(range.last + 1, copies)

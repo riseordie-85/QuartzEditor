@@ -22,16 +22,19 @@ from the build). Background removal's model is fetched by Google Play services i
   vector masks (with their path operations), every blend mode, opacity and fill, clipping masks (to
   layers or folders), hidden layers, transparency locks and names. **Shape layers stay shapes**:
   rectangles, rounded rectangles and ellipses as those, other outlines as pen shapes (edit their points)
-  or custom shapes, with their fill and outline (gradient or pattern fills and dashed outlines come in as
-  pixels). Fill layers are drawn from their color, gradient or pattern. **Adjustment layers** come in as
-  ours: Levels, Curves, Brightness/Contrast, Exposure, Vibrance, Hue/Saturation, Color Balance, Black &
-  White, Photo Filter, Gradient Map and Invert (with their masks, opacity and clipping). Layer styles come
+  or custom shapes, with their fill (color, gradient or pattern) and outline (solid, dashed or dotted;
+  gradient or pattern outlines come in as pixels). Fill layers are drawn from their color, gradient
+  (including Angle and Diamond) or pattern; a **book color** (Pantone and the like, whose recipe isn't in
+  the file) is read from the layer's own pixels. **Adjustment layers** come in as ours: Levels, Curves,
+  Brightness/Contrast, Exposure, Vibrance, Hue/Saturation, Color Balance, Black & White, Photo Filter,
+  Gradient Map, Invert, Channel Mixer, Selective Color, Color Lookup (when the file keeps its lookup
+  table), Posterize and Threshold (with their masks, opacity and clipping). Layer styles come
   across as ours: Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Satin, Stroke (color or gradient),
   Color Overlay, Gradient Overlay, Pattern Overlay (the file's patterns are added to your patterns) and
   Bevel & Emboss.
   **Text layers stay text** (like Photoshop, they show the file's own pixels until you edit them): the
   words, size, color, alignment, tracking, leading, caps and faux bold/italic, point or box text (box text
-  wraps to its box), and Arc warps. Text with **several styles** (a word in another font, size or color)
+  wraps to its box), and **warped text** (all 15 of Photoshop's warp styles, with bend and distortion). Text with **several styles** (a word in another font, size or color)
   keeps them; typing carries the style of the letter before, and changing the font, size or color in
   Properties changes all of it (sizes keep their proportions). The font is the same Google Font when it is one (any weight), a font
   you imported with that name, or a close free match for common ones (Arial → Arimo, Helvetica Neue →
@@ -39,11 +42,14 @@ from the build). Background removal's model is fetched by Google Play services i
   **Smart objects stay smart**: embedded pictures (PNG, JPEG, …) and embedded Photoshop files become the
   smart layer's contents, placed where they were (edit them in their own tab); so do embedded TIFFs,
   with their layers when they have them. **Copies of one smart
-  object stay linked**: editing one changes them all. Linked files, warps and smart filters keep
-  what you see as the contents. 8 and 16 bits, RGB, grayscale and (roughly) CMYK. Files bigger than 4096
-  px are shrunk to fit. Afterwards a short list says what didn't come across exactly (Channel Mixer,
-  Selective Color, Color Lookup, Posterize and Threshold adjustments; blend modes on effects that only
-  layers have).
+  object stay linked**: editing one changes them all. **Warps stay warps** (a named one like Arc or Flag,
+  a custom curve grid, or a split grid) and **smart filters stay smart filters** (Gaussian Blur, Blur,
+  Unsharp Mask, Smart Sharpen, Sharpen, Add Noise, with their strength), both still editable. A smart
+  object linked to a file outside the .psd (or with a filter we don't have) keeps what you see as its
+  contents; **Replace contents** puts the original file back in. 8 and 16 bits; RGB, grayscale, CMYK
+  (roughly), Lab, Indexed, Bitmap (black and white) and Duotone (as its gray). Files bigger than 4096
+  px are shrunk to fit. Afterwards a short list says what didn't come across exactly (blend modes on
+  effects that only layers have, filters we don't have, a Duotone's inks…).
 - **Very big Photoshop files and TIFFs** (over 300 MB) ask first: they can take minutes and may close the app on a
   phone or tablet. **Open anyway** goes ahead.
 - Other apps can **Open with**, **Edit with** or **Share to** Quartz Editor.
@@ -126,13 +132,15 @@ the list; the button shows the one you used last.
   "Fill selection" / "Fill layer" fills with the pattern straight away (also in the Select ⋮ and
   Layers ⋮ menus). On a mask, light parts of the pattern show and dark parts hide.
 - **Gradient** — drag on the picture: the gradient runs from where you start to where you let go. Presets,
-  Linear / Radial / Reflected, reverse and opacity are in Properties. **+** makes your own gradient
+  Linear / Radial / Reflected / Angle / Diamond, reverse and opacity are in Properties. **+** makes your own gradient
   (starting from the one picked): tap the bar to add a color, drag the markers to move them, tap one to
   change its color, location or opacity (see-through stops work), Reverse, Even spacing, a name. Hold one of
   yours to edit or delete it. Your gradients are also in Layer Style → Gradient Fill (with its own **+**).
 - **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from
   where you start dragging to where you stop) on a new shape layer; tap the tool again for the next shape,
-  or hold it for the list. In Properties: fill and outline (on/off, color, width, inside/center/outside), corner radius,
+  or hold it for the list. In Properties: fill (a color, a gradient with its type, angle and scale, or a
+  pattern) and outline (on/off, color, width, inside/center/outside, solid / dashed / dotted with dash and
+  gap), corner radius,
   the star's points and depth (no depth makes a polygon), **Flatten points** (flat tips and valleys: cogs
   and gears, square teeth at 100%), and "same width and height". New shapes always
   start filled without an outline (colors carry over). Tap a shape with the tool to pick it; with a shape
@@ -151,7 +159,9 @@ the list; the button shows the one you used last.
 - **Text** — tap the picture and type (the bar at the top has the text box, Cancel and Done). Tap existing
   text to change it; drag with the Text tool to move it. Properties: font (Android's, Google Fonts, or your
   own .ttf/.otf), size, color, alignment, faux bold/italic, underline, ALL CAPS, letter and line spacing,
-  and Arc.
+  and **Warp text**: Arc, Arc Lower, Arc Upper, Arch, Bulge, Shell Lower, Shell Upper, Flag, Wave, Fish,
+  Rise, Fisheye, Inflate, Squeeze, Twist, with Bend, Horizontal and Vertical distortion, bent along the
+  width or the height (the text stays editable).
   Outline, shadow and glow come from Layer Style (fx).
 - **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one).
 - **Brush** and **Eraser** (one button) — tap it to switch between the brush and the eraser. While either is
@@ -222,8 +232,15 @@ the list; the button shows the one you used last.
 - **Double-tap** a smart layer (or hold → Edit contents) to edit what's inside in a **tab** of its own at
   the top; it has its own layers and undo. Tap the picture's tab to go back: the smart layer updates (one
   undo step there). ✕ on a tab closes it the same way. Smart layers inside smart layers open more tabs.
-- Transform, rotate/flip image, masks, clipping and layer styles work on smart layers as they are; painting,
-  filters, adjustments and warps ask to **rasterize** them first.
+- Transform, rotate/flip image, masks, clipping and layer styles work on smart layers as they are.
+- **Smart filters**: adjustments and filters (any of the windows under "On this layer", Gaussian Blur,
+  Filters) on a smart layer are kept as smart filters instead of changing pixels. Hold the layer →
+  **Smart filters** lists them (last applied first): Edit (opens its window as it was), Hide / Show,
+  Strength (100, 75, 50, 25%) and Delete; Hide all / Delete all. Editing the contents keeps them.
+- **Warp** on a smart layer bends it without touching the contents (still editable: Warp again carries
+  on from it; hold → Convert → Remove warp). Puppet Warp, Liquify and painting ask to **rasterize** first.
+- **Replace contents…** (hold → Convert) swaps what's inside for a picture, Photoshop file or TIFF, at the
+  same scale and place, keeping its warp and smart filters; linked copies change too.
 
 ### Panels
 Only **Color**, **Properties** and **Layers** live in the column.
@@ -231,7 +248,11 @@ Only **Color**, **Properties** and **Layers** live in the column.
   settings (selection shape and mode, crop ratio, transform numbers, bucket tolerance, gradient presets
   and type, brush tips and opacity), and tapping a color swatch opens Color. The **pin** on a section's
   header keeps it open. With Move, Properties shows the selected layer (name, position, mask).
-- **Color** — saturation/brightness square, hue bar, hex, RGB, recent colors and basics.
+- **Color** — saturation/brightness square, hue bar, hex, RGB, recent colors and basics. **Swatches**: every
+  color picker (here and in shapes, text and layer styles) has a Picker | Swatches switch. Swatches has
+  ready-made sets (Basics, Grays, Vivid, Pastels, Earth tones, Skin tones, Web) and yours: **+** adds the
+  current color to My swatches (hold one to remove it), and **Import** reads Photoshop's .aco and Adobe's
+  .ase swatch files (RGB, CMYK, Lab and gray colors; each group becomes a set).
 - **Layers** — like Photoshop, the settings on top (blend mode, opacity, locks, fill) and the buttons at the
   bottom stay put; only the list between them scrolls. It shows up to four layers while Color or Properties
   is open (fewer if the screen is short; the buttons always stay), and fills the column when they're folded.
@@ -318,6 +339,12 @@ place, so the picture keeps its room; closing it brings the panels back as you l
 - **Photo Filter** — Photoshop's filters (Warming, Cooling, Sepia, Underwater…) or your color, density,
   Preserve luminosity.
 - **Gradient Map** — any gradient (dark → light), reverse.
+- **Channel Mixer** — each output channel as a mix of red, green and blue plus a constant, Monochrome, and
+  Photoshop's presets (Black & White with filters, infrared…).
+- **Selective Color** — cyan, magenta, yellow and black for Reds, Yellows, Greens, Cyans, Blues, Magentas,
+  Whites, Neutrals and Blacks; Relative or Absolute.
+- **Color Lookup** — 10 ready-made looks, or load a **.cube** or **.3dl** lookup table file.
+- **Posterize** (levels) and **Threshold** (level).
 - In every adjustment layer's window: **Clip to the layer below**.
 - Layer Style effects each have a **Blend mode** (Multiply shadows darken what's below; Bevel's highlight
   and shadow start at Screen and Multiply).
@@ -414,8 +441,9 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
   selection expand/shrink (`SelectionOps`), the AI models (`Ai`), Photoshop files (`Psd` reads them,
   `PsdImport` turns them into a document, `PsdFonts` picks fonts), TIFF files (`Tiff`: reading and writing), the blend modes Android doesn't have
-  (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`) and the Enhance effects
-  (`Enhance`).
+  (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`), the Enhance effects
+  (`Enhance`), swatch sets and files (`Swatches`), text warps (`TextWarp`) and smart layers with their
+  warps and smart filters (`Smart`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
   "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
 - `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:

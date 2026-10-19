@@ -2,6 +2,7 @@ package com.tim.quartzeditor.ui
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.PorterDuff
@@ -19,6 +20,9 @@ import com.tim.quartzeditor.engine.FaceFeatures
 import com.tim.quartzeditor.engine.FaceGroup
 import com.tim.quartzeditor.engine.FaceSlider
 import com.tim.quartzeditor.engine.Layer
+import com.tim.quartzeditor.engine.SmartArt
+import com.tim.quartzeditor.engine.SmartSpec
+import com.tim.quartzeditor.engine.SmartWarp
 import com.tim.quartzeditor.engine.LayerPreview
 import com.tim.quartzeditor.engine.LiquifyTool
 import com.tim.quartzeditor.engine.MeshPreview
@@ -42,6 +46,18 @@ import kotlin.math.roundToInt
 // active pixel layer. Like Transform, it's shown on a smaller copy while you work and applied at
 // full size at the end, as one undo step. Undo while warping steps back one change at a time.
 
+/**
+ * A smart layer being warped: [spec] as it was, [toCanvas] (its contents' pixels, [w]×[h], to
+ * canvas pixels, unwarped) and the controls it started with (canvas pixels).
+ */
+class SmartWarpTarget(val spec: SmartSpec, val toCanvas: Matrix, val w: Float, val h: Float, val startCtrl: FloatArray) {
+    /** Controls in the contents' pixels, through [toCanvas]. */
+    fun toCanvas(c: FloatArray): FloatArray = c.copyOf().also { toCanvas.mapPoints(it) }
+
+    /** The 16 controls of an unwarped patch, on the canvas. */
+    fun rest(): FloatArray = toCanvas(WarpMath.restControls(RectF(0f, 0f, w, h)))
+}
+
 /** The layer being warped and everything about the warp so far. */
 class WarpSession(
     val kind: WarpKind,
@@ -57,6 +73,8 @@ class WarpSession(
     /** A smaller copy of [src] (mask applied) to show. */
     val proxy: Bitmap,
     val mesh: WarpMesh,
+    /** Warping a smart layer: its warp changes, not its pixels. */
+    val smart: SmartWarpTarget? = null,
 ) {
     /** Bumped on every change (redraws the handles). */
     var version by mutableIntStateOf(0)
@@ -212,6 +230,11 @@ fun EditorViewModel.beginWarp() {
             toast("\"${l.props.name}\" is hidden")
             return
         }
+        // A smart layer keeps its warp editable (Puppet Warp and Liquify need pixels)
+        l.isSmart && kind == WarpKind.WARP && l.props.smart != null -> {
+            beginSmartWarp(l)
+            return
+        }
         l.needsRaster -> {
             askRasterize(l) { beginWarp() }
             return
@@ -283,6 +306,88 @@ fun EditorViewModel.beginWarp() {
     }
 }
 
+/** Starts Warp on smart layer [l]: the curve grid over its contents, bent as its warp is now. */
+private fun EditorViewModel.beginSmartWarp(l: Layer) {
+    val d = doc ?: return
+    val spec = l.props.smart ?: return
+    val w = spec.contents.width.toFloat()
+    val h = spec.contents.height.toFloat()
+    runBusy("Preparing…") {
+        val proxy = withContext(Dispatchers.Default) {
+            val ps = min(1f, EditorViewModel.PREVIEW_PX / max(w, h))
+            val pw = (w * ps).roundToInt().coerceAtLeast(1)
+            val ph = (h * ps).roundToInt().coerceAtLeast(1)
+            // The contents, flat (the cached picture is shared: copied while it's held)
+            synchronized(SmartArt) { Bitmap.createScaledBitmap(SmartArt.flatten(spec.contents), pw, ph, true) }
+        }
+        if (doc !== d || l.props.smart !== spec || tool != Tool.WARP || warp != null) {
+            proxy.recycle()
+            return@runBusy
+        }
+        val toCanvas = spec.matrix().apply { postTranslate(l.x.toFloat(), l.y.toFloat()) }
+        // The grid over where the contents are placed (unwarped)
+        val corners = floatArrayOf(0f, 0f, w, 0f, w, h, 0f, h).also { toCanvas.mapPoints(it) }
+        val area = RectF(
+            minOf(corners[0], corners[2], corners[4], corners[6]), minOf(corners[1], corners[3], corners[5], corners[7]),
+            maxOf(corners[0], corners[2], corners[4], corners[6]), maxOf(corners[1], corners[3], corners[5], corners[7]),
+        )
+        val mesh = WarpMesh.over(area, max(area.width(), area.height()) / 40f, 48)
+        // Its points rest where the contents' own grid is placed (it may be turned or slanted)
+        for (j in 0..mesh.rows) for (i in 0..mesh.cols) {
+            val k = (j * mesh.stride + i) * 2
+            mesh.rest[k] = w * i / mesh.cols
+            mesh.rest[k + 1] = h * j / mesh.rows
+        }
+        toCanvas.mapPoints(mesh.rest)
+        // Bent as it is now (a named warp or several patches: the nearest single grid)
+        val start = (spec.warp?.singlePatch(w, h) ?: SmartWarp.rest()).let { f -> FloatArray(32) { k -> f[k] * (if (k % 2 == 0) w else h) } }
+        val target = SmartWarpTarget(spec, toCanvas, w, h, FloatArray(32))
+        val ctrl = target.toCanvas(start)
+        ctrl.copyInto(target.startCtrl)
+        val s = WarpSession(WarpKind.WARP, l, HashMap(l.tiles.tiles), null, l.tiles, Rect(0, 0, w.toInt(), h.toInt()), l.x, l.y, proxy, mesh, target)
+        s.ctrl = ctrl
+        WarpMath.applyPatch(s.ctrl, mesh)
+        warp = s
+        showWarp(s)
+        if (spec.warp != null && !(spec.warp.isCustom && spec.warp.cols == 1 && spec.warp.rows == 1)) toast("Its warp is shown as one curve grid; changing it replaces the warp")
+    }
+}
+
+/** Puts the warp into the smart layer being warped (not its pixels), as one undo step. */
+private fun EditorViewModel.applySmartWarp(s: WarpSession, t: SmartWarpTarget, onDone: () -> Unit) {
+    val d = doc ?: return
+    val l = s.layer
+    // Nothing moved: as it was
+    if ((0 until 32).all { k -> kotlin.math.abs(s.ctrl[k] - t.startCtrl[k]) < 0.01f }) {
+        cancelWarp()
+        onDone()
+        return
+    }
+    // Back into the contents' own space, as fractions of their size
+    val inv = Matrix()
+    if (!t.toCanvas.invert(inv)) {
+        cancelWarp()
+        onDone()
+        return
+    }
+    val c = s.ctrl.copyOf().also { inv.mapPoints(it) }
+    val frac = FloatArray(32) { k -> c[k] / (if (k % 2 == 0) t.w else t.h) }
+    val spec = t.spec.withWarp(SmartWarp(ctrl = frac))
+    runBusy("Warp…", onDone) {
+        val clip = com.tim.quartzeditor.engine.Transformer.limitFor(d.width, d.height).apply { offset(-l.x, -l.y) }
+        val grid = withContext(Dispatchers.Default) { SmartArt.rasterize(spec, clip) }
+        warp = null
+        preview = null
+        if (doc === d && l.props.smart === t.spec) {
+            stackEdit("Warp") {
+                l.props = l.props.copy(smart = spec)
+                l.tiles = grid
+            }
+        }
+        tool = Tool.MOVE
+    }
+}
+
 internal fun EditorViewModel.showWarp(s: WarpSession) {
     s.version++
     val pts = s.nextShown()
@@ -308,6 +413,10 @@ fun EditorViewModel.applyWarp(onDone: () -> Unit = {}) {
     if (busy != null) return
     liquifyJob?.cancel()
     warpCursor = null
+    s.smart?.let { t ->
+        applySmartWarp(s, t, onDone)
+        return
+    }
     val pts = s.output().copyOf()
     if (WarpMath.nearlyUnchanged(pts, s.mesh.rest)) {
         cancelWarp()
@@ -361,7 +470,7 @@ fun EditorViewModel.resetWarp() {
     s.mesh.rest.copyInto(s.mesh.pts)
     s.mesh.maxShift = 0f
     s.faceValues = s.faces.map { HashMap() }
-    s.ctrl = WarpMath.restControls(s.mesh.area)
+    s.ctrl = s.smart?.rest() ?: WarpMath.restControls(s.mesh.area)
     s.preset = WarpPreset.CUSTOM
     s.pinFrom.clear()
     s.pinTo.clear()
@@ -598,7 +707,7 @@ fun EditorViewModel.setWarpPreset(p: WarpPreset) {
     if (p != WarpPreset.CUSTOM) s.pushStep()
     s.preset = p
     if (p != WarpPreset.CUSTOM) {
-        s.ctrl = WarpMath.preset(p, s.bend, s.mesh.area)
+        s.ctrl = presetCtrl(s, p, s.bend)
         WarpMath.applyPatch(s.ctrl, s.mesh)
     }
     showWarp(s)
@@ -609,13 +718,17 @@ fun EditorViewModel.setWarpBend(b: Float) {
     val s = warp ?: return
     s.bend = b
     if (s.preset != WarpPreset.CUSTOM) {
-        s.ctrl = WarpMath.preset(s.preset, b, s.mesh.area)
+        s.ctrl = presetCtrl(s, s.preset, b)
         WarpMath.applyPatch(s.ctrl, s.mesh)
         showWarp(s)
     } else {
         s.version++
     }
 }
+
+/** A ready-made shape's controls (canvas pixels); on a smart layer, shaped to its contents. */
+private fun presetCtrl(s: WarpSession, p: WarpPreset, bend: Float): FloatArray =
+    s.smart?.let { t -> t.toCanvas(WarpMath.preset(p, bend, RectF(0f, 0f, t.w, t.h))) } ?: WarpMath.preset(p, bend, s.mesh.area)
 
 fun EditorViewModel.beginWarpBend() {
     warp?.pushStep()

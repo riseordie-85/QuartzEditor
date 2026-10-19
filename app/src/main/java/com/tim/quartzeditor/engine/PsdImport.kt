@@ -143,12 +143,18 @@ object PsdImport {
             }
             if (unsupportedFx.isNotEmpty()) notes.add("Layer effects not brought in: ${unsupportedFx.joinToString()}.")
             if (approxBlends.isNotEmpty()) notes.add("Blend modes shown as the nearest one we have: ${approxBlends.joinToString()}.")
-            if (unsupportedColors > 0) notes.add("Some colors were saved as book (Pantone) colors and came in as black.")
-            if (textAsPixels > 0) notes.add("$textAsPixels text layer${if (textAsPixels > 1) "s" else ""} with a warp (or no text) came in as pixels.")
+            if (unsupportedColors > 0) notes.add("Some layer effect colors were saved as book (Pantone) colors and came in as black (fill colors are read from the layers' pixels).")
+            if (textAsPixels > 0) notes.add("$textAsPixels text layer${if (textAsPixels > 1) "s" else ""} without text came in as pixels.")
+            if (warpedText > 0) notes.add("$warpedText warped text layer${if (warpedText > 1) "s keep" else " keeps"} Photoshop's look until edited; after that our warp of the same name is a close match.")
             if (mixedText > 0) notes.add("$mixedText text layer${if (mixedText > 1) "s have" else " has"} several styles that couldn't be read separately: the first one is used for all of it.")
             if (approxAdjust.isNotEmpty()) notes.add("Adjustment settings shown as close as we can: ${approxAdjust.joinToString()}.")
-            if (shapesAsPixels > 0) notes.add("$shapesAsPixels shape${if (shapesAsPixels > 1) "s" else ""} with a gradient or pattern fill (or a dashed outline) came in as pixels.")
-            if (smartFromPixels.isNotEmpty()) notes.add("${smartFromPixels.size} smart object${if (smartFromPixels.size > 1) "s" else ""} kept as smart layers, using what you see as their contents (${smartFromPixels.distinct().joinToString()}).")
+            if (shapesAsPixels > 0) notes.add("$shapesAsPixels shape${if (shapesAsPixels > 1) "s" else ""} with a gradient or pattern outline (or an inverted outline) came in as pixels.")
+            if (smartFromPixels.isNotEmpty()) notes.add("${smartFromPixels.size} smart object${if (smartFromPixels.size > 1) "s" else ""} kept as smart layers, using what you see as their contents (${smartFromPixels.distinct().joinToString()}). Replace Contents can put the original file back in.")
+            if (smartWarped > 0) notes.add("$smartWarped smart layer${if (smartWarped > 1) "s keep their warps" else " keeps its warp"}; Photoshop's look stays until the layer is redrawn, then our warp of the same shape is a close match.")
+            if (smartFiltered > 0) notes.add("$smartFiltered smart filter${if (smartFiltered > 1) "s" else ""} kept, still editable.")
+            if (f.mode == 8) notes.add("A Duotone file: shown in gray (its inks aren't read).")
+            if (f.mode == 9) notes.add("A Lab color file: its colors were turned into RGB; adjustment layers made for Lab may look different.")
+            if (f.mode == 0) notes.add("A Bitmap (black and white) file: opened as gray.")
             if (fonts.isNotEmpty()) notes.add("Fonts not on this device are shown as the original pixels until you edit the text; then a close match is used: ${fonts.joinToString()}.")
             return Result(doc, notes)
         }
@@ -212,7 +218,8 @@ object PsdImport {
         }
 
         fun colorChannels(): List<Int> = when (f.mode) {
-            1 -> listOf(0)
+            // Bitmap, Grayscale, Indexed and Duotone: one channel
+            0, 1, 2, 8 -> listOf(0)
             4 -> listOf(0, 1, 2, 3)
             else -> listOf(0, 1, 2)
         }
@@ -274,11 +281,16 @@ object PsdImport {
         /** Smart objects' contents already read, by their file's id. */
         val contentsCache = HashMap<String, Doc>()
         var textAsPixels = 0
+        var warpedText = 0
         var mixedText = 0
         val smartFromPixels = ArrayList<String>()
+        var smartWarped = 0
+        var smartFiltered = 0
         val fonts = LinkedHashSet<String>()
 
         fun layer(pl: PsdLayer, parent: Long, clip: Boolean): Layer? {
+            // A book (Pantone) color: its RGB isn't in the file, but the layer's own pixels show it
+            bookFallback = if ((pl.solidColor?.get("Clr ") as? Map<*, *>)?.get("_class") == "BkCl" && pl.hasPixels) averageColor(pixels(pl)) else null
             val vector = pl.vectorMask?.takeIf { !it.disabled && it.paths.isNotEmpty() }
             // A shape layer stays a shape (drawn here from its outline)
             val shape = if (vector != null && pl.isFill) shapeSpec(pl, vector) else null
@@ -342,7 +354,12 @@ object PsdImport {
             val stroke = pl.vectorStroke
             val strokeOn = stroke?.get("strokeEnabled") == true
             val fillOn = stroke?.get("fillEnabled") != false
-            if ((solid == null && fillOn) || vm.invert) {
+            // Gradient and pattern fills stay live too
+            val gradFill = pl.gradientFill?.takeIf { solid == null }?.let { g -> gradient(g, g["Opct"]?.let { opacity(it) } ?: 1f, Blend.NORMAL) }
+            val patFill = pl.patternFill?.takeIf { solid == null && gradFill == null }?.let { pf ->
+                patternKey(pf["Ptrn"] as? Map<*, *>)?.let { key -> PatternFx(true, key, Color.BLACK, Color.WHITE, (num(pf["Scl "], 100.0) / 100.0).toFloat() * s) }
+            }
+            if ((solid == null && gradFill == null && patFill == null && fillOn) || vm.invert) {
                 shapesAsPixels++
                 return null
             }
@@ -350,13 +367,17 @@ object PsdImport {
             var strokeColor: Int? = null
             var strokeWidth = 0f
             var align = StrokeAlign.CENTER
+            var dash: List<Float>? = null
             if (strokeOn && stroke != null) {
                 val content = stroke["strokeStyleContent"] as? Map<*, *>
-                val dashed = (stroke["strokeStyleLineDashSet"] as? List<*>)?.isNotEmpty() == true
-                if (content?.get("Clr ") == null || dashed) {
+                if (content?.get("Clr ") == null) {
                     shapesAsPixels++
                     return null
                 }
+                // Dashes: lengths in outline widths, like ours
+                dash = (stroke["strokeStyleLineDashSet"] as? List<*>)?.mapNotNull { v ->
+                    ((v as? Number)?.toDouble() ?: (v as? PsdUnit)?.value)?.toFloat()
+                }?.takeIf { it.isNotEmpty() }
                 val op = opacity(stroke["strokeStyleOpacity"])
                 strokeWidth = px(stroke["strokeStyleLineWidth"], s.toDouble())
                 // A zero-width outline draws nothing
@@ -367,13 +388,16 @@ object PsdImport {
                     else -> StrokeAlign.CENTER
                 }
             }
-            val fill = if (fillOn && solid != null) color(solid["Clr "]) or 0xFF000000.toInt() else null
+            val fill = if (fillOn && solid != null) color(solid["Clr "]) or 0xFF000000.toInt() else if (fillOn) Color.BLACK else null
             val ps = parts(vm)
             if (ps.isEmpty()) return null
             val all = ShapeSpec.customPath(ps, evenOdd = true)
             val b = RectF().also { all.computeBounds(it, true) }
             if (b.width() <= 0f && b.height() <= 0f) return null
-            val base = ShapeSpec(ShapeKind.RECT, fill = fill, stroke = strokeColor, strokeWidth = if (strokeColor != null) strokeWidth else 6f, strokeAlign = align)
+            val base = ShapeSpec(
+                ShapeKind.RECT, fill = fill, stroke = strokeColor, strokeWidth = if (strokeColor != null) strokeWidth else 6f, strokeAlign = align,
+                fillGradient = gradFill.takeIf { fillOn }, fillPattern = patFill.takeIf { fillOn }, dash = dash,
+            )
             // Drawn as a rectangle, rounded rectangle or ellipse (and not turned): kept as one
             val origin = (pl.vectorOrigin?.get("keyDescriptorList") as? List<*>)?.singleOrNull() as? Map<*, *>
             val type = (origin?.get("keyOriginType") as? Number)?.toInt()
@@ -508,6 +532,31 @@ object PsdImport {
                     ))
                 }
                 is PsdAdjust.Invert -> FxParams(kind = FxKind.CURVES, curves = Curves(listOf(listOf(CurvePoint(0f, 1f), CurvePoint(1f, 0f)), Curves.LINE, Curves.LINE, Curves.LINE)))
+                is PsdAdjust.Posterize -> FxParams(kind = FxKind.POSTERIZE, posterize = a.levels.coerceIn(2, 255))
+                is PsdAdjust.Threshold -> FxParams(kind = FxKind.THRESHOLD, threshold = a.level.coerceIn(1, 255) / 255f)
+                is PsdAdjust.ChannelMixer -> {
+                    fun row(r: IntArray?, d: List<Float>): List<Float> =
+                        if (r == null) d else listOf(r[0] / 100f, r[1] / 100f, r[2] / 100f, r[4] / 100f)
+                    val def = ChannelMixer()
+                    val recs = a.channels
+                    if (f.mode != 3) approxAdjust.add("Channel Mixer in a gray or CMYK file")
+                    FxParams(kind = FxKind.CHANNEL_MIXER, channelMixer = ChannelMixer(
+                        red = row(recs.getOrNull(0), def.red),
+                        green = row(recs.getOrNull(1), def.green),
+                        blue = row(recs.getOrNull(2), def.blue),
+                        gray = row(recs.getOrNull(0), def.gray),
+                        mono = a.monochrome,
+                    ))
+                }
+                is PsdAdjust.SelectiveColor -> FxParams(kind = FxKind.SELECTIVE_COLOR, selectiveColor = SelectiveColor(
+                    List(9) { i -> a.ranges.getOrNull(i)?.map { (it / 100f).coerceIn(-1f, 1f) } ?: listOf(0f, 0f, 0f, 0f) },
+                    relative = !a.absolute,
+                ))
+                is PsdAdjust.ColorLookup -> {
+                    // A lookup table file kept in the layer; Photoshop's own looks are color profiles we can't read
+                    val lut = a.data?.let { ColorLookup.parse(String(it, Charsets.ISO_8859_1), a.name) } ?: return null
+                    FxParams(kind = FxKind.COLOR_LOOKUP, colorLookup = lut)
+                }
                 else -> return null
             }
             val mask = pixelMask(pl, isFolder = false)
@@ -590,6 +639,7 @@ object PsdImport {
                 return null
             }
             if (t.mixed && t.runs.isEmpty()) mixedText++
+            if (t.warpStyle != null) warpedText++
             val font = PsdFonts.map(t.fontName)
             val tf = t.transform
             val m = Matrix()
@@ -618,6 +668,10 @@ object PsdImport {
                 allCaps = t.allCaps,
                 curve = t.arc.toFloat(),
                 matrix = m.toAffine(),
+                warp = t.warpStyle?.let { st -> WarpStyle.entries.firstOrNull { it.psd == st } }?.let { st ->
+                    TextWarp(st, (t.warpBend / 100.0).toFloat().coerceIn(-1f, 1f), (t.warpHorizontal / 100.0).toFloat().coerceIn(-1f, 1f),
+                        (t.warpVertical / 100.0).toFloat().coerceIn(-1f, 1f), t.warpVerticalOrientation)
+                }?.takeIf { it.active },
                 boxWidth = if (box != null) (box[2] - box[0]).toFloat().coerceAtLeast(1f) else 0f,
                 psdFont = t.fontName ?: "",
             )
@@ -657,32 +711,135 @@ object PsdImport {
         }
 
         /**
+         * A Photoshop smart object's warp as ours (in its contents' space): first, whether there's
+         * none; then the warp, or null when it can't be read.
+         */
+        fun smartWarp(so: Map<*, *>?): Pair<Boolean, SmartWarp?> {
+            fun n(v: Any?): Double = (v as? Number)?.toDouble() ?: (v as? PsdUnit)?.value ?: 0.0
+            fun nums(v: Any?): List<Double>? = when (v) {
+                is List<*> -> v.map { n(it) }
+                // An object array: its one list
+                is Map<*, *> -> v.values.firstOrNull { it is List<*> }?.let { nums(it) }
+                else -> null
+            }
+            // A split ("quilt") warp is kept next to a plain one; it's the one that counts
+            val w = (so?.get("quiltWarp") as? Map<*, *>)?.takeIf { (it["warpStyle"] as? PsdEnum)?.value == "warpCustom" }
+                ?: so?.get("warp") as? Map<*, *> ?: return true to null
+            val style = (w["warpStyle"] as? PsdEnum)?.value
+            if (!warped(w) && w !== so?.get("quiltWarp")) return true to null
+            val b = w["bounds"] as? Map<*, *>
+            val left = n(b?.get("Left")); val top = n(b?.get("Top ")); val right = n(b?.get("Rght")); val bottom = n(b?.get("Btom"))
+            if (style != "warpCustom") {
+                val named = WarpStyle.entries.firstOrNull { it.psd == style } ?: return false to null
+                return false to SmartWarp(style = TextWarp(
+                    named,
+                    (n(w["warpValue"]) / 100.0).toFloat().coerceIn(-1f, 1f),
+                    (n(w["warpPerspective"]) / 100.0).toFloat().coerceIn(-1f, 1f),
+                    (n(w["warpPerspectiveOther"]) / 100.0).toFloat().coerceIn(-1f, 1f),
+                    (w["warpRotate"] as? PsdEnum)?.value == "Vrtc",
+                ))
+            }
+            if (right - left < 1.0 || bottom - top < 1.0) return false to null
+            val env = w["customEnvelopeWarp"] as? Map<*, *> ?: return false to null
+            val mesh = env["meshPoints"] as? Map<*, *> ?: return false to null
+            val hs = nums(mesh["Hrzn"]) ?: return false to null
+            val vs = nums(mesh["Vrtc"]) ?: return false to null
+            if (hs.size != vs.size || hs.size < 16) return false to null
+            // How many controls across and down: 4, 7, 10… (patches meet every third)
+            val sx = nums(env["quiltSliceX"])?.takeIf { it.size >= 2 }
+            val sy = nums(env["quiltSliceY"])?.takeIf { it.size >= 2 }
+            val across = listOfNotNull(
+                sx?.let { (it.size - 1) * 3 + 1 },
+                (w["deformNumCols"] as? Number)?.toInt()?.takeIf { it >= 4 },
+                (w["uOrder"] as? Number)?.toInt()?.takeIf { it >= 4 },
+                4,
+            ).firstOrNull { it % 3 == 1 && hs.size % it == 0 && (hs.size / it) % 3 == 1 } ?: return false to null
+            val down = hs.size / across
+            val cols = (across - 1) / 3
+            val rows = (down - 1) / 3
+            if (cols > 16 || rows > 16) return false to null
+            val ww = right - left
+            val hh = bottom - top
+            val ctrl = FloatArray(hs.size * 2) { k -> if (k % 2 == 0) ((hs[k / 2] - left) / ww).toFloat() else ((vs[k / 2] - top) / hh).toFloat() }
+            fun slices(v: List<Double>?, n: Int, o: Double, size: Double): FloatArray? = v?.takeIf { it.size == n + 1 }?.map { ((it - o) / size).toFloat() }?.toFloatArray()
+            return false to SmartWarp(ctrl = ctrl, cols = cols, rows = rows, sliceU = slices(sx, cols, left, ww), sliceV = slices(sy, rows, top, hh))
+        }
+
+        /**
+         * A Photoshop smart object's smart filters as ours: the filters, and the name of the first one
+         * we don't have (then none are used).
+         */
+        fun smartFilters(so: Map<*, *>?): Pair<List<SmartFilter>, String?> {
+            val fx = so?.get("filterFX") as? Map<*, *> ?: return emptyList<SmartFilter>() to null
+            if (fx["enab"] == false) return emptyList<SmartFilter>() to null
+            val list = fx["filterFXList"] as? List<*> ?: return emptyList<SmartFilter>() to null
+            fun n(v: Any?): Double = (v as? Number)?.toDouble() ?: (v as? PsdUnit)?.value ?: 0.0
+            val out = ArrayList<SmartFilter>()
+            for (item in list) {
+                val m = item as? Map<*, *> ?: continue
+                val name = ((m["Nm  "] as? String) ?: "Filter").trim().removeSuffix("...").removeSuffix("…").trim()
+                val blend = m["blendOptions"] as? Map<*, *>
+                val mode = (blend?.get("Md  ") as? PsdEnum)?.value
+                if (mode != null && mode != "Nrml") return emptyList<SmartFilter>() to "$name (${mode.trim()} blending)"
+                val opacity = (blend?.get("Opct")?.let { n(it) } ?: 100.0).toFloat() / 100f
+                val f = m["Fltr"] as? Map<*, *>
+                val id = (f?.get("_class") as? String) ?: (m["filterID"] as? Number)?.toInt()?.let { code ->
+                    String(byteArrayOf((code shr 24).toByte(), (code shr 16).toByte(), (code shr 8).toByte(), code.toByte()), Charsets.ISO_8859_1)
+                }
+                // Photoshop's radius is about one standard deviation; ours is Android's blur radius
+                fun blurOf(r: Double) = ((r - 0.5) / 0.57735).toFloat().coerceIn(0f, 500f)
+                val p: FxParams = when (id) {
+                    "GsnB", "boxblur" -> {
+                        if (id == "boxblur") approxAdjust.add("Box Blur (a Gaussian blur is used)")
+                        FxParams(kind = FxKind.BLUR, blur = blurOf(n(f?.get("Rds ")).coerceAtLeast(0.6)))
+                    }
+                    "Blr " -> FxParams(kind = FxKind.BLUR, blur = blurOf(1.0))
+                    "BlrM" -> FxParams(kind = FxKind.BLUR, blur = blurOf(2.0))
+                    "UnsM", "smartSharpen" -> {
+                        approxAdjust.add("${if (id == "UnsM") "Unsharp Mask" else "Smart Sharpen"}'s radius and threshold")
+                        FxParams(adjust = mapOf(Adjust.SHARPNESS to (n(f?.get("Amnt")) / 150.0).toFloat().coerceIn(0f, 1f)))
+                    }
+                    "Shrp" -> FxParams(adjust = mapOf(Adjust.SHARPNESS to 0.25f))
+                    "ShrM" -> FxParams(adjust = mapOf(Adjust.SHARPNESS to 0.6f))
+                    "ShrE" -> FxParams(adjust = mapOf(Adjust.SHARPNESS to 0.2f))
+                    "AdNs" -> {
+                        approxAdjust.add("Add Noise (shown as grain)")
+                        FxParams(adjust = mapOf(Adjust.GRAIN to (n(f?.get("Nose")) / 25.0).toFloat().coerceIn(0f, 1f)))
+                    }
+                    else -> return emptyList<SmartFilter>() to name
+                }
+                out.add(SmartFilter(p, name, enabled = m["enab"] != false, opacity = opacity.coerceIn(0f, 1f)))
+            }
+            return out to null
+        }
+
+        /**
          * A Photoshop smart object as our smart layer: what's inside it (an embedded picture or
-         * Photoshop file) placed where it was. When that can't be read (a linked file, TIFF, a warp
-         * or smart filters), what you see becomes its contents.
+         * Photoshop file) placed where it was, with its warp and smart filters. When that can't be
+         * read (a file kept outside the .psd, a filter we don't have), what you see becomes its contents.
          */
         fun smartProps(pl: PsdLayer, props: LayerProps, grid: TileGrid): LayerProps? {
             val so = pl.smart
             val id = ((so?.get("Idnt") as? String) ?: pl.placedId)?.trim('\u0000', ' ')
             fun quadFrom(v: Any?): FloatArray? = (v as? List<*>)?.mapNotNull { (it as? Number)?.toFloat() }?.takeIf { it.size == 8 }?.toFloatArray()
             val quad = quadFrom(so?.get("nonAffineTransform")) ?: quadFrom(so?.get("Trnf")) ?: pl.placedQuad?.map { it.toFloat() }?.toFloatArray()
-            // Smart filters are in the pixels but not in the contents
-            val filtered = (so?.get("filterFX") as? Map<*, *>)?.let { fx ->
-                fx["enab"] != false && (fx["filterFXList"] as? List<*>)?.isNotEmpty() == true
-            } ?: false
-            // A warp bends the contents past their plain corners: the pixels reach outside them
-            // (inside is fine: contents often have see-through space around them)
-            val outside = quad != null && pl.width > 0 && run {
+            val (filters, badFilter) = smartFilters(so)
+            val (flat, warp) = smartWarp(so)
+            // Without a warp (or a spreading filter) the contents stay inside their corners: pixels
+            // reaching past them mean a bend we haven't read (inside is fine: contents often have
+            // see-through space around them)
+            val outside = flat && filters.none { it.enabled && it.fx.blur > 0f } && quad != null && pl.width > 0 && run {
                 val xs = floatArrayOf(quad[0], quad[2], quad[4], quad[6])
                 val ys = floatArrayOf(quad[1], quad[3], quad[5], quad[7])
                 pl.left < xs.min() - 3 || pl.right > xs.max() + 3 || pl.top < ys.min() - 3 || pl.bottom > ys.max() + 3
             }
-            val bent = outside || warped(so?.get("warp") as? Map<*, *>)
-            val linked = id?.let { key -> f.linked[key] ?: f.linked.entries.firstOrNull { it.key.trim('\u0000', ' ') == key }?.value }
+            val found = id?.let { key -> f.linked[key] ?: f.linked.entries.firstOrNull { it.key.trim('\u0000', ' ') == key }?.value }
+            val linked = found?.takeIf { !it.external }
             var why: String? = when {
-                filtered -> "smart filters"
-                bent -> "warped"
-                linked == null -> "linked file"
+                badFilter != null -> "the $badFilter smart filter"
+                outside || (!flat && warp == null) -> "a warp"
+                found?.external == true -> "linked to ${found.name.trim().ifBlank { "a file" }}"
+                linked == null -> "a linked file"
                 else -> null
             }
             var contents: Doc? = null
@@ -703,7 +860,11 @@ object PsdImport {
             }
             if (contents != null && quad != null) {
                 val q = FloatArray(8) { quad[it] * s }
-                return props.copy(smart = SmartSpec(contents, q))
+                if (warp != null) smartWarped++
+                if (filters.isNotEmpty()) smartFiltered += filters.size
+                // Sizes in the filters follow the picture's scale
+                val scaled = if (s == 1f) filters else filters.map { it.copy(fx = it.fx.copy(blur = it.fx.blur * s)) }
+                return props.copy(smart = SmartSpec(contents, q, warp?.takeIf { it.active }, scaled))
             }
             // What you see becomes the contents (still a smart layer)
             val b = grid.tileBounds() ?: return null
@@ -826,9 +987,26 @@ object PsdImport {
                 val cy = top + y
                 if (cy < keep.top || cy >= keep.bottom || x1 <= x0) continue
                 when (f.mode) {
-                    1 -> for (x in 0 until w) {
+                    // Duotone is shown as the gray it's made from
+                    0, 1, 8 -> for (x in 0 until w) {
                         val g = rows[0][x].toInt() and 0xFF
                         argb[x] = ((a[x].toInt() and 0xFF) shl 24) or (g shl 16) or (g shl 8) or g
+                    }
+                    2 -> {
+                        val pal = f.palette
+                        for (x in 0 until w) {
+                            val k = rows[0][x].toInt() and 0xFF
+                            val c = pal?.get(k) ?: ((0xFF shl 24) or (k shl 16) or (k shl 8) or k)
+                            val alpha = if (k == f.transparentIndex) 0 else (a[x].toInt() and 0xFF)
+                            argb[x] = (alpha shl 24) or (c and 0xFFFFFF)
+                        }
+                    }
+                    9 -> for (x in 0 until w) {
+                        // Lab: lightness 0..255 → 0..100, a and b around 128
+                        val l = (rows[0][x].toInt() and 0xFF) * (100f / 255f)
+                        val aa = (rows[1][x].toInt() and 0xFF) - 128f
+                        val bb = (rows[2][x].toInt() and 0xFF) - 128f
+                        argb[x] = ((a[x].toInt() and 0xFF) shl 24) or ColorMath.labToRgb(l, aa, bb)
                     }
                     4 -> for (x in 0 until w) {
                         // Stored as 255 − ink; a simple conversion (no color profile)
@@ -1087,6 +1265,10 @@ object PsdImport {
                     val mpos = pos?.let { p -> (p.reversed().map { (1f - it) / 2f } + p.drop(1).map { 0.5f + it / 2f }).toFloatArray() }
                     LinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half, mirrored, mpos, Shader.TileMode.CLAMP)
                 }
+                GradientType.ANGLE, GradientType.DIAMOND -> GradientPainter.shader(
+                    GradientSpec(fx.colors, fx.type, 1f, fx.reverse, fx.positions),
+                    android.graphics.PointF(cx, cy), android.graphics.PointF(cx + ux * half, cy + uy * half),
+                )
                 else -> LinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half, colors, pos, Shader.TileMode.CLAMP)
             }
         }
@@ -1168,6 +1350,29 @@ object PsdImport {
         }, "an effect")
 
         var unsupportedColors = 0
+        /** The color a book color stands for, read from the layer being brought in (see [layer]). */
+        var bookFallback: Int? = null
+
+        /** The average color of [g]'s solid pixels (edges and see-through parts left out). */
+        fun averageColor(g: TileGrid): Int? {
+            var r = 0L
+            var gr = 0L
+            var b = 0L
+            var n = 0L
+            val row = IntArray(TileGrid.SIZE)
+            for (t in g.tiles.values) {
+                for (y in 0 until t.height step 4) {
+                    t.getPixels(row, 0, t.width, 0, y, t.width, 1)
+                    for (x in 0 until t.width step 4) {
+                        val p = row[x]
+                        if ((p ushr 24) < 250) continue
+                        r += (p shr 16) and 0xFF; gr += (p shr 8) and 0xFF; b += p and 0xFF; n++
+                    }
+                }
+            }
+            if (n == 0L) return null
+            return Color.rgb((r / n).toInt(), (gr / n).toInt(), (b / n).toInt())
+        }
 
         fun color(v: Any?): Int {
             val m = v as? Map<*, *> ?: return Color.BLACK
@@ -1189,7 +1394,7 @@ object PsdImport {
                     Color.rgb(c255((1 - c) * (1 - k)), c255((1 - mg) * (1 - k)), c255((1 - y) * (1 - k)))
                 }
                 "LbCl" -> lab(d("Lmnc") ?: 0.0, d("A   ") ?: 0.0, d("B   ") ?: 0.0)
-                "BkCl" -> {
+                "BkCl" -> bookFallback ?: run {
                     unsupportedColors++
                     Color.BLACK
                 }
@@ -1243,11 +1448,9 @@ object PsdImport {
                 "Rdl " -> GradientType.RADIAL
                 "Rflc" -> GradientType.REFLECTED
                 "Lnr " -> GradientType.LINEAR
-                null -> GradientType.LINEAR
-                else -> {
-                    unsupportedFx.add("angle and diamond gradients (shown as linear)")
-                    GradientType.LINEAR
-                }
+                "Angl" -> GradientType.ANGLE
+                "Dmnd" -> GradientType.DIAMOND
+                else -> GradientType.LINEAR
             }
             if (stops.size < 2) {
                 if (g != null && g["GrdF"] is PsdEnum && (g["GrdF"] as PsdEnum).value == "ClNs") unsupportedFx.add("noise gradients")
