@@ -374,7 +374,8 @@ Menu → **Enhance** works on the selected layer (with a selection, only on what
     Thickness, Color).
   - **Relight** — drag the light around the picture: Strength, Height, Reach, Shadows, Relief, Color, and
     whether it blends as Soft Light, Overlay or Linear Light.
-  - **Replace sky** — the sky is the farthest part reaching the top edge; pick a ready-made sky (Clear
+  - **Replace sky** — the sky is the farthest part reaching the top edge, plus pockets of sky the clouds
+    or peaks cut off, and a short way on into the sky's own colors (never into far mountains); pick a ready-made sky (Clear
     blue, Deep blue, Golden hour, Sunset, Dusk, Overcast, Storm, with Clouds) or one of your photos, and how
     far the sky reaches and how soft its edge is.
   Each of these is added as **its own layer** above the photo, clipped to it, with a mask (Relight's light

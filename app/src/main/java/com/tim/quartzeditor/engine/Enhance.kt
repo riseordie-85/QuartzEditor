@@ -242,7 +242,8 @@ half4 main(float2 p) {
 
     /**
      * Where the sky is (0..1), from the depth: the farthest parts ([threshold] and beyond) that
-     * reach the top edge, with edges following the picture. Null when there's no sky.
+     * reach the top edge, pockets of sky the clouds cut off, and a short way on into the sky's own
+     * colors (see [SkyFinder]), with edges following the picture. Null when there's no sky.
      */
     fun skyMask(src: Bitmap, depth: FloatArray, w: Int, h: Int, threshold: Float): FloatArray? {
         val n = w * h
@@ -252,95 +253,7 @@ half4 main(float2 p) {
             val c = px[i]
             (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f
         }
-        val sky = BooleanArray(n)
-        val queue = IntArray(n)
-        var head = 0
-        var tail = 0
-        fun flood(ok: (Int) -> Boolean) {
-            while (head < tail) {
-                val i = queue[head++]
-                val x = i % w
-                val y = i / w
-                fun visit(j: Int) {
-                    if (!sky[j] && ok(j)) {
-                        sky[j] = true
-                        queue[tail++] = j
-                    }
-                }
-                if (x > 0) visit(i - 1)
-                if (x < w - 1) visit(i + 1)
-                if (y > 0) visit(i - w)
-                if (y < h - 1) visit(i + w)
-            }
-        }
-        // 1. The farthest parts that reach the top edge
-        for (x in 0 until w) if (depth[x] <= threshold) {
-            sky[x] = true
-            queue[tail++] = x
-        }
-        flood { depth[it] <= threshold }
-        if (tail < n * 0.01f) return null
-        // 2. A little way on into what looks like that sky (clouds hugging a peak, haze along a
-        // ridge), which the depth alone tends to leave behind. Only a short way, and only where
-        // the color matches, so bright rock and snow on far mountains stay mountains.
-        var sr = 0.0
-        var sg = 0.0
-        var sb = 0.0
-        for (k in 0 until tail) {
-            val c = px[queue[k]]
-            sr += (c shr 16) and 0xFF
-            sg += (c shr 8) and 0xFF
-            sb += c and 0xFF
-        }
-        val mr = (sr / tail).toFloat()
-        val mg = (sg / tail).toFloat()
-        val mb = (sb / tail).toFloat()
-        // How much the sky's own color varies (gradient, clouds): what still counts as "like it"
-        var spread = 0.0
-        var samples = 0
-        for (k in 0 until tail step max(1, tail / 20000)) {
-            val c = px[queue[k]]
-            val dr = ((c shr 16) and 0xFF) - mr
-            val dg = ((c shr 8) and 0xFF) - mg
-            val db = (c and 0xFF) - mb
-            spread += sqrt(dr * dr + dg * dg + db * db)
-            samples++
-        }
-        val near = (spread / max(1, samples)).toFloat().coerceIn(18f, 45f) * 1.5f
-        val far = threshold + 0.06f
-        val reach = max(3, (max(w, h) * 0.015f).roundToInt())
-        val steps = IntArray(n)
-        head = 0
-        while (head < tail) {
-            val i = queue[head++]
-            if (steps[i] >= reach) continue
-            val x = i % w
-            val y = i / w
-            fun visit(j: Int) {
-                if (sky[j] || depth[j] > far) return
-                val c = px[j]
-                val dr = ((c shr 16) and 0xFF) - mr
-                val dg = ((c shr 8) and 0xFF) - mg
-                val db = (c and 0xFF) - mb
-                if (sqrt(dr * dr + dg * dg + db * db) > near) return
-                sky[j] = true
-                steps[j] = steps[i] + 1
-                queue[tail++] = j
-            }
-            if (x > 0) visit(i - 1)
-            if (x < w - 1) visit(i + 1)
-            if (y > 0) visit(i - w)
-            if (y < h - 1) visit(i + w)
-        }
-        // 3. One pixel more, so the new sky tucks in under the edge instead of leaving a rim of the old one
-        val grown = sky.copyOf()
-        for (i in 0 until n) if (sky[i]) {
-            val x = i % w
-            if (x > 0) grown[i - 1] = true
-            if (x < w - 1) grown[i + 1] = true
-            if (i >= w) grown[i - w] = true
-            if (i + w < n) grown[i + w] = true
-        }
+        val grown = SkyFinder.find(px, depth, w, h, threshold) ?: return null
         val p = FloatArray(n) { if (grown[it]) 1f else 0f }
         val f = Cutout.guidedFilter(gray, p, w, h, max(2, (max(w, h) / 250f).roundToInt()), 1e-3f)
         for (i in f.indices) {
