@@ -430,6 +430,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var message by mutableStateOf<String?>(null)
     /** After opening a Photoshop file: its name and what didn't come across exactly (shown once). */
     var importReport by mutableStateOf<Pair<String, List<String>>?>(null)
+
+    /** After saving a Photoshop file: what Photoshop gets differently (the file's name and the list). */
+    var exportReport by mutableStateOf<Pair<String, List<String>>?>(null)
     /** Your swatches and the ones you imported (SwatchPanel.kt); null until first needed. */
     var swatchGroups by mutableStateOf<List<com.tim.quartzeditor.engine.SwatchGroup>?>(null)
     /** Color pickers' tab: 0 the picker, 1 swatches (the same in every picker). */

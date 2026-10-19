@@ -212,6 +212,43 @@ object Gpu {
         }
     }
 
+    /**
+     * What [fx]'s colour changes do to every colour, as an [n]³ table (RGB bytes, red changing
+     * fastest, then green, then blue), e.g. for a .cube file. Sharpening and grain are left out.
+     */
+    fun colorTable(fx: FxParams, n: Int): ByteArray? {
+        val src = Bitmap.createBitmap(n, n * n, Bitmap.Config.ARGB_8888)
+        try {
+            val px = IntArray(n * n * n)
+            for (b in 0 until n) for (g in 0 until n) for (r in 0 until n) {
+                fun v(k: Int) = (k * 255 + (n - 1) / 2) / (n - 1)
+                px[(b * n + g) * n + r] = Color.rgb(v(r), v(g), v(b))
+            }
+            src.setPixels(px, 0, n, 0, 0, n, n * n)
+            val out = renderOffscreen(n, n * n) { canvas ->
+                val cs = ColorShader().also { it.noGrain = true }
+                cs.bind(fx.copy(adjust = fx.adjust - Adjust.SHARPNESS - Adjust.GRAIN - Adjust.VIGNETTE, blur = 0f), src)
+                canvas.drawRect(0f, 0f, n.toFloat(), (n * n).toFloat(), cs.paint)
+            }
+            try {
+                out.getPixels(px, 0, n, 0, 0, n, n * n)
+            } finally {
+                out.recycle()
+            }
+            return ByteArray(px.size * 3).also { a ->
+                for (i in px.indices) {
+                    a[i * 3] = (px[i] shr 16).toByte()
+                    a[i * 3 + 1] = (px[i] shr 8).toByte()
+                    a[i * 3 + 2] = px[i].toByte()
+                }
+            }
+        } catch (e: Exception) {
+            return null
+        } finally {
+            src.recycle()
+        }
+    }
+
     /** Gaussian blur of the given radius (pixels) as an effect. */
     fun blurEffect(radius: Float, edges: Shader.TileMode = Shader.TileMode.DECAL): RenderEffect =
         RenderEffect.createBlurEffect(radius, radius, edges)
@@ -307,6 +344,9 @@ object Gpu {
  * place that draws (preview, each filter thumbnail, export).
  */
 class ColorShader {
+    /** Leaves out grain (it depends on where a pixel is, not its color): for color tables. */
+    var noGrain = false
+
     private val shader: RuntimeShader
     /** Whether this device's GPU took the full shader (with the color adjustments). */
     private val full: Boolean
@@ -462,7 +502,7 @@ class ColorShader {
         shader.setFloatUniform("sharpness", state.adjust(Adjust.SHARPNESS))
         shader.setFloatUniform(
             "grain",
-            (state.adjust(Adjust.GRAIN) + state.filter.grain * strength).coerceIn(0f, 1f),
+            if (noGrain) 0f else (state.adjust(Adjust.GRAIN) + state.filter.grain * strength).coerceIn(0f, 1f),
         )
         val m = state.filter.matrix
         shader.setFloatUniform("fr", m[0], m[1], m[2], m[3])

@@ -403,6 +403,20 @@ fun Workspace(vm: EditorViewModel) {
             confirmButton = { TextButton(onClick = { vm.importReport = null }) { Text("OK") } },
         )
     }
+    // After saving a Photoshop file: what Photoshop gets differently
+    vm.exportReport?.let { (name, notes) ->
+        AlertDialog(
+            onDismissRequest = { vm.exportReport = null },
+            title = { Text("Saved \"$name.psd\"") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text("It's in Download/${com.tim.quartzeditor.data.Media.FOLDER}, with its layers. In Photoshop, a few things are different:", color = Q.textDim, fontSize = 14.sp)
+                    for (n in notes) Text("• $n", color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.exportReport = null }) { Text("OK") } },
+        )
+    }
     if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
     if (upscaleOpen) {
         val room = vm.upscaleRoom()
@@ -550,21 +564,27 @@ private fun ExportDialog(name: String, onDismiss: () -> Unit, onExport: (ExportF
         title = { Text("Export image") },
         text = {
             Column {
-                Text("Saves a flattened copy to Pictures/Quartz Editor (it shows up in Quartz Gallery).", color = Q.textDim, fontSize = 14.sp)
+                Text("Saves a flattened copy to Pictures/Quartz Editor (it shows up in Quartz Gallery), or a Photoshop file with its layers.", color = Q.textDim, fontSize = 14.sp)
                 Spacer(Modifier.height(12.dp))
                 androidx.compose.material3.OutlinedTextField(
                     fileName, { fileName = it.replace("/", "").take(80) }, label = { Text("File name") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Wraps onto a second line on a narrow screen
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     ExportFormat.entries.forEach { f ->
                         SmallButton(f.label, primary = f == format) { format = f }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (format.alpha) "Keeps see-through areas." else "See-through areas become white.",
+                    when {
+                        format == ExportFormat.PSD -> "Keeps every layer, mask, style, adjustment, shape, text and smart layer. Saved to Download/${com.tim.quartzeditor.data.Media.FOLDER}."
+                        format.alpha -> "Keeps see-through areas."
+                        else -> "See-through areas become white."
+                    },
                     color = Q.textDim,
                     fontSize = 13.sp,
                 )

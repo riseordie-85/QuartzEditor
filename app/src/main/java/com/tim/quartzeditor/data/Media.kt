@@ -24,6 +24,8 @@ enum class ExportFormat(val label: String, val mime: String, val ext: String, va
     JPEG("JPG", "image/jpeg", "jpg", Bitmap.CompressFormat.JPEG, false),
     WEBP("WebP", "image/webp", "webp", Bitmap.CompressFormat.WEBP_LOSSLESS, true),
     TIFF("TIFF", "image/tiff", "tif", null, true),
+    /** With its layers (saved to Download, since it isn't a picture galleries show). */
+    PSD("Photoshop", "image/vnd.adobe.photoshop", "psd", null, true),
 }
 
 object Media {
@@ -182,6 +184,31 @@ object Media {
         val alpha = bitmap.hasAlpha()
         com.tim.quartzeditor.engine.TiffWriter.write(out, w, bitmap.height, alpha, "Quartz Editor", { y, row -> bitmap.getPixels(row, 0, w, 0, y, w, 1) })
         out.flush()
+    }
+
+    val DOWNLOAD_LABEL = "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER"
+
+    /** Copies [file] to Download/Quartz Editor as [name] (a Photoshop file, say). Returns its address. */
+    suspend fun saveDownload(context: Context, file: java.io.File, name: String, mime: String): Uri = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, mime)
+            put(MediaStore.Downloads.RELATIVE_PATH, DOWNLOAD_LABEL)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+            ?: throw IOException("Android didn't allow a new file")
+        try {
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 16) } } ?: throw IOException("Couldn't write the file")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            uri
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
     }
 
     /** Saves a finished image to Pictures/Quartz Editor. Returns its address. */

@@ -392,6 +392,24 @@ in between. With a selection, the mask button makes a mask that shows only what'
   mask and setting (smart layers keep their full-size contents inside the project).
 - **Export image** saves a flattened PNG, JPG, WebP or TIFF (ZIP-compressed, with transparency) to `Pictures/Quartz Editor` (shows up in Quartz
   Gallery), optionally sharing it.
+- **Photoshop file**: Export image → Photoshop saves a `.psd` with its layers to `Download/Quartz Editor`:
+  - every layer's pixels, mask (on or off), blend mode, opacity, fill, clipping, visibility and locks;
+    folders (Pass Through or their own blend mode, open or closed, with masks and styles)
+  - **layer styles** as Photoshop's (Drop Shadow, Inner Shadow, Outer and Inner Glow, Bevel & Emboss,
+    Satin, Color, Gradient Overlay, Stroke)
+  - **adjustment layers** as Photoshop's own (Levels, Curves, Brightness/Contrast, Exposure, Vibrance,
+    Hue/Saturation, Color Balance, Black & White, Photo Filter, Gradient Map, Channel Mixer, Selective
+    Color, Color Lookup, Posterize, Threshold); Adjustments and Filters with no Photoshop twin become a
+    Color Lookup layer that changes colors the same way
+  - **shapes stay shapes** (their outline, color or gradient fill, outline width, position and dashes)
+    and **text stays text** (font by name, size, color, alignment, spacing, styled parts, box text, warp)
+  - **smart layers stay smart objects**, each with its contents inside (a Photoshop file of its own when
+    it has layers; linked copies share one), placement, warp and smart filters (Gaussian Blur, sharpen,
+    noise)
+  - the flattened picture, as the app draws it
+
+  Afterwards a short list says what Photoshop gets differently (3D and pattern-filled layers as their
+  pixels, Long Shadow and Pattern Overlay only in the flattened picture, Gaussian Blur adjustment layers…).
 - **Close without saving** (menu) throws away changes since the last save.
 - The menu also rotates the whole image 90° or flips it.
 - **Save project file** writes a `.qedit` file anywhere (Drive, Downloads...). Projects live inside the app,
@@ -439,6 +457,9 @@ the app still works; those features say the model isn't included. Licenses: Mobi
 (its mask decoder is the original Segment Anything decoder, Apache-2.0), MI-GAN MIT, Depth Anything V2
 Small Apache-2.0, Real-ESRGAN BSD-3-Clause, ONNX Runtime MIT.
 
+The Photoshop file writer follows ag-psd (MIT, by Agamnentzar) for how Photoshop lays out
+descriptors, text engine data and smart objects.
+
 ## Where the code is
 Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 - `engine/` — the picture itself, with no screens: layers and tiles (`Doc`, `TileGrid`), drawing
@@ -447,7 +468,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   (`FaceAware`), background removal (`Cutout`), shapes and text (`Vector`, `Fonts`), undo (`History`),
   project files (`ProjectIO`), color adjustments (`ColorAdjust`), retouch brushes and healing (`Retouch`),
   selection expand/shrink (`SelectionOps`), the AI models (`Ai`), Photoshop files (`Psd` reads them,
-  `PsdImport` turns them into a document, `PsdFonts` picks fonts), TIFF files (`Tiff`: reading and writing), the blend modes Android doesn't have
+  `PsdImport` turns them into a document, `PsdFonts` picks fonts, `PsdExport` turns a document into one,
+  `PsdWriter` writes it), TIFF files (`Tiff`: reading and writing), the blend modes Android doesn't have
   (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`), the Enhance effects
   (`Enhance`), swatch sets and files (`Swatches`), text warps (`TextWarp`) and smart layers with their
   warps and smart filters (`Smart`).
