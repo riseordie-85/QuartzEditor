@@ -92,7 +92,8 @@ inline fun PsdSink.section(round: Int, total: Boolean = false, body: () -> Unit)
     body()
     var len = pos - at - 4
     var padded = len
-    while ((pos % round) != 0L) {
+    // Padded by its own length (what readers go by), not by where it is in the file
+    while ((padded % round) != 0L) {
         u8(0)
         padded++
     }
@@ -134,6 +135,9 @@ class PsdBuf(initial: Int = 256) : PsdSink {
     }
 
     fun toByteArray(): ByteArray = data.copyOf(size)
+
+    /** The bytes as they are (the first [size] count; don't change them). */
+    fun bytesNoCopy(): ByteArray = data
 }
 
 /** Bytes to a file, buffered (lengths are written back in place). */
@@ -525,9 +529,18 @@ object PsdWriter {
                 // Channel data
                 for ((li, l) in list.withIndex()) {
                     val ids = channelIds(l)
+                    // The color channels are read in one pass over the pixels (each row once)
+                    val packed = packColors(l)
                     for ((k, id) in ids.withIndex()) {
                         val start = s.pos
-                        writeChannel(s, l, id)
+                        val pc = packed?.get(id)
+                        if (pc != null) {
+                            s.u16(1)
+                            for (n in pc.first) s.u16(n)
+                            s.bytes(pc.second.bytesNoCopy(), 0, pc.second.size)
+                        } else {
+                            writeChannel(s, l, id)
+                        }
                         s.patchU32(lengths[li][k], s.pos - start)
                     }
                 }
@@ -580,6 +593,36 @@ object PsdWriter {
         if (m != null && m.right > m.left && m.bottom > m.top && m.rows != null) ids.add(-2)
         if (w <= 0 || h <= 0 || l.pixels == null) return if (ids.size == 5) ids else listOf(-1, 0, 1, 2)
         return ids
+    }
+
+    /** [l]'s transparency, red, green and blue, each as row lengths and PackBits rows (null: no pixels). */
+    private fun packColors(l: PsdLayerOut): Map<Int, Pair<IntArray, PsdBuf>>? {
+        val w = l.right - l.left
+        val h = l.bottom - l.top
+        val px = l.pixels ?: return null
+        if (w <= 0 || h <= 0) return null
+        val ids = intArrayOf(-1, 0, 1, 2)
+        val out = ids.associateWith { IntArray(h) to PsdBuf(maxOf(256, w * h / 8)) }
+        val argb = IntArray(w)
+        val row = ByteArray(w)
+        val packed = ByteArray(w + w / 128 + 4)
+        for (y in 0 until h) {
+            px(y, argb)
+            for (id in ids) {
+                val shift = when (id) {
+                    -1 -> 24
+                    0 -> 16
+                    1 -> 8
+                    else -> 0
+                }
+                for (x in 0 until w) row[x] = (argb[x] ushr shift).toByte()
+                val n = PackBits.encode(row, w, packed)
+                val (lens, buf) = out.getValue(id)
+                lens[y] = n
+                buf.bytes(packed, 0, n)
+            }
+        }
+        return out
     }
 
     /** One channel: its compression (PackBits, or none when empty), row lengths and rows. */

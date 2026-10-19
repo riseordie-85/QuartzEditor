@@ -28,8 +28,8 @@ import kotlin.math.sqrt
 object PsdExport {
     class Result(val notes: List<String>)
 
-    /** How deep smart layers' contents are saved as Photoshop files of their own. */
-    private const val MAX_DEPTH = 3
+    /** How deep smart layers' contents are saved as Photoshop files of their own (as deep as the app reads them). */
+    private const val MAX_DEPTH = 2
 
     /** Writes [doc] as a .psd to [file] (background thread; uses the GPU for a few things). */
     fun write(doc: Doc, file: File, cacheDir: File, depth: Int = 0): Result {
@@ -59,8 +59,10 @@ object PsdExport {
             val layers = ArrayList<PsdLayerOut>()
             emit(0L, layers)
             // The flattened picture, as we draw it
-            val fx = DocRenderer.buildAllEffects(doc, 8192)
-            val flat = DocRenderer.flatten(doc, effects = { fx[it.id] })
+            var fx: Map<Long, BuiltEffects>? = DocRenderer.buildAllEffects(doc, 8192)
+            val flat = DocRenderer.flatten(doc, effects = { fx?.get(it.id) })
+            // (the effects are big; they're not needed past here)
+            fx = null
             try {
                 var alpha = false
                 val row = IntArray(flat.width)
@@ -577,7 +579,10 @@ object PsdExport {
             if (spatial.isNotEmpty()) notes.add("Sharpness, vignette and grain on adjustment layers (only in the flattened picture)")
             notes.add("Adjustment layers Photoshop has no twin for became Color Lookup layers that change colors the same way")
             val n = 33
-            val rgb = Gpu.colorTable(fx.copy(blur = 0f, adjust = fx.adjust - Adjust.SHARPNESS - Adjust.VIGNETTE - Adjust.GRAIN), n) ?: return null
+            val rgb = Gpu.colorTable(fx.copy(blur = 0f, adjust = fx.adjust - Adjust.SHARPNESS - Adjust.VIGNETTE - Adjust.GRAIN), n) ?: run {
+                notes.add("\"$name\" couldn't be turned into a Color Lookup and was left out")
+                return null
+            }
             return lookupBlocks(name, n, rgb)
         }
 
@@ -761,8 +766,9 @@ object PsdExport {
                 ShapeKind.CUSTOM -> {
                     val sx = if (s.viewW > 0f) s.w / s.viewW else 1f
                     val sy = if (s.viewH > 0f) s.h / s.viewH else 1f
-                    s.parts.filter { it.points.size >= 2 }.mapIndexed { i, part ->
-                        Outline(knots(part.points, sx, sy), part.closed, if (part.op < 0) (if (i == 0) 1 else 1) else part.op, part.evenOdd ?: s.evenOdd)
+                    // An op of −1 (written as 0xFFFF) keeps an outline with the one before: how holes are made
+                    s.parts.filter { it.points.size >= 2 }.map { part ->
+                        Outline(knots(part.points, sx, sy), part.closed, part.op, part.evenOdd ?: s.evenOdd)
                     }
                 }
                 ShapeKind.ELLIPSE -> {
@@ -827,7 +833,12 @@ object PsdExport {
         // ------------------------------------------------------------ smart objects
 
         fun smart(l: Layer, sp: SmartSpec): List<Pair<String, ByteArray>> {
-            val e = embed(sp.contents) ?: return emptyList()
+            val e = try {
+                embed(sp.contents)
+            } catch (err: Exception) {
+                notes.add("\"${l.props.name}\" was saved as its pixels (its contents couldn't be saved: ${err.message ?: err.javaClass.simpleName})")
+                null
+            } ?: return emptyList()
             val quad = DoubleArray(8) { i -> sp.quad[i].toDouble() + if (i % 2 == 0) l.x else l.y }
             val w = sp.contents.width.toFloat()
             val h = sp.contents.height.toFloat()
@@ -959,6 +970,7 @@ object PsdExport {
                 r.notes.forEach { notes.add("Inside a smart layer: $it") }
                 Embedded(id, "$name.psd", "8BPS", f, c.width, c.height)
             } else {
+                if (!simple) notes.add("Smart layers more than two deep inside each other keep their innermost contents as one picture")
                 // One picture: kept as a PNG
                 val fx = DocRenderer.buildAllEffects(c, 8192)
                 val bmp = DocRenderer.flatten(c, effects = { fx[it.id] })

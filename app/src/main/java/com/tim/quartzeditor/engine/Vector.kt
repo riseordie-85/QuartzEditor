@@ -888,9 +888,41 @@ object VectorArt {
      * back up), made into a solid on the GPU, then cut into tiles within [clip].
      */
     private fun rasterize3D(props: LayerProps, e: Extrude3D, clip: RectF): TileGrid {
+        // The same layer drawn again (a slider let go after its live redraw): the same tiles
+        synchronized(this) {
+            val c = last3D
+            if (c != null && c.first == props && c.second == clip) return TileGrid(alphaOnly = false).also { it.tiles.putAll(c.third.tiles) }
+        }
+        val g = try {
+            solid(props, e, clip)
+        } catch (err: OutOfMemoryError) {
+            null
+        } catch (err: Exception) {
+            android.util.Log.e("Quartz3D", "3D failed: ${err.message}")
+            null
+        } ?: return rasterizeFlat(props, clip)
+        synchronized(this) { last3D = Triple(props, RectF(clip), g) }
+        return TileGrid(alphaOnly = false).also { it.tiles.putAll(g.tiles) }
+    }
+
+    /** The last 3D layer drawn (its settings, area and tiles; tiles are never drawn into once made). */
+    private var last3D: Triple<LayerProps, RectF, TileGrid>? = null
+
+    /** The layer drawn flat (when its 3D can't be drawn). */
+    private fun rasterizeFlat(props: LayerProps, clip: RectF): TileGrid =
+        rasterize(props.copy(shape = props.shape?.copy(extrude = null), text = props.text?.copy(extrude = null)), clip)
+
+    private fun solid(props: LayerProps, e: Extrude3D, clip: RectF): TileGrid {
         val g = TileGrid(alphaOnly = false)
         val flat = flatBounds(props) ?: return g
-        val k = min(1f, 3000f / max(flat.width(), flat.height()).coerceAtLeast(1f))
+        // Small enough that the solid, and each line of sight through it, stay within what's drawn
+        val whole = Extrude.bounds(e, flat)
+        val k = minOf(
+            1f,
+            Extrude.MAX_SIDE / max(flat.width(), flat.height()).coerceAtLeast(1f),
+            Extrude.MAX_SIDE / max(whole.width(), whole.height()).coerceAtLeast(1f),
+            450f / Extrude.reach(e).coerceAtLeast(1f),
+        )
         val fw = ceil(flat.width() * k).toInt().coerceIn(1, 4096)
         val fh = ceil(flat.height() * k).toInt().coerceIn(1, 4096)
         val box = RectF(flat.left * k, flat.top * k, flat.left * k + fw, flat.top * k + fh)

@@ -141,8 +141,8 @@ object Extrude {
     fun render(e: Extrude3D, front: Bitmap, box: RectF): Pair<Bitmap, Rect> {
         val area = bounds(e, box)
         val out = Rect(floor(area.left).toInt(), floor(area.top).toInt(), ceil(area.right).toInt(), ceil(area.bottom).toInt())
-        val w = out.width().coerceIn(1, 8192)
-        val h = out.height().coerceIn(1, 8192)
+        val w = out.width().coerceIn(1, MAX_SIDE)
+        val h = out.height().coerceIn(1, MAX_SIDE)
         out.right = out.left + w
         out.bottom = out.top + h
         val r = rotation(e)
@@ -154,9 +154,9 @@ object Extrude {
         val frontLit = 1f - shade * 0.25f * (1f - max(0f, -r[2] * l[0] - r[5] * l[1] - r[8] * l[2]))
         // The outline, softened, says which way each bit of side faces
         val soft = Gpu.blurred(front, 1.5f, Shader.TileMode.DECAL)
+        var bmp: Bitmap? = null
         try {
-            val bmp = Gpu.renderOffscreen(w, h) { c ->
-                val sh = RuntimeShader(SOLID).apply {
+            val sh = RuntimeShader(SOLID).apply {
                     setInputShader("front", BitmapShader(front, Shader.TileMode.DECAL, Shader.TileMode.DECAL))
                     setInputShader("soft", BitmapShader(soft, Shader.TileMode.DECAL, Shader.TileMode.DECAL))
                     setFloatUniform("r0", r[0], r[1], r[2])
@@ -174,13 +174,44 @@ object Extrude {
                     setFloatUniform("useColor", if (sc != null) 1f else 0f)
                     val col = sc ?: Color.GRAY
                     setFloatUniform("sideColor", Color.red(col) / 255f, Color.green(col) / 255f, Color.blue(col) / 255f)
-                }
-                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = sh })
             }
-            return bmp to out
+            // In pieces, so no single GPU draw runs long enough for the driver to give up on it
+            val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp = result
+            val canvas = android.graphics.Canvas(result)
+            val paint = Paint().apply { shader = sh }
+            var y0 = 0
+            while (y0 < h) {
+                val th = min(PIECE, h - y0)
+                var x0 = 0
+                while (x0 < w) {
+                    val tw = min(PIECE, w - x0)
+                    val piece = Gpu.renderOffscreen(tw, th) { c ->
+                        c.translate(-x0.toFloat(), -y0.toFloat())
+                        c.drawRect(x0.toFloat(), y0.toFloat(), (x0 + tw).toFloat(), (y0 + th).toFloat(), paint)
+                    }
+                    canvas.drawBitmap(piece, x0.toFloat(), y0.toFloat(), null)
+                    piece.recycle()
+                    x0 += tw
+                }
+                y0 += th
+            }
+            bmp = null
+            return result to out
         } finally {
+            bmp?.recycle()
             soft.recycle()
         }
+    }
+
+    /** The biggest picture a solid is drawn at (bigger layers are drawn smaller and scaled up). */
+    const val MAX_SIDE = 3072
+    private const val PIECE = 1024
+
+    /** How far (pixels of the front, at most) a line of sight runs through the solid: the depth, turned. */
+    fun reach(e: Extrude3D): Float {
+        val r = rotation(e)
+        return e.depth.coerceAtLeast(0f) * (kotlin.math.hypot(r[2], r[5]) + 0.05f)
     }
 
     /**
@@ -220,19 +251,40 @@ half4 main(float2 p) {
     float2 b1 = float2(eye * r0.z - X * r2.z, eye * r1.z - Y * r2.z);
     float2 p0 = float2(a22 * b0.x - a12 * b0.y, -a21 * b0.x + a11 * b0.y) / det;
     float2 v = float2(a22 * b1.x - a12 * b1.y, -a21 * b1.x + a11 * b1.y) / det;
-    float len = length(v) * depth;
+    // Only where the line of sight is over the front (with a pixel to spare) can it meet anything
+    float2 a = mid + p0;
+    float2 lo = float2(-1.0);
+    float2 hi = mid * 2.0 + float2(1.0);
+    float z0 = 0.0;
+    float z1 = depth;
+    for (int k = 0; k < 2; k++) {
+        float ak = k == 0 ? a.x : a.y;
+        float vk = k == 0 ? v.x : v.y;
+        float lk = k == 0 ? lo.x : lo.y;
+        float hk = k == 0 ? hi.x : hi.y;
+        if (abs(vk) < 1e-6) {
+            if (ak < lk || ak > hk) return half4(0.0);
+        } else {
+            float ta = (lk - ak) / vk;
+            float tb = (hk - ak) / vk;
+            z0 = max(z0, min(ta, tb));
+            z1 = min(z1, max(ta, tb));
+        }
+    }
+    if (z1 < z0) return half4(0.0);
+    float len = length(v) * (z1 - z0);
     float n = clamp(ceil(len / 0.75), 1.0, 600.0);
-    float dz = depth / n;
+    float dz = (z1 - z0) / n;
     float4 acc = float4(0.0);
     for (int i = 0; i <= 600; i++) {
         float fi = float(i);
         if (fi > n) break;
-        float z = fi * dz;
+        float z = z0 + fi * dz;
         float2 t = mid + p0 + v * z;
         float4 c = float4(front.eval(t));
         if (c.a > 0.002) {
             float3 col;
-            if (i == 0) {
+            if (z < 0.001) {
                 col = c.rgb / c.a * frontLit;
             } else {
                 float gx = float(soft.eval(t + float2(1.0, 0.0)).a) - float(soft.eval(t - float2(1.0, 0.0)).a);
