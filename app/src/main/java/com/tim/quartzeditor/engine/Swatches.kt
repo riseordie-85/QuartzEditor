@@ -149,6 +149,7 @@ object Swatches {
             if (b.remaining() < 6) break
             val type = b.short.toInt() and 0xFFFF
             val len = b.int
+            if (len < 0 || len > b.remaining()) break
             val end = b.position() + len
             when (type) {
                 0xC001 -> {

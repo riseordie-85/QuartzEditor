@@ -498,7 +498,7 @@ class ColorLookup(val name: String, val size: Int, val rgb: ByteArray, val prese
             it.optString("preset").takeIf { k -> k.isNotEmpty() }?.let { k -> return preset(k) }
             val n = it.optInt("size")
             val data = runCatching { android.util.Base64.decode(it.optString("data"), android.util.Base64.NO_WRAP) }.getOrNull() ?: return null
-            if (n < 2 || data.size < n * n * n * 3) return null
+            if (n !in 2..64 || data.size < n * n * n * 3) return null
             ColorLookup(it.optString("name", "Look"), n, data)
         }
     }

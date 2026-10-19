@@ -239,11 +239,13 @@ the list; the button shows the one you used last.
   undo step there). ✕ on a tab closes it the same way. Smart layers inside smart layers open more tabs.
 - Transform, rotate/flip image, masks, clipping and layer styles work on smart layers as they are.
 - **Smart filters**: adjustments and filters (any of the windows under "On this layer", Gaussian Blur,
-  Filters) on a smart layer are kept as smart filters instead of changing pixels. Hold the layer →
+  Filters) on a smart layer are kept as smart filters instead of changing pixels (they change the whole
+  layer; a selection doesn't limit them). Hold the layer →
   **Smart filters** lists them (last applied first): Edit (opens its window as it was), Hide / Show,
   Strength (100, 75, 50, 25%) and Delete; Hide all / Delete all. Editing the contents keeps them.
 - **Warp** on a smart layer bends it without touching the contents (still editable: Warp again carries
-  on from it; hold → Convert → Remove warp). Puppet Warp, Liquify and painting ask to **rasterize** first.
+  on from it; hold → Convert → Remove warp). A named or split warp from Photoshop shows as the nearest
+  single curve grid when you Warp it again, and changing it replaces the original. Puppet Warp, Liquify and painting ask to **rasterize** first.
 - **Replace contents…** (hold → Convert) swaps what's inside for a picture, Photoshop file or TIFF, at the
   same scale and place, keeping its warp and smart filters; linked copies change too.
 

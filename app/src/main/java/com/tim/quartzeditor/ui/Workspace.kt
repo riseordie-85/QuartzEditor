@@ -98,12 +98,14 @@ fun Workspace(vm: EditorViewModel) {
     // Replace Contents: any picture, or a Photoshop or TIFF file
     val replaceContents = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> vm.replaceSmartContents(uri) }
     LaunchedEffect(vm.replaceContentsFor) {
-        if (vm.replaceContentsFor != null) {
-            try {
-                replaceContents.launch(arrayOf("image/*", "application/octet-stream", "application/x-photoshop", "image/vnd.adobe.photoshop"))
-            } catch (e: android.content.ActivityNotFoundException) {
-                vm.replaceContentsFor = null
-            }
+        val id = vm.replaceContentsFor ?: return@LaunchedEffect
+        // Cleared first, so the picker doesn't open again when the screen is made again (turning it)
+        vm.replaceContentsFor = null
+        vm.replaceTarget = id
+        try {
+            replaceContents.launch(arrayOf("image/*", "application/octet-stream", "application/x-photoshop", "image/vnd.adobe.photoshop"))
+        } catch (e: android.content.ActivityNotFoundException) {
+            vm.replaceTarget = null
         }
     }
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }

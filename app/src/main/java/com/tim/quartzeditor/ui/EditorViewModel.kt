@@ -411,8 +411,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal var smartFilterIndex = -1
     internal var smartFilterLayer = 0L
 
-    /** The smart layer whose contents a file being picked will replace. */
+    /** Asks for a file to replace this smart layer's contents with (the picker opens, then this is cleared). */
     var replaceContentsFor by mutableStateOf<Long?>(null)
+
+    /** The smart layer whose contents the file being picked will replace. */
+    internal var replaceTarget: Long? = null
         internal set
 
     /** A small copy of the active layer for filter previews. */

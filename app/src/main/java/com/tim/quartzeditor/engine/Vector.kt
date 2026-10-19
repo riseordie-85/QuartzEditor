@@ -711,7 +711,7 @@ object VectorArt {
         val b = RectF(left, top, left + width, top + layout.height)
         if (warp != null) {
             // Bent: the box of the glyphs (ink and all) is what bends
-            val box = RectF(left, top + fm.ascent - fm.top, left + width, top + layout.height + (fm.bottom - fm.descent))
+            val box = RectF(left, top + fm.top - fm.ascent, left + width, top + layout.height + (fm.bottom - fm.descent))
             val wb = warp.bounds(box)
             wb.inset(-slack, -slack)
             return TextBuilt(paint, layout, null, text, left, top, wb, warp, box)
@@ -734,7 +734,8 @@ object VectorArt {
         val box = b.box
         if (warp != null && box != null) {
             // Drawn straight at about the size it shows, then bent
-            @Suppress("DEPRECATION") val m = Matrix(c.matrix).apply { preConcat(t.matrix.toMatrix()) }
+            // (the canvas already has the text's own matrix)
+            @Suppress("DEPRECATION") val m = Matrix(c.matrix)
             val v = floatArrayOf(1f, 0f, 0f, 1f)
             m.mapVectors(v)
             var scale = max(kotlin.math.hypot(v[0], v[1]), kotlin.math.hypot(v[2], v[3])).coerceIn(0.05f, 8f)
@@ -751,6 +752,8 @@ object VectorArt {
                 oc.translate(-box.left, -box.top)
                 oc.translate(b.left, b.top)
                 b.layout?.draw(oc)
+                // The one made for another scale goes (only this layout uses it)
+                b.straight?.second?.recycle()
                 b.straight = scale to out
                 out
             }

@@ -50,13 +50,34 @@ internal fun EditorViewModel.ensureSwatches() {
         val loaded = withContext(Dispatchers.IO) {
             runCatching { swatchFile(this@ensureSwatches).takeIf { it.isFile }?.readText()?.let { Swatches.fromJson(it) } }.getOrNull()
         }
-        if (!loaded.isNullOrEmpty()) swatchGroups = if (loaded.any { it.mine }) loaded else listOf(SwatchGroup("My swatches", emptyList(), mine = true)) + loaded
+        if (loaded.isNullOrEmpty()) return@launch
+        // Anything added while it was being read is kept too
+        val now = swatchGroups.orEmpty()
+        val base = if (loaded.any { it.mine }) loaded else listOf(SwatchGroup("My swatches", emptyList(), mine = true)) + loaded
+        val nowMine = now.firstOrNull { it.mine }?.swatches.orEmpty()
+        val merged = base.map { g ->
+            if (!g.mine) g else g.copy(swatches = g.swatches + nowMine.filter { s -> g.swatches.none { it.color == s.color } })
+        } + now.filter { g -> !g.mine && base.none { it.name == g.name && it.swatches == g.swatches } }
+        if (merged != base) saveSwatches(merged) else swatchGroups = merged
     }
 }
 
+/** Saves happen one at a time (the newest last), so two quick changes can't mix up the file. */
+private val swatchSaves = Dispatchers.IO.limitedParallelism(1)
+
 private fun EditorViewModel.saveSwatches(groups: List<SwatchGroup>) {
     swatchGroups = groups
-    viewModelScope.launch(Dispatchers.IO) { runCatching { swatchFile(this@saveSwatches).writeText(Swatches.toJson(groups)) } }
+    val file = swatchFile(this)
+    viewModelScope.launch(swatchSaves) {
+        runCatching {
+            val tmp = File(file.parentFile, "swatches.json.tmp")
+            tmp.writeText(Swatches.toJson(groups))
+            if (!tmp.renameTo(file)) {
+                file.writeText(Swatches.toJson(groups))
+                tmp.delete()
+            }
+        }
+    }
 }
 
 /** Adds [color] to your swatches (named by its hex). */

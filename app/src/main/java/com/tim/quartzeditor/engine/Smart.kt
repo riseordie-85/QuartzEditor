@@ -79,7 +79,8 @@ class SmartSpec(
     /** Where the warped, placed picture reaches (layer-local), before smart filters. */
     fun placedBounds(): RectF {
         if (warp != null) {
-            val pts = meshPoints(24)
+            // The same mesh the picture is drawn with (a coarser one could miss a wave's crest)
+            val pts = meshPoints(MESH)
             val r = RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
             var k = 0
             while (k < pts.size) {
@@ -87,6 +88,7 @@ class SmartSpec(
                 r.top = min(r.top, pts[k + 1]); r.bottom = max(r.bottom, pts[k + 1])
                 k += 2
             }
+            r.inset(-1f, -1f)
             return r
         }
         val xs = floatArrayOf(quad[0], quad[2], quad[4], quad[6])
@@ -102,6 +104,9 @@ class SmartSpec(
         }
 
     companion object {
+        /** Cells across and down of the mesh a warped smart layer is drawn with. */
+        const val MESH = 48
+
         /** A placement that fits [w]×[h] inside a [docW]×[docH] canvas (never bigger than it is), centered. */
         fun fitted(w: Int, h: Int, docW: Int, docH: Int): FloatArray {
             val s = min(1f, min(docW.toFloat() / w, docH.toFloat() / h))
@@ -233,7 +238,7 @@ object SmartArt {
             return
         }
         // The flat picture stretched over a fine mesh that follows the warp
-        val n = 48
+        val n = SmartSpec.MESH
         val pts = spec.meshPoints(n)
         c.drawBitmapMesh(src, n, n, pts, 0, null, 0, p)
     }
@@ -247,6 +252,7 @@ object SmartArt {
         for (f in filters) {
             val w = cur.width.toFloat()
             val h = cur.height.toFloat()
+            // (a vignette in a smart filter darkens toward the layer's own corners)
             var next = Gpu.applyFx(cur, f.fx, 0f, 0f, w, h)
             if (f.opacity < 0.999f) {
                 // before × (1 − opacity) + after × opacity

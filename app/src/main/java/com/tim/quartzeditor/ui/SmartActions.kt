@@ -104,13 +104,13 @@ fun EditorViewModel.placeImage(uri: Uri) {
 // ===================================================================== replacing contents
 
 /**
- * Smart layer [replaceContentsFor]'s contents become the file at [uri] (a picture, or a Photoshop
+ * Smart layer [EditorViewModel.replaceTarget]'s contents become the file at [uri] (a picture, or a Photoshop
  * or TIFF file with its layers), at the same scale and place, warp and smart filters kept. Linked
  * copies change too, like Photoshop's Replace Contents.
  */
 fun EditorViewModel.replaceSmartContents(uri: Uri?) {
-    val id = replaceContentsFor
-    replaceContentsFor = null
+    val id = replaceTarget
+    replaceTarget = null
     if (uri == null || id == null) return
     replaceContentsOf(id, uri)
 }

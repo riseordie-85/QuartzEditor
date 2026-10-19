@@ -388,7 +388,7 @@ object PsdImport {
                     else -> StrokeAlign.CENTER
                 }
             }
-            val fill = if (fillOn && solid != null) color(solid["Clr "]) or 0xFF000000.toInt() else if (fillOn) Color.BLACK else null
+            val fill = if (fillOn && solid != null) color(solid["Clr "], bookFallback) or 0xFF000000.toInt() else if (fillOn) Color.BLACK else null
             val ps = parts(vm)
             if (ps.isEmpty()) return null
             val all = ShapeSpec.customPath(ps, evenOdd = true)
@@ -1225,7 +1225,7 @@ object PsdImport {
             val solid = pl.solidColor
             val pattern = pl.patternFill
             if (solid != null) {
-                paint.color = color(solid["Clr "]) or 0xFF000000.toInt()
+                paint.color = color(solid["Clr "], bookFallback) or 0xFF000000.toInt()
             } else if (pattern != null) {
                 val bmp = patternKey(pattern["Ptrn"] as? Map<*, *>)?.let { Patterns.bitmapFor(it, Color.BLACK, Color.WHITE) } ?: return grid
                 val k = (num(pattern["Scl "], 100.0) / 100.0).toFloat() * s
@@ -1350,7 +1350,7 @@ object PsdImport {
         }, "an effect")
 
         var unsupportedColors = 0
-        /** The color a book color stands for, read from the layer being brought in (see [layer]). */
+        /** The fill color a book color stands for, read from the layer being brought in (see [layer]); only its fill uses it. */
         var bookFallback: Int? = null
 
         /** The average color of [g]'s solid pixels (edges and see-through parts left out). */
@@ -1374,7 +1374,8 @@ object PsdImport {
             return Color.rgb((r / n).toInt(), (gr / n).toInt(), (b / n).toInt())
         }
 
-        fun color(v: Any?): Int {
+        /** [v] as ARGB; a book color is [book] when known (read from the layer's pixels), otherwise black. */
+        fun color(v: Any?, book: Int? = null): Int {
             val m = v as? Map<*, *> ?: return Color.BLACK
             fun d(vararg keys: String): Double? = keys.firstNotNullOfOrNull { (m[it] as? Number)?.toDouble() ?: (m[it] as? PsdUnit)?.value }
             fun c255(x: Double) = (x * 255).roundToInt().coerceIn(0, 255)
@@ -1394,7 +1395,7 @@ object PsdImport {
                     Color.rgb(c255((1 - c) * (1 - k)), c255((1 - mg) * (1 - k)), c255((1 - y) * (1 - k)))
                 }
                 "LbCl" -> lab(d("Lmnc") ?: 0.0, d("A   ") ?: 0.0, d("B   ") ?: 0.0)
-                "BkCl" -> bookFallback ?: run {
+                "BkCl" -> book ?: run {
                     unsupportedColors++
                     Color.BLACK
                 }

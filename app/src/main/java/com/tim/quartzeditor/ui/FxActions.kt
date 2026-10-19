@@ -217,6 +217,12 @@ private fun EditorViewModel.applySmartFilter(l: Layer, fx: FxParams, onDone: () 
         onDone()
         return
     }
+    // Opened and applied as it was: nothing to do
+    if (existing && list[i].fx == fx) {
+        cancelFx()
+        onDone()
+        return
+    }
     when {
         // Set back to nothing: the filter goes
         existing && fx.isIdentity -> list.removeAt(i)
@@ -234,6 +240,10 @@ internal fun EditorViewModel.changeSmartFilters(l: Layer, list: List<SmartFilter
     val d = doc ?: return
     val spec = l.props.smart ?: return
     if (busy != null) return
+    if (l.props.locked) {
+        toast("\"${l.props.name}\" is locked")
+        return
+    }
     val newSpec = spec.withFilters(list)
     val before = l.props
     runBusy("Applying…", onDone) {
@@ -268,7 +278,10 @@ fun EditorViewModel.editSmartFilter(layerId: Long, i: Int) {
         // The layer as it is before this filter (the filter itself is what's shown changing)
         val made = withContext(Dispatchers.Default) { smartProxy(spec, spec.filters.take(i).filter { it.enabled }) }
             ?: return@runBusy toast("This layer is empty")
-        if (doc !== d || l.props.smart !== spec) return@runBusy
+        if (doc !== d || l.props.smart !== spec) {
+            made.first.recycle()
+            return@runBusy
+        }
         smartFilterLayer = l.id
         smartFilterIndex = i
         pendingFx = f.fx
