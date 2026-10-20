@@ -480,8 +480,8 @@ preview, and **Cancel** (which stops it on the server too). If something goes wr
 off, a model is missing) the chip says what ComfyUI said.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has
   to listen on the network: start it with `--listen`. The app comes with Tim's server filled in.
-- **Workflows**: five come with the app (Qwen Image text to image, Qwen Image edit, Qwen background
-  remover, Flux inpaint, Z-image upscale). **Add workflow…** adds any other: in ComfyUI, save it with
+- **Workflows**: five come with the app (Qwen Image text to image, Moss text to image, Qwen Image
+  edit, Qwen background remover, Z-image upscale). **Add workflow…** adds any other: in ComfyUI, save it with
   Workflow → **Export (API)** (the normal save format isn't accepted). Added ones can be removed.
 - What a workflow does is worked out from its nodes:
   - **No Load Image** — makes a new picture the shape of the canvas (about 1 megapixel, sides in
@@ -492,7 +492,7 @@ off, a model is missing) the chip says what ComfyUI said.
     you see around the selection is sent, with the selection see-through (Load Image turns that into
     its mask), and the result comes back masked to the selection.
   - **The prompt** goes where the workflow keeps it: the text side of an If/Else prompt switch and its
-    prompt enhancer (Text Generate), else the CLIP Text Encode titled Positive (or the first that isn't
+    prompt enhancer (Text Generate), or the text node they both take it from, else the CLIP Text Encode titled Positive (or the first that isn't
     titled Negative), else a node's own prompt field. It starts as what you last typed for that
     workflow (or the workflow's own); **Use the workflow's own prompt** puts that back.
   - **Improve the prompt first** turns the workflow's prompt enhancer (the If/Else switch) on or off.

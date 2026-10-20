@@ -333,26 +333,51 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         }
     }
 
-    /** An If/Else switch whose "false" side is typed text: the plain prompt (its "true" side is the enhanced one). */
-    private val promptSwitch: String? = nodes().firstOrNull { (_, o) -> cls(o) == "ComfySwitchNode" && inputs(o).opt("on_false") is String }?.first
+    /** A link to another node's output: (node, output). */
+    private fun link(v: Any?): Pair<String, Int>? = (v as? JSONArray)?.takeIf { it.length() == 2 && it.opt(0) is String }?.let { it.optString(0) to it.optInt(1) }
+
+    /** A node that just holds typed text (a String primitive), and which of its inputs holds it. */
+    private fun textKey(id: String): String? {
+        val o = json.optJSONObject(id) ?: return null
+        val c = cls(o)
+        if (!(c.startsWith("PrimitiveString") || c.startsWith("StringConstant") || c == "Text Multiline" || c == "String Literal")) return null
+        val inp = inputs(o)
+        return listOf("value", "string", "text").firstOrNull { inp.opt(it) is String }
+    }
+
+    /** Where [v] (an input) takes its text from: the input itself when it's typed in, or the text node it's linked to. */
+    private fun textSource(owner: String, key: String, v: Any?): Pair<String, String>? = when {
+        v is String -> owner to key
+        else -> link(v)?.first?.let { n -> textKey(n)?.let { n to it } }
+    }
+
+    /** An If/Else switch choosing between the plain prompt ("false") and a prompt enhancer's ("true"). */
+    private val promptSwitch: String? = nodes().firstOrNull { (_, o) ->
+        cls(o) == "ComfySwitchNode" && link(inputs(o).opt("on_true"))?.first?.let { json.optJSONObject(it)?.let { t -> cls(t) == "TextGenerate" } } == true
+    }?.first
 
     /** Prompt enhancers (a language model rewriting the prompt). */
-    private val enhancers: List<String> = nodes().filter { (_, o) -> cls(o) == "TextGenerate" && inputs(o).opt("prompt") is String }.map { it.first }
+    private val enhancers: List<String> = nodes().filter { (_, o) -> cls(o) == "TextGenerate" }.map { it.first }
 
     /** Where the prompt goes: (node, input). */
     private val promptTargets: List<Pair<String, String>> = run {
-        val out = ArrayList<Pair<String, String>>()
-        promptSwitch?.let { out.add(it to "on_false") }
-        enhancers.forEach { out.add(it to "prompt") }
+        val out = LinkedHashSet<Pair<String, String>>()
+        promptSwitch?.let { sw -> textSource(sw, "on_false", inputs(json.getJSONObject(sw)).opt("on_false"))?.let { out.add(it) } }
+        for (e in enhancers) textSource(e, "prompt", inputs(json.getJSONObject(e)).opt("prompt"))?.let { out.add(it) }
         if (out.isEmpty()) {
-            val texts = nodes().filter { (_, o) -> cls(o) == "CLIPTextEncode" && inputs(o).opt("text") is String && !title(o).contains("negative", ignoreCase = true) }
+            val texts = nodes().filter { (_, o) -> cls(o) == "CLIPTextEncode" && !title(o).contains("negative", ignoreCase = true) }
             val positive = texts.filter { title(it.second).contains("positive", ignoreCase = true) }.ifEmpty { texts.take(1) }
-            positive.forEach { out.add(it.first to "text") }
+            for ((id, o) in positive) textSource(id, "text", inputs(o).opt("text"))?.let { out.add(it) }
         }
         if (out.isEmpty()) {
             nodes().filter { (_, o) -> inputs(o).opt("prompt") is String && cls(o) != "TextGenerate" }.take(1).forEach { out.add(it.first to "prompt") }
         }
-        out
+        if (out.isEmpty()) {
+            // A text node titled as the prompt
+            nodes().firstOrNull { (id, o) -> textKey(id) != null && title(o).contains("prompt", ignoreCase = true) && !title(o).contains("system", ignoreCase = true) && !title(o).contains("negative", ignoreCase = true) }
+                ?.let { (id, _) -> out.add(id to textKey(id)!!) }
+        }
+        out.toList()
     }
 
     val hasPrompt: Boolean get() = promptTargets.isNotEmpty()
@@ -361,7 +386,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     val savedPrompt: String = promptTargets.firstOrNull()?.let { (n, k) -> json.optJSONObject(n)?.optJSONObject("inputs")?.optString(k) }.orEmpty()
 
     /** It can rewrite the prompt with a language model first (switched on or off here). */
-    val canEnhance: Boolean get() = promptSwitch != null && enhancers.isNotEmpty()
+    val canEnhance: Boolean get() = promptSwitch != null
 
     /** Whether the enhancer was on when it was saved. */
     val savedEnhance: Boolean = promptSwitch?.let { json.optJSONObject(it)?.optJSONObject("inputs")?.optBoolean("switch") } ?: false
@@ -411,7 +436,9 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
      * there. A Preview Any showing the prompt on the way is taken out the same way.
      */
     private fun withoutEnhancer(p: JSONObject, sw: String) {
-        val text = p.optJSONObject(sw)?.optJSONObject("inputs")?.opt("on_false") as? String ?: return
+        // The plain side: typed text, or a link to where it's typed
+        val plain = p.optJSONObject(sw)?.optJSONObject("inputs")?.opt("on_false") ?: return
+        fun fresh(): Any = if (plain is JSONArray) JSONArray().put(plain.opt(0)).put(plain.opt(1)) else plain
         val gone = ArrayDeque(listOf(sw))
         while (gone.isNotEmpty()) {
             val id = gone.removeFirst()
@@ -422,7 +449,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
                 for (key in inp.keys().asSequence().toList()) {
                     val v = inp.opt(key) as? JSONArray ?: continue
                     if (v.length() == 2 && v.optString(0) == id) {
-                        inp.put(key, text)
+                        inp.put(key, fresh())
                         if (node.optString("class_type") == "PreviewAny") gone.add(k)
                     }
                 }
