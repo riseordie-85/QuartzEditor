@@ -22,6 +22,21 @@ android {
         versionName = "0.1"
     }
 
+    // Two apps from one project: "offline" is Quartz Editor as always (no internet at all); "online"
+    // is Quartz Online, which adds ComfyUI (your own AI server). They install side by side.
+    flavorDimensions += "network"
+    productFlavors {
+        create("offline") {
+            dimension = "network"
+            isDefault = true
+        }
+        create("online") {
+            dimension = "network"
+            applicationIdSuffix = ".online"
+            versionNameSuffix = "-online"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

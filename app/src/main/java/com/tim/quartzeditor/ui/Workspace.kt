@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -108,6 +109,9 @@ fun Workspace(vm: EditorViewModel) {
             vm.replaceTarget = null
         }
     }
+    // ComfyUI (the online app): adding a workflow file
+    var comfyOpen by remember { mutableStateOf(false) }
+    val importWorkflow = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let { vm.importComfyWorkflow(it) } }
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }
@@ -205,6 +209,7 @@ fun Workspace(vm: EditorViewModel) {
                                 Item("Relight…") { vm.startEnhance(EnhanceKind.RELIGHT) }
                                 Item("Replace sky…") { vm.startEnhance(EnhanceKind.SKY) }
                             }
+                            if (vm.online) Item("ComfyUI…", Icons.Outlined.Cloud) { comfyOpen = true }
                             Page("View", Icons.Outlined.Visibility) {
                                 Item("Snap to center, edges and guides", checked = vm.snapOn) { vm.toggleSnap() }
                                 Item("Checkerboard for see-through", checked = vm.showChecker) { vm.toggleChecker() }
@@ -383,8 +388,18 @@ fun Workspace(vm: EditorViewModel) {
             )
         }
 
+        // A ComfyUI run working away (you can keep editing)
+        ComfyStatus(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp, start = 64.dp, end = 64.dp))
+
         BusyOverlay(vm.busy)
     }
+
+    if (comfyOpen) ComfyDialog(vm, onImport = {
+        try {
+            importWorkflow.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+        } catch (_: android.content.ActivityNotFoundException) {
+        }
+    }, onDismiss = { comfyOpen = false })
 
     RasterizeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }

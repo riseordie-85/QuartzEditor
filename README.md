@@ -5,6 +5,13 @@ A Photoshop-light photo editor for Android 13+, built from Quartz Gallery's edit
 **Private by design:** no ads, no accounts, no tracking. The app has no internet access (it's removed
 from the build). Background removal's model is fetched by Google Play services in its own process.
 
+**Two apps from one project.** In Android Studio, pick the build variant (Build → Select Build Variant):
+- **offlineRelease / offlineDebug** — Quartz Editor, as always: no internet at all.
+- **onlineRelease / onlineDebug** — **Quartz Online**: everything above plus **ComfyUI** (your own AI
+  server, below). It's a separate app (`com.tim.quartzeditor.online`), so both can be installed side by
+  side; each has its own projects and settings (move work between them with project files). It talks
+  only to the ComfyUI server you give it.
+
 ## Launch screen
 - **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files) or **Projects** (your saved work, with all layers). Tap to open.
   Long-press a project to delete it.
@@ -465,6 +472,34 @@ Small Apache-2.0, Real-ESRGAN BSD-3-Clause, ONNX Runtime MIT.
 The Photoshop file writer follows ag-psd (MIT, by Agamnentzar) for how Photoshop lays out
 descriptors, text engine data and smart objects.
 
+## ComfyUI (Quartz Online)
+Menu → **ComfyUI…** runs one of your ComfyUI workflows on your own computer (over Tailscale, say) and
+brings back what it made as a new **smart layer** above the active one, while you keep editing. A chip
+at the bottom of the picture shows what it's doing (loading models, step 12 / 25…) with ComfyUI's live
+preview, and **Cancel** (which stops it on the server too). If something goes wrong (the computer's
+off, a model is missing) the chip says what ComfyUI said.
+- **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has
+  to listen on the network: start it with `--listen`. The app comes with Tim's server filled in.
+- **Workflows**: five come with the app (Qwen Image text to image, Qwen Image edit, Qwen background
+  remover, Flux inpaint, Z-image upscale). **Add workflow…** adds any other: in ComfyUI, save it with
+  Workflow → **Export (API)** (the normal save format isn't accepted). Added ones can be removed.
+- What a workflow does is worked out from its nodes:
+  - **No Load Image** — makes a new picture the shape of the canvas (about 1 megapixel, sides in
+    multiples of 16, put into its Empty Latent Image), placed filling the canvas.
+  - **A Load Image** — changes the **active layer** or **everything you see** (your pick), or just the
+    selected part of it; the result goes where that was (a selection's shape becomes the new layer's mask).
+  - **A Load Image whose mask is used** (an inpainting workflow) — **fills in the selection**: everything
+    you see around the selection is sent, with the selection see-through (Load Image turns that into
+    its mask), and the result comes back masked to the selection.
+  - **The prompt** goes where the workflow keeps it: the text side of an If/Else prompt switch and its
+    prompt enhancer (Text Generate), else the CLIP Text Encode titled Positive (or the first that isn't
+    titled Negative), else a node's own prompt field. It starts as what you last typed for that
+    workflow (or the workflow's own); **Use the workflow's own prompt** puts that back.
+  - **Improve the prompt first** turns the workflow's prompt enhancer (the If/Else switch) on or off.
+  - Every **seed** is new each run. Compare Images nodes are left out. The picture brought back is the
+    one from its Save Image node.
+- Pictures are sent at up to about 2 megapixels. The result keeps its full size inside the smart layer.
+
 ## Where the code is
 Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 - `engine/` — the picture itself, with no screens: layers and tiles (`Doc`, `TileGrid`), drawing
@@ -476,8 +511,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `PsdImport` turns them into a document, `PsdFonts` picks fonts, `PsdExport` turns a document into one,
   `PsdWriter` writes it), TIFF files (`Tiff`: reading and writing), the blend modes Android doesn't have
   (`Blends`), .svg files (`Svg`), the custom shape library (`ShapeLibrary`), the Enhance effects
-  (`Enhance`), swatch sets and files (`Swatches`), text warps (`TextWarp`) and smart layers with their
-  warps and smart filters (`Smart`).
+  (`Enhance`), swatch sets and files (`Swatches`), text warps (`TextWarp`), smart layers with their
+  warps and smart filters (`Smart`), and talking to ComfyUI and reading its workflows (`Comfy`).
 - `ui/EditorViewModel.kt` — what's open and picked, plus the core every action uses: undo,
   "apply what's pending first", the busy overlay, the view's zoom and position, picking tools.
 - `ui/*Actions.kt` — what you can do, one file per area, each adding functions to the view model:
@@ -486,7 +521,10 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
   `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
-  `ShapeLibraryActions`, `EnhanceActions`.
+  `ShapeLibraryActions`, `EnhanceActions`, `ComfyActions` (ComfyUI runs, its window and status chip).
+- `app/src/offline/` and `app/src/online/` — what's different in the two apps: the offline one removes
+  internet access; the online one adds it (plain `http://` allowed), its name, and the built-in
+  ComfyUI workflows and server address (`assets/comfy/`).
 - The other `ui/` files are screens and panels: `Workspace`, `EditorCanvas` (touches and what's drawn
   over the picture), `Toolbar`, `LayersPanel`, `ToolPanels` (Properties), `StylePanel`, `TonePanels`,
   `VectorPanels`, `PatternPanel`, `WarpPanel`, `TransformControls`, `LaunchScreen`, `ColorPanels`,

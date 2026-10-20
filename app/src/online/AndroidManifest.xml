@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Quartz Editor Online talks to your own ComfyUI server (and nothing else) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- ComfyUI serves plain http:// (over Tailscale, the connection itself is encrypted) -->
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+
+</manifest>

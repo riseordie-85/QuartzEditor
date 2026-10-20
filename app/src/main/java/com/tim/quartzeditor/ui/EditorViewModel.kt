@@ -433,6 +433,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** After saving a Photoshop file or layered TIFF: what Photoshop gets differently (the file's name, where it went, the list). */
     var exportReport by mutableStateOf<Triple<String, String, List<String>>?>(null)
+    /** The ComfyUI run going on (or that failed, until you've seen why); the online app only (ComfyActions.kt). */
+    var comfyJob by mutableStateOf<ComfyJob?>(null)
+    /** The ComfyUI workflows, once read. */
+    var comfyWorkflows by mutableStateOf<List<com.tim.quartzeditor.engine.ComfyWorkflow>?>(null)
     /** Your swatches and the ones you imported (SwatchPanel.kt); null until first needed. */
     var swatchGroups by mutableStateOf<List<com.tim.quartzeditor.engine.SwatchGroup>?>(null)
     /** Color pickers' tab: 0 the picker, 1 swatches (the same in every picker). */
