@@ -74,6 +74,7 @@ import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.Transformer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -160,8 +161,13 @@ fun EditorViewModel.importComfyWorkflow(uri: Uri) {
                     if (bytes.size > 8 * 1024 * 1024) null else String(bytes, Charsets.UTF_8)
                 } ?: return@runCatching null
                 ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(name), builtIn = false, fileName = name) ?: return@runCatching null
-                val safe = name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9 ._-]"), "_").trim().ifBlank { "Workflow" } + ".json"
+                val base = name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9 ._-]"), "_").trim().ifBlank { "Workflow" }
                 val dir = userWorkflowDir().apply { mkdirs() }
+                // A name of its own (not one that came with the app, nor one already added)
+                val taken = (runCatching { ctx.assets.list("comfy") }.getOrNull()?.toList().orEmpty() + (dir.list()?.toList().orEmpty())).map { it.lowercase() }.toSet()
+                var safe = "$base.json"
+                var n = 2
+                while (safe.lowercase() in taken) safe = "$base ${n++}.json"
                 File(dir, safe).writeText(text)
                 ComfyWorkflow.nameFrom(safe)
             }
@@ -203,7 +209,14 @@ private class ComfyInput(
     val selection: Selection?,
     val genW: Int,
     val genH: Int,
-)
+) {
+    /** The canvas size then (cropping or resizing meanwhile would put the result in the wrong place). */
+    var docW = 0
+    var docH = 0
+}
+
+/** What's sent: the PNG, and how see-through the source was there (at the PNG's size; null when it's solid). */
+private class ComfyUpload(val png: ByteArray, val alpha: Bitmap?)
 
 /**
  * Runs [w] with [prompt] (and its prompt enhancer if [enhance]). A workflow with a Load Image gets
@@ -226,10 +239,12 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
     }
     val canvas = Rect(0, 0, d.width, d.height)
     val sel = d.selection?.takeIf { !it.isEmpty }
+    // As far as the selection reaches (a feathered edge goes past its outline)
     val selBox = sel?.let { s ->
+        val f = s.feather * 2f + 2f
         Rect(
-            kotlin.math.floor(s.bounds.left).toInt(), kotlin.math.floor(s.bounds.top).toInt(),
-            kotlin.math.ceil(s.bounds.right).toInt(), kotlin.math.ceil(s.bounds.bottom).toInt(),
+            kotlin.math.floor(s.bounds.left - f).toInt(), kotlin.math.floor(s.bounds.top - f).toInt(),
+            kotlin.math.ceil(s.bounds.right + f).toInt(), kotlin.math.ceil(s.bounds.bottom + f).toInt(),
         ).takeIf { it.intersect(canvas) }
     }
     val input: ComfyInput = when (w.kind) {
@@ -251,7 +266,8 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
         ComfyKind.EDIT -> {
             val a = d.active
             val useLayer = !merged && a != null && a.hasContent
-            val area = if (useLayer) a!!.bounds()?.takeIf { it.intersect(canvas) } else Rect(canvas)
+            // Where the layer really has pixels (its tiles reach further)
+            val area = if (useLayer) Transformer.contentBounds(a!!.tiles.tiles)?.apply { offset(a.x, a.y) }?.takeIf { it.intersect(canvas) } else Rect(canvas)
             val r = when {
                 area == null -> null
                 selBox != null -> Rect(area).takeIf { it.intersect(selBox) }
@@ -264,6 +280,8 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
             ComfyInput(d.shallowCopy(), if (useLayer) a!!.id else 0L, r, sel?.takeIf { selBox != null }, 0, 0)
         }
     }
+    input.docW = d.width
+    input.docH = d.height
     prefs.edit().putString("comfyPrompt:" + w.fileName, prompt).apply()
     val job = ComfyJob(w.name)
     comfyJob = job
@@ -273,35 +291,57 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
     val promptForRun = if (w.hasPrompt) prompt else null
     job.job = viewModelScope.launch {
         var socket: ComfySocket? = null
+        var upload: ComfyUpload? = null
         try {
-            val bytes = withContext(Dispatchers.Default) { comfyPicture(w.kind, input) }
+            upload = withContext(Dispatchers.Default) { comfyPicture(w.kind, input) }
             val result = withContext(Dispatchers.IO) {
-                val uploaded = bytes?.let {
+                val uploaded = upload?.let {
                     job.phase = "Sending the picture…"
-                    client.upload(it, "quartz-${clientId.take(8)}.png")
+                    client.upload(it.png, "quartz-${clientId.take(8)}.png")
                 }
                 val prepared = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH)
                 // Progress and live previews come over the WebSocket; if that doesn't connect, asking now and then still works
-                val nodes = prepared
                 socket = ComfySocket(
                     client.socketUrl(clientId),
-                    onText = { t -> comfyMessage(job, nodes, t) },
+                    onText = { t -> comfyMessage(job, prepared, t) },
                     onBinary = { b -> comfyPreview(job, b) },
                 ).also { s -> Thread({ runCatching { s.run() } }, "ComfySocket").apply { isDaemon = true }.start() }
+                // Cancelled while sending: don't queue it
+                ensureActive()
                 val id = client.queue(prepared, clientId)
                 job.promptId = id
                 job.phase = "Queued"
                 var polls = 0
+                var failures = 0
+                var missing = 0
                 var outputs: JSONObject
                 while (true) {
                     ensureActive()
-                    delay(if (polls < 5) 600 else 1200)
+                    delay(if (polls < 5) 600L else if (failures > 0) 2500L else 1200L)
                     polls++
-                    val h = client.history(id)
+                    // A dropped connection now and then (the tablet changing networks, say) doesn't end the run
+                    val h = try {
+                        client.history(id).also { failures = 0 }
+                    } catch (e: java.io.IOException) {
+                        if (e is ComfyException || ++failures > 12) throw e
+                        continue
+                    }
                     if (h == null) {
-                        if (job.steps == 0 && polls % 3 == 1) {
-                            val ahead = runCatching { client.ahead(id) }.getOrDefault(0)
-                            if (ahead > 0) job.phase = "Waiting ($ahead ahead in ComfyUI's queue)"
+                        val place = try {
+                            client.queuePlace(id)
+                        } catch (e: java.io.IOException) {
+                            continue
+                        }
+                        when {
+                            place == null -> if (++missing >= 4) throw ComfyException("ComfyUI lost the job (was it restarted, or its queue cleared?)")
+                            place > 0 -> {
+                                missing = 0
+                                job.phase = "Waiting ($place ahead in ComfyUI's queue)"
+                            }
+                            else -> {
+                                missing = 0
+                                if (job.phase.startsWith("Waiting") || job.phase == "Queued") job.phase = "Working…"
+                            }
                         }
                         continue
                     }
@@ -310,6 +350,7 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
                     outputs = h.optJSONObject("outputs") ?: JSONObject()
                     if (status == null || status.optBoolean("completed", true)) break
                 }
+                job.promptId = null
                 job.phase = "Bringing it back…"
                 val img = resultImage(outputs, w.resultNodes()) ?: throw ComfyException("The workflow finished without saving a picture")
                 val data = client.image(img.first, img.second, img.third)
@@ -317,13 +358,17 @@ fun EditorViewModel.runComfy(w: ComfyWorkflow, prompt: String, enhance: Boolean,
                 BitmapFactory.decodeByteArray(data, 0, data.size, opts) ?: throw ComfyException("ComfyUI sent something that isn't a picture")
             }
             socket?.close()
-            placeComfyResult(d, w, prompt, input, result)
+            placeComfyResult(d, w, prompt, input, upload?.alpha, result)
             if (comfyJob === job) comfyJob = null
         } catch (e: CancellationException) {
             socket?.close()
+            upload?.alpha?.recycle()
+            // Queued just before the cancel: take it off the server too
+            job.promptId?.let { id -> viewModelScope.launch(Dispatchers.IO + NonCancellable) { client.cancel(id) } }
             throw e
         } catch (e: Throwable) {
             socket?.close()
+            upload?.alpha?.recycle()
             val why = when (e) {
                 is ComfyException -> e.message ?: "ComfyUI couldn't do it"
                 is java.net.UnknownHostException -> "Can't find ${client.base}. Is Tailscale on, on this tablet?"
@@ -344,18 +389,26 @@ fun EditorViewModel.cancelComfy() {
     j.job?.cancel()
     val id = j.promptId
     val c = j.client
-    if (id != null && c != null && j.error == null) viewModelScope.launch(Dispatchers.IO) { c.cancel(id) }
+    // (After an error too: if it was the connection that failed, the server may still be at it)
+    if (id != null && c != null) viewModelScope.launch(Dispatchers.IO) { c.cancel(id) }
 }
 
-/** The PNG sent to the workflow's Load Image (null when it has none). */
-private fun comfyPicture(kind: ComfyKind, input: ComfyInput): ByteArray? {
+/** Rounds to a multiple of 16 (what the models work in, so nothing is cropped off and the result lines up). */
+private fun snap16(v: Float): Int = max(16, ((v + 8f) / 16f).toInt() * 16)
+
+/**
+ * The PNG sent to the workflow's Load Image (null when it has none). See-through parts are sent on
+ * white (Load Image drops see-through, which would make them black); for an edit, how see-through
+ * the source was comes back too, so the result can be too.
+ */
+private fun comfyPicture(kind: ComfyKind, input: ComfyInput): ComfyUpload? {
     val copy = input.copy ?: return null
     val r = input.region
     val s = minOf(1f, sqrt(UPLOAD_PIXELS.toFloat() / (r.width().toLong() * r.height())))
-    val w = (r.width() * s).roundToInt().coerceAtLeast(1)
-    val h = (r.height() * s).roundToInt().coerceAtLeast(1)
-    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-    val c = Canvas(out)
+    val w = snap16(r.width() * s)
+    val h = snap16(r.height() * s)
+    val src = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(src)
     c.scale(w / r.width().toFloat(), h / r.height().toFloat())
     c.translate(-r.left.toFloat(), -r.top.toFloat())
     val paint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -367,19 +420,70 @@ private fun comfyPicture(kind: ComfyKind, input: ComfyInput): ByteArray? {
         if (layer.maskActive) layer.mask?.drawTo(c, layer.x.toFloat(), layer.y.toFloat(), Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
         c.restore()
     } else {
-        // Everything you see (on white for inpainting, so only the selection is see-through)
-        val flat = DocRenderer.flatten(copy, background = if (kind == ComfyKind.INPAINT) Color.WHITE else Color.TRANSPARENT)
+        val flat = DocRenderer.flatten(copy)
         c.drawBitmap(flat, 0f, 0f, paint)
         flat.recycle()
     }
+    // How see-through it is (kept only when some of it is)
+    val alpha = if (kind == ComfyKind.EDIT) {
+        val px = IntArray(w)
+        var solid = true
+        var y = 0
+        while (y < h && solid) {
+            src.getPixels(px, 0, w, 0, y, w, 1)
+            for (p in px) if (p ushr 24 < 250) {
+                solid = false
+                break
+            }
+            y++
+        }
+        if (solid) null else src.extractAlpha()
+    } else null
+    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val oc = Canvas(out)
+    oc.drawColor(Color.WHITE)
+    oc.drawBitmap(src, 0f, 0f, null)
+    src.recycle()
     if (kind == ComfyKind.INPAINT) {
         // The selection becomes see-through: Load Image's mask, which is what gets filled in
-        input.selection?.mask()?.drawTo(c, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+        oc.scale(w / r.width().toFloat(), h / r.height().toFloat())
+        oc.translate(-r.left.toFloat(), -r.top.toFloat())
+        input.selection?.mask()?.drawTo(oc, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
     }
     val bytes = ByteArrayOutputStream()
     out.compress(Bitmap.CompressFormat.PNG, 100, bytes)
     out.recycle()
-    return bytes.toByteArray()
+    return ComfyUpload(bytes.toByteArray(), alpha)
+}
+
+/**
+ * The new layer's mask (black hides): showing as much as the source was solid ([alpha], over
+ * [region]) and as much as [sel] selects. Covers the canvas and [grid], like [selectionMask].
+ */
+private fun comfyMask(d: Doc, grid: TileGrid, region: Rect, alpha: Bitmap?, sel: Selection?): TileGrid? {
+    if (alpha == null && sel == null) return null
+    val g = TileGrid(alphaOnly = true)
+    val area = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat())
+    grid.tileBounds()?.let { area.union(RectF(it)) }
+    val selMask = sel?.mask()
+    val shown = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
+    for (k in g.keysIn(area)) {
+        val t = TileGrid.newTile(alphaOnly = true)
+        val c = Canvas(t)
+        c.drawColor(Color.BLACK)
+        c.translate(-(TileGrid.tx(k) * TileGrid.SIZE).toFloat(), -(TileGrid.ty(k) * TileGrid.SIZE).toFloat())
+        // What shows is punched out of the black
+        c.saveLayer(null, shown)
+        if (alpha != null) {
+            c.drawBitmap(alpha, null, RectF(region), Paint(Paint.FILTER_BITMAP_FLAG))
+            selMask?.drawTo(c, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
+        } else {
+            selMask?.drawTo(c, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        }
+        c.restore()
+        g.tiles[k] = t
+    }
+    return g
 }
 
 /** A progress message from the WebSocket. */
@@ -475,17 +579,23 @@ private fun resultImage(outputs: JSONObject, saveNodes: Set<String>): Triple<Str
 }
 
 /** The result as a new smart layer above the active one (shaped by the selection when one was used). */
-private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, prompt: String, input: ComfyInput, result: Bitmap) {
-    if (doc !== d) {
+private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, prompt: String, input: ComfyInput, alpha: Bitmap?, result: Bitmap) {
+    if (doc !== d || d.width != input.docW || d.height != input.docH) {
         result.recycle()
-        toast("${w.name} finished, but its picture was closed or another tab is open, so it wasn't added")
+        alpha?.recycle()
+        toast(
+            if (doc !== d) "${w.name} finished, but its picture was closed or another tab is open, so it wasn't added"
+            else "${w.name} finished, but the canvas was cropped or resized meanwhile, so it wasn't added"
+        )
         return
     }
     val name = "${w.name}${if (w.kind == ComfyKind.GENERATE && prompt.isNotBlank()) ": " + prompt.trim().take(32) else ""}"
     val r = RectF(input.region)
     // Where it goes: the area it came from (the canvas for a new picture), keeping the result's shape
+    // (an edit comes back the shape it went, give or take rounding, and goes exactly where it was)
     val ra = result.width.toFloat() / result.height
-    val box = if (abs(ra / (r.width() / r.height()) - 1f) < 0.015f) r else {
+    val exact = abs(ra / (r.width() / r.height()) - 1f) < (if (w.kind == ComfyKind.GENERATE) 0.015f else 0.03f)
+    val box = if (exact) r else {
         val s = minOf(r.width() / result.width, r.height() / result.height)
         val bw = result.width * s
         val bh = result.height * s
@@ -503,9 +613,9 @@ private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, p
         contents.activeId = inner.id
         val spec = SmartSpec(contents, SmartSpec.quadOf(box))
         val grid = SmartArt.rasterize(spec, Transformer.limitFor(d.width, d.height))
-        val mask = input.selection?.let { sel ->
-            selectionMask(sel, Layer(0L, LayerProps(name), grid, 0, 0, null, LayerKind.SMART), d)
-        }
+        // Shaped like the selection, and see-through where the source was (unless it came back another shape)
+        val mask = comfyMask(d, grid, input.region, alpha.takeIf { exact }, input.selection)
+        alpha?.recycle()
         Triple(spec, grid, mask)
     }
     if (doc !== d) return

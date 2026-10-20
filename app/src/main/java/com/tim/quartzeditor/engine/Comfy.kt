@@ -118,17 +118,20 @@ class ComfyClient(base: String) {
         return o.optJSONObject(promptId)
     }
 
-    /** How many runs are ahead of [promptId] (0 when it's running or done). */
-    fun ahead(promptId: String): Int {
+    /**
+     * Where [promptId] is in ComfyUI's queue: 0 while it runs, how many runs are ahead of it while it
+     * waits, or null when it's in neither (done, or gone: ComfyUI restarted or its queue was cleared).
+     */
+    fun queuePlace(promptId: String): Int? {
         val o = json(open("/queue"))
         val running = o.optJSONArray("queue_running") ?: JSONArray()
         for (i in 0 until running.length()) if (running.optJSONArray(i)?.optString(1) == promptId) return 0
-        val pending = o.optJSONArray("queue_pending") ?: return 0
-        var n = running.length()
+        val pending = o.optJSONArray("queue_pending") ?: return null
         // Pending entries are [number, id, …]; the lower the number, the sooner it runs
-        var mine = Double.MAX_VALUE
+        var mine = Double.NaN
         for (i in 0 until pending.length()) pending.optJSONArray(i)?.let { e -> if (e.optString(1) == promptId) mine = e.optDouble(0) }
-        if (mine == Double.MAX_VALUE) return 0
+        if (mine.isNaN()) return null
+        var n = running.length()
         for (i in 0 until pending.length()) pending.optJSONArray(i)?.let { e -> if (e.optDouble(0) < mine) n++ }
         return n
     }
@@ -138,8 +141,12 @@ class ComfyClient(base: String) {
         return read(open("/view?$q", timeout = 120_000))
     }
 
-    /** Stops [promptId]: takes it out of the queue, or stops it if it's the one running. */
+    /**
+     * Stops [promptId]: takes it out of the queue, or stops it if it's the one running (only then:
+     * older ComfyUI stops whatever's running, whoever's it is).
+     */
     fun cancel(promptId: String) {
+        val running = runCatching { queuePlace(promptId) == 0 }.getOrDefault(false)
         runCatching {
             val c = open("/queue", "POST", 8_000)
             c.doOutput = true
@@ -147,7 +154,7 @@ class ComfyClient(base: String) {
             c.outputStream.use { it.write(JSONObject().put("delete", JSONArray().put(promptId)).toString().toByteArray()) }
             read(c)
         }
-        runCatching {
+        if (running) runCatching {
             val c = open("/interrupt", "POST", 8_000)
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
@@ -180,10 +187,20 @@ class ComfySocket(private val url: URL, private val onText: (String) -> Unit, pr
     fun run() {
         val secure = url.protocol == "https"
         val port = if (url.port > 0) url.port else if (secure) 443 else 80
-        val s: Socket = if (secure) javax.net.ssl.SSLSocketFactory.getDefault().createSocket() else Socket()
-        socket = s
+        val plain = Socket()
+        socket = plain
+        var s: Socket = plain
         try {
-            s.connect(InetSocketAddress(url.host, port), 8_000)
+            plain.connect(InetSocketAddress(url.host, port), 8_000)
+            if (secure) {
+                // https:// (Tailscale Serve, say): checked against the server's name like any https
+                val ssl = (javax.net.ssl.SSLSocketFactory.getDefault() as javax.net.ssl.SSLSocketFactory).createSocket(plain, url.host, port, true) as javax.net.ssl.SSLSocket
+                ssl.sslParameters = ssl.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+                ssl.startHandshake()
+                s = ssl
+                socket = ssl
+                if (closed) return
+            }
             s.soTimeout = 0
             val out = s.getOutputStream()
             val input = s.getInputStream().buffered()
@@ -240,6 +257,7 @@ class ComfySocket(private val url: URL, private val onText: (String) -> Unit, pr
             }
         } finally {
             runCatching { s.close() }
+            runCatching { plain.close() }
         }
     }
 

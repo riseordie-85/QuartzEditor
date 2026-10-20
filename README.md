@@ -498,7 +498,14 @@ off, a model is missing) the chip says what ComfyUI said.
   - **Improve the prompt first** turns the workflow's prompt enhancer (the If/Else switch) on or off.
   - Every **seed** is new each run. Compare Images nodes are left out. The picture brought back is the
     one from its Save Image node.
-- Pictures are sent at up to about 2 megapixels. The result keeps its full size inside the smart layer.
+- Pictures are sent at up to about 2 megapixels, sides in multiples of 16 (so the result lines up
+  exactly), with see-through parts on white. Changing a layer that's partly see-through (a cutout)
+  gives the result a mask, so it's see-through in the same places. The result keeps its full size
+  inside the smart layer.
+- A dropped connection now and then doesn't end a run (it keeps asking for up to half a minute); if
+  ComfyUI is restarted or its queue cleared, the chip says it lost the job. Cancel takes it out of
+  ComfyUI's queue, or stops it if it's running. Cropping or resizing the canvas while it works means
+  the result isn't added (it would land in the wrong place).
 
 ## Where the code is
 Everything is under `app/src/main/java/com/tim/quartzeditor/`.
