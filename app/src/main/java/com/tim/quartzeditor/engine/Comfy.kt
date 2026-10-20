@@ -52,7 +52,12 @@ class ComfyClient(base: String) {
                 val ne = nodeErrors.getJSONObject(id)
                 val first = ne.optJSONArray("errors")?.optJSONObject(0)
                 val what = first?.optString("details")?.takeIf { it.isNotBlank() } ?: first?.optString("message").orEmpty()
-                return "ComfyUI: ${ne.optString("class_type", "a node")} — $what".trim()
+                val cls = ne.optString("class_type", "a node")
+                // A model file the workflow names that this ComfyUI doesn't have (the usual one)
+                Regex("""^\s*(\w+): '([^']+)' not in """).find(what)?.let { m ->
+                    return "ComfyUI doesn't have the model \"${m.groupValues[2]}\" ($cls, ${m.groupValues[1]}). Add it to ComfyUI's models, or change the workflow."
+                }
+                return "ComfyUI: $cls — $what".trim()
             }
             o.optJSONObject("error")?.let { e -> return "ComfyUI: " + (e.optString("message").ifBlank { e.toString() }) }
         } catch (_: Exception) {
@@ -393,8 +398,36 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
             }
         }
         if (prompt != null) for ((n, key) in promptTargets) p.optJSONObject(n)?.optJSONObject("inputs")?.put(key, prompt)
-        if (canEnhance) promptSwitch?.let { p.optJSONObject(it)?.optJSONObject("inputs")?.put("switch", enhance) }
+        if (canEnhance) promptSwitch?.let { sw ->
+            if (enhance) p.optJSONObject(sw)?.optJSONObject("inputs")?.put("switch", true)
+            else withoutEnhancer(p, sw)
+        }
         return p
+    }
+
+    /**
+     * The prompt typed straight in where the prompt switch's output went, and the switch taken out,
+     * so the enhancer is left hanging and ComfyUI skips it: it isn't run, and its model needn't be
+     * there. A Preview Any showing the prompt on the way is taken out the same way.
+     */
+    private fun withoutEnhancer(p: JSONObject, sw: String) {
+        val text = p.optJSONObject(sw)?.optJSONObject("inputs")?.opt("on_false") as? String ?: return
+        val gone = ArrayDeque(listOf(sw))
+        while (gone.isNotEmpty()) {
+            val id = gone.removeFirst()
+            p.remove(id)
+            for (k in p.keys().asSequence().toList()) {
+                val node = p.optJSONObject(k) ?: continue
+                val inp = node.optJSONObject("inputs") ?: continue
+                for (key in inp.keys().asSequence().toList()) {
+                    val v = inp.opt(key) as? JSONArray ?: continue
+                    if (v.length() == 2 && v.optString(0) == id) {
+                        inp.put(key, text)
+                        if (node.optString("class_type") == "PreviewAny") gone.add(k)
+                    }
+                }
+            }
+        }
     }
 
     /** Which nodes' pictures are the result: its Save Image nodes (any picture output, if none). */

@@ -496,6 +496,9 @@ off, a model is missing) the chip says what ComfyUI said.
     titled Negative), else a node's own prompt field. It starts as what you last typed for that
     workflow (or the workflow's own); **Use the workflow's own prompt** puts that back.
   - **Improve the prompt first** turns the workflow's prompt enhancer (the If/Else switch) on or off.
+    Off, the enhancer is left out of what's sent, so ComfyUI doesn't run it and its model doesn't have
+    to be installed.
+  - A model the workflow names that your ComfyUI doesn't have is said plainly (which file, which node).
   - Every **seed** is new each run. Compare Images nodes are left out. The picture brought back is the
     one from its Save Image node.
 - Pictures are sent at up to about 2 megapixels, sides in multiples of 16 (so the result lines up
