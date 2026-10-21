@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Deselect
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -292,12 +293,16 @@ fun Workspace(vm: EditorViewModel) {
                     LayerStrip(vm, onPlaceImage = requestPlace)
                 }
 
-                // Something selected: delete what's selected on the layer (beside the panels button)
+                // Something selected: delete what's selected on the layer, or deselect (beside the panels button)
                 if (vm.doc?.selection?.isEmpty == false) {
                     RoundButton(
                         Icons.Outlined.Delete, "Delete selected pixels",
                         modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = 52.dp),
                     ) { vm.clearSelected() }
+                    RoundButton(
+                        Icons.Outlined.Deselect, "Deselect",
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = 104.dp),
+                    ) { vm.deselect() }
                 }
 
                 // Show / hide panels
