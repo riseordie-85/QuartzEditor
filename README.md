@@ -101,6 +101,8 @@ the list; the button shows the one you used last.
     Straight runs stay straight, sharp turns stay corners, the rest become smooth curves. One outline makes
     a pen shape (Edit points works on it); several, or one with holes, make one shape of all of them.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
+  While something is selected, a round **delete** button shows at the bottom right of the picture (beside
+  the panels button): it deletes the selected pixels on the layer you're on (on a mask, it shows them again).
 - **Crop** (hold the Transform button) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
 - **Image size** (Menu → Image → Image size…) — shows the picture's size, layer count and memory, and
