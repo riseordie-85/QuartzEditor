@@ -39,7 +39,8 @@ fun EditorViewModel.applyLayerStyle(id: Long) {
     val applyMask = l.maskActive
     val alone = Layer(
         l.id,
-        l.props.copy(opacity = 1f, blend = Blend.NORMAL, clip = false, visible = true),
+        // (Blend If stays a setting of the layer, not part of its pixels)
+        l.props.copy(opacity = 1f, blend = Blend.NORMAL, clip = false, visible = true, blendIf = com.tim.quartzeditor.engine.BlendIf()),
         TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }, l.x, l.y,
         if (applyMask) l.mask?.let { m -> TileGrid(alphaOnly = true).also { it.tiles.putAll(m.tiles) } } else null, l.kind,
     )

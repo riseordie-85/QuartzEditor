@@ -307,7 +307,7 @@ fun EditorViewModel.mergeDown() {
             TileGrid.fromBitmap(bmp, region.left, region.top, alphaOnly = false).also { bmp.recycle() }
         }
         stackEdit("Merge down") {
-            val props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle(), shape = null, text = null, smart = null)
+            val props = below.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, visible = true, maskDisabled = false, style = LayerStyle(), shape = null, text = null, smart = null, blendIf = com.tim.quartzeditor.engine.BlendIf())
             if (below.needsRaster) {
                 // Merging into a shape or text layer leaves pixels
                 d.layers[d.indexOf(below.id)] = Layer(below.id, props, merged, 0, 0, null, LayerKind.PIXELS)
@@ -353,7 +353,7 @@ fun EditorViewModel.mergeFolder() {
         stackEdit("Merge folder") {
             val range = d.block(g)
             val p = g.props
-            val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = if (p.passThrough) com.tim.quartzeditor.engine.Blend.NORMAL else p.blend, parent = p.parent, clip = p.clip, style = p.style), merged)
+            val l = Layer(d.newId(), LayerProps(p.name, visible = p.visible, opacity = p.opacity, fill = p.fill, blend = if (p.passThrough) com.tim.quartzeditor.engine.Blend.NORMAL else p.blend, parent = p.parent, clip = p.clip, style = p.style, blendIf = p.blendIf), merged)
             for (k in range.reversed()) d.layers.removeAt(k)
             d.layers.add(range.first, l)
             d.activeId = l.id

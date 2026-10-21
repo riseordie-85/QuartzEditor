@@ -413,8 +413,11 @@ private fun EditorViewModel.continuedPath(): List<PenPoint>? {
 fun EditorViewModel.penShown(extra: PenPoint? = null, closed: Boolean = false): List<PenPoint> {
     val raw = penPoints.toList() + listOfNotNull(extra)
     if (!penCurvature) return raw
-    val before = continuedPath()?.let { it.getOrNull(it.size - 2) }
-    return PenPoint.curvature(raw, { i -> penCorners.getOrElse(i) { false } }, closed, before = before)
+    val path = continuedPath()
+    val before = path?.let { it.getOrNull(it.size - 2) }
+    // Closing a shape carried on: the new part runs smoothly into its other end
+    val after = if (closed && path != null) path.first() else null
+    return PenPoint.curvature(raw, { i -> penCorners.getOrElse(i) { false } }, closed && path == null, before = before, after = after)
 }
 
 /**
@@ -509,8 +512,13 @@ fun EditorViewModel.cancelPen() {
 
 /** Makes a shape layer from the pen points: [closed] joins the last point to the first. */
 fun EditorViewModel.finishPen(closed: Boolean) {
-    val pts = penShown(closed = closed && penContinue == null)
+    // Carrying on a shape that's since gone (deleted, locked, undone): the points become a shape of their own
+    if (penContinue != null && continuedLayer() == null) {
+        penContinue = null
+        toast("The shape being carried on isn't there any more: this is a new shape")
+    }
     val cont = penContinue
+    val pts = penShown(closed = closed)
     penPoints.clear()
     penCorners.clear()
     penDrag = null

@@ -802,7 +802,7 @@ private fun EditorViewModel.selectLayerPixels(id: Long, mode: com.tim.quartzedit
         return
     }
     val alone = com.tim.quartzeditor.engine.Layer(
-        l.id, l.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, clip = false, visible = true, style = com.tim.quartzeditor.engine.LayerStyle(), parent = 0L),
+        l.id, l.props.copy(opacity = 1f, fill = 1f, blend = com.tim.quartzeditor.engine.Blend.NORMAL, clip = false, visible = true, style = com.tim.quartzeditor.engine.LayerStyle(), parent = 0L, blendIf = com.tim.quartzeditor.engine.BlendIf()),
         l.tiles, l.x, l.y, l.mask, if (l.isGroup) com.tim.quartzeditor.engine.LayerKind.GROUP else com.tim.quartzeditor.engine.LayerKind.PIXELS,
     )
     val old = d.selection

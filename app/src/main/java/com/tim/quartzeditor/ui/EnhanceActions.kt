@@ -177,7 +177,7 @@ private fun nearest(depth: FloatArray): Float {
 
 /** [l] drawn on its own: normal blending, full opacity, no effects. */
 private fun aloneCopy(l: Layer, withMask: Boolean): Layer = Layer(
-    l.id, l.props.copy(opacity = 1f, fill = 1f, blend = Blend.NORMAL, clip = false, visible = true, style = LayerStyle(), parent = 0L),
+    l.id, l.props.copy(opacity = 1f, fill = 1f, blend = Blend.NORMAL, clip = false, visible = true, style = LayerStyle(), parent = 0L, blendIf = com.tim.quartzeditor.engine.BlendIf()),
     l.tiles, l.x, l.y, if (withMask) l.mask else null, LayerKind.PIXELS,
 )
 

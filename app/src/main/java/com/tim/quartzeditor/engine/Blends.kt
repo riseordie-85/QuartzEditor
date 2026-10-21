@@ -127,25 +127,32 @@ float ramp(float v, float4 r) {
     return lo * hi;
 }
 
+// useComp: 0 a blend mode mixed here (the layer's alpha scaled by how much shows, which also keeps
+// Dissolve speckled), 1 Android's blend in pc (moved toward by how much shows), 2 Add (clamped)
 float4 blendIf(float4 pb, float4 ps, float4 pc, float2 p) {
     if (ps.a <= 0.0) return pb;
-    float4 comp = useComp > 0.5 ? pc : mixPx(pb, ps, p);
     float ws = ramp(lum(ps.rgb / ps.a) * 255.0, thisR);
     // Over nothing there's nothing to compare with: the layer shows
     float wu = pb.a > 0.0 ? mix(1.0, ramp(lum(pb.rgb / pb.a) * 255.0, underR), pb.a) : 1.0;
-    return pb + (comp - pb) * (ws * wu);
+    float w = ws * wu;
+    if (useComp < 0.5) return mixPx(pb, ps * w, p);
+    if (useComp > 1.5) return min(pb + ps * w, float4(1.0));
+    return pb + (pc - pb) * w;
 }
 """
 
     private const val COMMON = BlendShader.COMMON + WEIGHT
 
-    /** One picture: what's below, then the layer alone, then the layer blended onto what's below, each [shift] apart. */
+    /**
+     * One picture, a 2 × 2 grid of [size]-sized panels: what's below (top left), the layer alone (top
+     * right) and the layer blended onto what's below (bottom left).
+     */
     private const val TRIPLE = COMMON + """
 uniform shader content;
-uniform float shift;
+uniform float2 size;
 half4 main(float2 p) {
-    if (p.x >= shift) return half4(0.0);
-    return half4(blendIf(float4(content.eval(p)), float4(content.eval(p + float2(shift, 0.0))), float4(content.eval(p + float2(2.0 * shift, 0.0))), p));
+    if (p.x >= size.x || p.y >= size.y) return half4(0.0);
+    return half4(blendIf(float4(content.eval(p)), float4(content.eval(p + float2(size.x, 0.0))), float4(content.eval(p + float2(0.0, size.y))), p));
 }
 """
 
@@ -161,17 +168,17 @@ half4 main(float2 p) { return half4(blendIf(float4(below.eval(p)), float4(layer.
         setFloatUniform("docMap", sx, sy, tx, ty)
         setFloatUniform("thisR", b.thisLo0.toFloat(), b.thisLo1.toFloat(), b.thisHi0.toFloat(), b.thisHi1.toFloat())
         setFloatUniform("underR", b.underLo0.toFloat(), b.underLo1.toFloat(), b.underHi0.toFloat(), b.underHi1.toFloat())
-        setFloatUniform("useComp", if (blend.custom != 0) 0f else 1f)
+        setFloatUniform("useComp", if (blend.custom != 0) 0f else if (blend == Blend.LINEAR_DODGE) 2f else 1f)
     }
 
     private val screen = HashMap<Long, RuntimeShader>()
 
-    /** On screen: a node [width] × 3 wide (below, alone, blended); its left third becomes the result. Main thread only. */
-    fun tripleEffect(layerId: Long, blend: Blend, b: BlendIf, width: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
+    /** On screen: a node twice [width] × [height] (below, alone; blended), its top-left panel becomes the result. Main thread only. */
+    fun tripleEffect(layerId: Long, blend: Blend, b: BlendIf, width: Int, height: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
         if (screen.size > 64) screen.clear()
         val sh = screen.getOrPut(layerId) { RuntimeShader(TRIPLE) }
         sh.setUp(blend, b, sx, sy, tx, ty)
-        sh.setFloatUniform("shift", width.toFloat())
+        sh.setFloatUniform("size", width.toFloat(), height.toFloat())
         return RenderEffect.createRuntimeShaderEffect(sh, "content")
     }
 

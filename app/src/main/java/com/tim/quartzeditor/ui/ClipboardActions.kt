@@ -41,7 +41,7 @@ fun EditorViewModel.copyPixels(merged: Boolean = false, then: (() -> Unit)? = nu
     } else {
         val a = l!!
         val alone = Layer(
-            a.id, a.props.copy(opacity = 1f, fill = 1f, blend = Blend.NORMAL, clip = false, visible = true, style = LayerStyle(), parent = 0L),
+            a.id, a.props.copy(opacity = 1f, fill = 1f, blend = Blend.NORMAL, clip = false, visible = true, style = LayerStyle(), parent = 0L, blendIf = com.tim.quartzeditor.engine.BlendIf()),
             a.tiles, a.x, a.y, a.mask, if (a.isGroup) LayerKind.GROUP else LayerKind.PIXELS,
         )
         layers = listOf(alone)

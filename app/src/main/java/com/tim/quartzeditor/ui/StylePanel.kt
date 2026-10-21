@@ -63,8 +63,8 @@ fun StylePanel(vm: EditorViewModel) {
     StylePresetsRow(vm)
     Spacer(Modifier.height(6.dp))
 
-    // Blending Options (Blend If), above the effects like Photoshop's
-    run {
+    // Blending Options (Blend If), above the effects like Photoshop's (not for adjustment layers)
+    if (!l.isAdjustment) run {
         val expanded = open == "BLENDING"
         val active = l.props.blendIf.active
         Column(

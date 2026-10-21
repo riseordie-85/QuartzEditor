@@ -26,6 +26,8 @@ internal fun EditorViewModel.resetVectorState() {
     rasterAsk = null
     shapeDraft = null
     penPoints.clear()
+    penCorners.clear()
+    penContinue = null
     penDrag = null
     vectorBefore = null
     vectorJob?.cancel()

@@ -220,7 +220,10 @@ object DocRenderer {
 
     /** Blend If: drawn twice (alone, and blended onto what's below) and mixed by [BlendIfShader]. */
     private fun blendIfOn(l: Layer, ctx: Ctx): Boolean =
-        l.props.blendIf.active && !l.isAdjustment && l !== ctx.clipBase && !(l.isGroup && l.props.passThrough) && l.props.opacity > 0f
+        l.props.blendIf.active && !l.isAdjustment && l !== ctx.clipBase && l.props.opacity > 0f
+
+    /** How a Blend If layer is blended (a Pass Through folder with Blend If is drawn as one picture, Normally). */
+    private fun blendIfMode(l: Layer): Blend = if (l.isGroup && l.props.passThrough) Blend.NORMAL else l.props.blend
 
     /**
      * [clipGroups], with Pass Through folders opened up: their layers are drawn in among the layers
@@ -437,8 +440,10 @@ object DocRenderer {
             if (blendIfOn(l, ctx)) {
                 // What's below, the layer alone, and the layer blended onto what's below, side by side
                 below.endRecording()
-                val trio = RenderNode("blendIf").apply { setPosition(0, 0, 3 * w, h) }
-                val tc = trio.beginRecording(3 * w, h)
+                // (A 2 × 2 grid, so the node is no wider than the blend modes' pair)
+                val bl = blendIfMode(l)
+                val trio = RenderNode("blendIf").apply { setPosition(0, 0, 2 * w, 2 * h) }
+                val tc = trio.beginRecording(2 * w, 2 * h)
                 tc.drawRenderNode(below)
                 tc.save()
                 tc.translate(w.toFloat(), 0f)
@@ -446,9 +451,9 @@ object DocRenderer {
                 tc.concat(view)
                 drawNode(tc, l, ctx, forceNormal = true)
                 tc.restore()
-                if (l.props.blend.custom == 0) {
+                if (bl.custom == 0) {
                     tc.save()
-                    tc.translate(2f * w, 0f)
+                    tc.translate(0f, h.toFloat())
                     tc.clipRect(0, 0, w, h)
                     tc.drawRenderNode(below)
                     tc.concat(view)
@@ -457,7 +462,7 @@ object DocRenderer {
                 }
                 trio.endRecording()
                 trio.setRenderEffect(BlendIfShader.tripleEffect(
-                    l.id, l.props.blend, l.props.blendIf, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
+                    l.id, bl, l.props.blendIf, w, h, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
                 ))
                 val next = node("next")
                 val nr = next.beginRecording(w, h)
@@ -617,13 +622,14 @@ object DocRenderer {
                 val ac = Canvas(alone)
                 prepare(ac)
                 drawNode(ac, l, ctx, forceNormal = true)
+                val bl = blendIfMode(l)
                 val comp = pic.copy(Bitmap.Config.ARGB_8888, true)
-                if (l.props.blend.custom == 0) {
+                if (bl.custom == 0) {
                     val cc = Canvas(comp)
                     prepare(cc)
                     drawNode(cc, l, ctx)
                 }
-                val mixed = BlendIfShader.mix(pic, alone, comp, l.props.blend, l.props.blendIf, area.width() / pw.toFloat(), area.height() / ph.toFloat(), area.left.toFloat(), area.top.toFloat())
+                val mixed = BlendIfShader.mix(pic, alone, comp, bl, l.props.blendIf, area.width() / pw.toFloat(), area.height() / ph.toFloat(), area.left.toFloat(), area.top.toFloat())
                 alone.recycle()
                 comp.recycle()
                 pic.recycle()
