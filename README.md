@@ -501,18 +501,35 @@ The Photoshop file writer follows ag-psd (MIT, by Agamnentzar) for how Photoshop
 descriptors, text engine data and smart objects.
 
 ## ComfyUI (Quartz Online)
-Menu → **ComfyUI…** runs one of your ComfyUI workflows on your own computer (over Tailscale, say) and
-brings back what it made as a new **smart layer** above the active one, while you keep editing. A chip
+Menu → **ComfyUI…** opens a full-screen page that runs one of your ComfyUI workflows on your own
+computer (over Tailscale, say) and brings back what it made as a new **smart layer** above the active
+one, while you keep editing. A chip
 at the bottom of the picture shows what it's doing (loading models, step 12 / 25…) with ComfyUI's live
 preview, and **Cancel** (which stops it on the server too). If something goes wrong (the computer's
 off, a model is missing) the chip says what ComfyUI said.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has
   to listen on the network: start it with `--listen`. The app comes with Tim's server filled in.
+- **The page**, top to bottom: the **workflow** (a drop-down list), **presets**, what it works on, the
+  **prompt**, the **size** (for a new picture: 0.5 to 4 megapixels, the canvas's shape; it starts at the
+  workflow's own Resolution Selector megapixels when it has one), **how many** (1 to 8 runs, each with new
+  seeds, each picture coming in as its own layer as soon as it's done — a workflow that saves several
+  pictures in one run brings them all in too), the **models**, the **LoRAs**, and the server. **Run** is at
+  the top.
+- **Models**: every loader in the workflow (diffusion model, checkpoint, text encoders, VAE, LoRA loader,
+  upscale model) shows the file it uses; tap it for the list of what your ComfyUI has (with a search box)
+  to pick another. Weight type, device and the like are under More options. LoRA loaders' strengths are
+  sliders. Changed ones are tinted and have Reset.
+- **LoRA Manager**: its Lora Loader's list, with the ones switched on shown first (On only switches to
+  all of them; Find searches): switch each on or off, set its strength, take it out (×), or **Add…** any
+  LoRA your ComfyUI has. Its trigger words node gets the trigger words as LoRA Manager works them out.
+- What you change is remembered for each workflow (**Back to the workflow's own models and LoRAs** clears
+  it). **Save as preset…** keeps the whole setup — workflow, prompt, enhancer, size, how many, what it
+  works on, models and LoRAs — under a name; pick it from Presets to get it all back (× deletes one).
 - **Workflows**: five come with the app (Qwen Image text to image, Moss text to image, Qwen Image
   edit, Qwen background remover, Z-image upscale). **Add workflow…** adds any other: in ComfyUI, save it with
   Workflow → **Export (API)** (the normal save format isn't accepted). Added ones can be removed.
 - What a workflow does is worked out from its nodes:
-  - **No Load Image** — makes a new picture the shape of the canvas (about 1 megapixel, sides in
+  - **No Load Image** — makes a new picture the shape of the canvas (at the size picked, sides in
     multiples of 16, put into its Empty Latent Image), placed filling the canvas.
   - **A Load Image** — changes the **active layer** or **everything you see** (your pick), or just the
     selected part of it; the result goes where that was (a selection's shape becomes the new layer's mask).
