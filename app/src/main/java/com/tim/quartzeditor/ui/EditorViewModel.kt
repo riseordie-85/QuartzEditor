@@ -214,6 +214,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal var penLastTap = -1
     internal var penLastTapAt = 0L
 
+    /** While drawing: the points (and corners) before each change, for Undo. */
+    internal val penHistory = ArrayList<Pair<List<com.tim.quartzeditor.engine.PenPoint>, List<Boolean>>>()
+
     /** Curvature Pen: which of [penPoints] are sharp corners (double-tap a point to switch). */
     val penCorners = androidx.compose.runtime.mutableStateListOf<Boolean>()
 

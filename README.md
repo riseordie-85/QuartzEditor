@@ -171,7 +171,9 @@ the list; the button shows the one you used last.
 - **Curvature pen** (hold the pen button, or the Pen / Curvature pen switch in Properties; Shift+P) — tap to
   place points and the line curves smoothly through all of them, reshaping as you go. Double-tap any point
   to make it a sharp corner (a diamond), again for smooth; drag a point to move it (or hold, then drag). Tap
-  the first point to close the shape.
+  the first point to close the shape (so it's the one point that can't be switched while drawing; carrying a
+  shape on, its own end stays as it is). Undo (two-finger tap) takes back the last change: a point, a move
+  or a switch.
 - With the **Pen** too, while drawing: double-tap a point to switch it between a corner and a curve, and drag
   a point to move it (dragging on the first point still closes the shape with a curve there).
 - **Adding to a shape** with either pen (while drawing, with a pen shape selected): tap its outline to add a

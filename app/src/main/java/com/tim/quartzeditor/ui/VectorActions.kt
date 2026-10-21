@@ -426,21 +426,24 @@ fun EditorViewModel.penShown(extra: PenPoint? = null, closed: Boolean = false): 
  * outline adds a point to it, and a tap on an open shape's end carries that shape on.
  * Curvature Pen: tapping the last point again makes it a sharp corner (or smooth again).
  */
-fun EditorViewModel.penAdd(p0: PenPoint, closeRadius: Float) {
+fun EditorViewModel.penAdd(p0: PenPoint, closeRadius: Float, rawX: Float = p0.x, rawY: Float = p0.y) {
     penDrag = null
     val p = if (penCurvature) p0.corner() else p0
-    if (penPoints.isEmpty() && penStartOnShape(p.x, p.y, closeRadius)) return
-    fun near(q: PenPoint) = hypot(p.x - q.x, p.y - q.y) <= closeRadius
+    if (penPoints.isEmpty() && penStartOnShape(rawX, rawY, closeRadius)) return
+    // Where the finger was (not where it snapped to) decides what it touched
+    fun near(q: PenPoint) = hypot(rawX - q.x, rawY - q.y) <= closeRadius
+    // Placed points are touched only close up (half the closing distance), so points can go near each other
+    val hit = penPointable(penPointAt(rawX, rawY, closeRadius / 2f))
     val cont = continuedPath()
     if (penContinue != null && cont != null) {
         // Closing onto the continued shape's other end
-        if (penPoints.size >= 2 && cont.size >= 2 && near(cont.first())) {
+        if (hit < 0 && penPoints.size >= 2 && cont.size >= 2 && near(cont.first())) {
             finishPen(closed = true)
             return
         }
     } else {
         val first = penPoints.firstOrNull()
-        if (first != null && penPoints.size >= 2 && near(first)) {
+        if (first != null && penPoints.size >= 2 && (hit == 0 || (hit < 0 && near(first)))) {
             // Dragging on the first point reshapes its curve as it closes
             if (p.smooth) penPoints[0] = first.copy(hx = p.hx, hy = p.hy, ix = -p.hx, iy = -p.hy)
             finishPen(closed = true)
@@ -448,14 +451,23 @@ fun EditorViewModel.penAdd(p0: PenPoint, closeRadius: Float) {
         }
     }
     // A tap on a point already placed doesn't add one: a double tap makes it a corner or a curve
-    val hit = penPointAt(p.x, p.y, closeRadius)
     if (hit >= 0) {
         penTapPoint(hit)
         return
     }
     penLastTap = -1
+    penRemember()
     penPoints.add(p)
     while (penCorners.size < penPoints.size) penCorners.add(false)
+}
+
+/** [i] if that placed point can be moved or switched (not a carried-on shape's own end, which belongs to that shape), else −1. */
+fun EditorViewModel.penPointable(i: Int): Int = if (i == 0 && penContinue != null) -1 else i
+
+/** Keeps the points as they are, so Undo while drawing takes back the next change (a point, a move, a switch). */
+fun EditorViewModel.penRemember() {
+    penHistory.add(penPoints.toList() to penCorners.toList())
+    if (penHistory.size > 200) penHistory.removeAt(0)
 }
 
 /** The placed point nearest canvas point ([cx], [cy]) within [radius], or −1. */
@@ -486,6 +498,7 @@ private fun EditorViewModel.penTapPoint(i: Int) {
         return
     }
     penLastTap = -1
+    penRemember()
     if (penCurvature) {
         while (penCorners.size < penPoints.size) penCorners.add(false)
         penCorners[i] = !penCorners[i]
@@ -504,7 +517,8 @@ private fun EditorViewModel.penTapPoint(i: Int) {
     var dx = (next.x - prev.x) * 0.2f
     var dy = (next.y - prev.y) * 0.2f
     if (dx == 0f && dy == 0f) {
-        dx = 20f
+        // On its own: a handle that looks the same size at any zoom
+        dx = 20f / scale.coerceAtLeast(0.01f)
         dy = 0f
     }
     penPoints[i] = q.copy(hx = dx, hy = dy, ix = -dx, iy = -dy)
@@ -546,6 +560,19 @@ private fun EditorViewModel.penStartOnShape(cx: Float, cy: Float, radius: Float)
 
 fun EditorViewModel.undoPenPoint() {
     if (penPoints.isEmpty()) return
+    penLastTap = -1
+    // The last change while drawing (a point added, moved or switched)
+    penHistory.removeLastOrNull()?.let { (pts, corners) ->
+        if (pts.isEmpty() || (penContinue != null && pts.size <= 1 && penPoints.size <= 1)) {
+            cancelPen()
+            return
+        }
+        penPoints.clear()
+        penPoints.addAll(pts)
+        penCorners.clear()
+        penCorners.addAll(corners)
+        return
+    }
     // Carrying on a shape: its own end stays (taking it away stops carrying on)
     if (penContinue != null && penPoints.size == 1) {
         cancelPen()
@@ -558,6 +585,7 @@ fun EditorViewModel.undoPenPoint() {
 
 fun EditorViewModel.cancelPen() {
     penLastTap = -1
+    penHistory.clear()
     penPoints.clear()
     penCorners.clear()
     penDrag = null
@@ -573,6 +601,8 @@ fun EditorViewModel.finishPen(closed: Boolean) {
     }
     val cont = penContinue
     val pts = penShown(closed = closed)
+    penLastTap = -1
+    penHistory.clear()
     penPoints.clear()
     penCorners.clear()
     penDrag = null

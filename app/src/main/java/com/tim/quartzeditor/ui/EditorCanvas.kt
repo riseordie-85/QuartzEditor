@@ -292,7 +292,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var penGrab = -1
                         var penGrabStart: com.tim.quartzeditor.engine.PenPoint? = null
                         if (tool == Tool.PEN && vm.penEditTarget == null && vm.penPoints.isNotEmpty()) {
-                            penGrab = vm.penPointAt(startCx, startCy, 24.dp.toPx() / vm.scale)
+                            penGrab = vm.penPointable(vm.penPointAt(startCx, startCy, 12.dp.toPx() / vm.scale))
                             // (With the Pen, dragging on the first point closes the shape with a curve there)
                             if (!vm.penCurvature && penGrab == 0 && vm.penPoints.size >= 2 && vm.penContinue == null) penGrab = -1
                             penGrabStart = vm.penPoints.getOrNull(penGrab)
@@ -373,7 +373,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             if (ev == null) {
                                 // Long press without moving
                                 longPressDone = true
-                                if (!vm.isOnCanvas(start.x, start.y)) {
+                                // (Holding a pen point is the start of dragging it, not the menu)
+                                if (!vm.isOnCanvas(start.x, start.y) && penGrab < 0) {
                                     canvasMenuAt = start
                                     mode = GestureMode.DONE
                                 }
@@ -433,6 +434,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     }
                                     GestureMode.PEN_MOVE -> {
                                         penGrabStart?.let { vm.penPutPoint(penGrab, it) }
+                                        // Put back, so there's nothing to undo
+                                        vm.penHistory.removeLastOrNull()
                                         mode = GestureMode.NAV
                                     }
                                     GestureMode.PEN_EDIT -> {
@@ -545,6 +548,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.moveTo(d.x / vm.scale, d.y / vm.scale, 10.dp.toPx() / vm.scale, lockedAxis(vm, main.position - start))
                                     }
                                     if (mode == GestureMode.PEN_MOVE) {
+                                        vm.penRemember()
+                                        vm.penLastTap = -1
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                         penGrabStart?.let { p0 ->
                                             val (px, py) = vm.snapPoint(p0.x + (cx - startCx), p0.y + (cy - startCy), 10.dp.toPx() / vm.scale)
@@ -742,7 +747,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.penEditTap(startCx, startCy, 24.dp.toPx() / vm.scale)
                                     } else {
                                         val (px, py) = vm.snapPoint(startCx, startCy, 10.dp.toPx() / vm.scale)
-                                        vm.penAdd(com.tim.quartzeditor.engine.PenPoint(px, py), 24.dp.toPx() / vm.scale)
+                                        vm.penAdd(com.tim.quartzeditor.engine.PenPoint(px, py), 24.dp.toPx() / vm.scale, startCx, startCy)
                                     }
                                     Tool.TEXT -> vm.textTap(startCx, startCy)
                                     else -> Unit
@@ -776,7 +781,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 if (g != null) vm.moveGuide(g.first, g.second, guidePos)
                             }
                             GestureMode.SHAPING -> vm.finishShape()
-                            GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale) }
+                            GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale, startCx, startCy) }
                             GestureMode.PEN_EDIT -> {
                                 vm.penEditEnd(penMoved)
                                 // A tap on a point picks it
