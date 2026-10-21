@@ -510,6 +510,14 @@ preview, and **Cancel** (which stops it on the server too). If something goes wr
 off, a model is missing) the chip says what ComfyUI said.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has
   to listen on the network: start it with `--listen`. The app comes with Tim's server filled in.
+- **My server | Comfy Cloud** (at the top) picks where it runs. Each has its own workflows (and presets);
+  workflows added on a side belong to that side. **Comfy Cloud** (cloud.comfy.org) runs with your API key
+  (from platform.comfy.org; kept on the tablet only, shown as dots unless you tap Show; **Test** checks it)
+  and uses your Comfy Cloud credits. Jobs go through Comfy API v2 (submitted, then followed: its place in
+  Cloud's queue, the node and step it's on); the pictures come back from Cloud's signed links; pictures sent
+  to a workflow (edits) are uploaded first; the model lists come from Cloud. Live previews are for your own
+  server only. One Cloud workflow comes with the app: Krea 2 with three LoRAs.
+- **Switches**: a workflow's own on/off Boolean nodes (like "Enable LoRA 2?") show as switches.
 - **The page**, top to bottom: the **workflow** (a drop-down list), **presets**, what it works on, the
   **prompt**, the **size** (for a new picture: 0.5 to 4 megapixels, the canvas's shape; it starts at the
   workflow's own Resolution Selector megapixels when it has one), **how many** (1 to 8 runs, each with new

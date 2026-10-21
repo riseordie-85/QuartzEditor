@@ -179,6 +179,157 @@ class ComfyClient(base: String) {
 }
 
 /**
+ * Comfy Cloud (cloud.comfy.org) with your API key: jobs go through Comfy API v2 (submit, poll, signed
+ * output links); uploads and the node descriptions (model lists) through the cloud's ComfyUI-style
+ * API. Every call blocks: background threads only.
+ */
+class ComfyCloud(apiKey: String, val base: String = "https://cloud.comfy.org") {
+    private val key = apiKey.trim()
+
+    private fun open(path: String, method: String = "GET", timeout: Int = 30_000, auth: Boolean = true): HttpURLConnection {
+        val c = URL(if (path.startsWith("http")) path else base + path).openConnection() as HttpURLConnection
+        c.requestMethod = method
+        c.connectTimeout = 10_000
+        c.readTimeout = timeout
+        c.useCaches = false
+        c.instanceFollowRedirects = false
+        if (auth) {
+            // (v2 takes a bearer token, the ComfyUI-style endpoints the X-API-Key header)
+            c.setRequestProperty("Authorization", "Bearer $key")
+            c.setRequestProperty("X-API-Key", key)
+        }
+        return c
+    }
+
+    private fun read(c: HttpURLConnection): ByteArray {
+        val code = c.responseCode
+        val stream = if (code in 200..299) c.inputStream else c.errorStream
+        val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+        if (code !in 200..299) throw ComfyException(errorText(code, String(bytes, Charsets.UTF_8)))
+        return bytes
+    }
+
+    private fun errorText(code: Int, body: String): String {
+        val o = runCatching { JSONObject(body) }.getOrNull()
+        val e = o?.optJSONObject("error")
+        val msg = e?.optString("message")?.takeIf { it.isNotBlank() } ?: o?.optString("message")?.takeIf { it.isNotBlank() }
+        return when (code) {
+            401 -> "Comfy Cloud didn't accept the API key"
+            402 -> "Comfy Cloud: not enough credits"
+            429 -> if (e?.optString("code") == "rate_limited") "Comfy Cloud is busy (too many requests): try again in a moment" else "Comfy Cloud: the subscription isn't active"
+            else -> "Comfy Cloud: " + (msg ?: "answered $code${if (body.isNotBlank()) ": " + body.take(200) else ""}")
+        }
+    }
+
+    private fun json(c: HttpURLConnection): JSONObject = JSONObject(String(read(c), Charsets.UTF_8))
+
+    private fun postJson(path: String, body: JSONObject, timeout: Int = 60_000): JSONObject {
+        val c = open(path, "POST", timeout)
+        c.doOutput = true
+        c.setRequestProperty("Content-Type", "application/json")
+        c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+        return json(c)
+    }
+
+    /** Who the key belongs to (to show it works), or throws. */
+    fun hello(): String {
+        val o = json(open("/api/user", timeout = 15_000))
+        val who = listOf("email", "name", "username").firstNotNullOfOrNull { k -> o.optString(k).takeIf { it.isNotBlank() } }
+        return "Comfy Cloud" + (who?.let { " · $it" } ?: "")
+    }
+
+    /** Uploads a PNG for a Load Image; returns the name to give it. */
+    fun upload(png: ByteArray, name: String): String {
+        val boundary = "----QuartzEditor" + Random.nextLong().toULong().toString(16)
+        val c = open("/api/upload/image", "POST", 120_000)
+        c.doOutput = true
+        c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        c.outputStream.buffered().use { o ->
+            fun line(s: String) = o.write((s + "\r\n").toByteArray(Charsets.UTF_8))
+            for ((k, v) in listOf("overwrite" to "true", "type" to "input")) {
+                line("--$boundary")
+                line("Content-Disposition: form-data; name=\"$k\"")
+                line("")
+                line(v)
+            }
+            line("--$boundary")
+            line("Content-Disposition: form-data; name=\"image\"; filename=\"$name\"")
+            line("Content-Type: image/png")
+            line("")
+            o.write(png)
+            line("")
+            line("--$boundary--")
+        }
+        val o = json(c)
+        val n = o.optString("name").ifBlank { throw ComfyException("Comfy Cloud didn't take the picture") }
+        val sub = o.optString("subfolder")
+        return if (sub.isBlank()) n else "$sub/$n"
+    }
+
+    /** Submits [workflow] (API format); returns the job. */
+    fun submit(workflow: JSONObject): JSONObject {
+        val body = JSONObject().put("workflow", workflow)
+            // Partner (paid API) nodes in the workflow use the same key
+            .put("extra_data", JSONObject().put("api_key_comfy_org", key))
+        return postJson("/api/v2/jobs", body)
+    }
+
+    fun job(id: String): JSONObject = json(open("/api/v2/jobs/" + URLEncoder.encode(id, "UTF-8"), timeout = 20_000))
+
+    fun cancel(id: String) {
+        runCatching { postJson("/api/v2/jobs/" + URLEncoder.encode(id, "UTF-8") + "/cancel", JSONObject(), 15_000) }
+    }
+
+    /** An output's bytes from its signed link (no key sent: the link carries its own permission). */
+    fun download(url: String): ByteArray {
+        var u = url
+        repeat(4) {
+            val c = open(u, timeout = 120_000, auth = u.startsWith(base))
+            val code = c.responseCode
+            if (code in 300..399) {
+                u = c.getHeaderField("Location") ?: throw ComfyException("Comfy Cloud: a download went nowhere")
+                c.disconnect()
+                return@repeat
+            }
+            return read(c)
+        }
+        throw ComfyException("Comfy Cloud: too many redirects downloading the picture")
+    }
+
+    private var allInfo: JSONObject? = null
+
+    /** What node type [cls] takes (its inputs and their choices), or null when the cloud doesn't have it. */
+    fun objectInfo(cls: String): JSONObject? {
+        runCatching { json(open("/api/object_info/" + URLEncoder.encode(cls, "UTF-8").replace("+", "%20"), timeout = 30_000)).optJSONObject(cls) }
+            .getOrNull()?.let { return it }
+        // Only the whole list: asked for once
+        val all = allInfo ?: json(open("/api/object_info", timeout = 90_000)).also { allInfo = it }
+        return all.optJSONObject(cls)
+    }
+
+    companion object {
+        /** Why a job failed, in a sentence (the node and what it said when the cloud says). */
+        fun jobError(job: JSONObject): String {
+            val e = job.optJSONObject("error") ?: return "Comfy Cloud couldn't finish it (${job.optString("status")})"
+            val ne = e.optJSONObject("node_errors")
+            if (ne != null && ne.length() > 0) {
+                val id = ne.keys().next()
+                val n = ne.optJSONObject(id)
+                val first = n?.optJSONArray("errors")?.optJSONObject(0)
+                val what = first?.optString("details")?.takeIf { it.isNotBlank() } ?: first?.optString("message").orEmpty()
+                Regex("""^\s*(\w+): '([^']+)' not in """).find(what)?.let { m ->
+                    return "Comfy Cloud doesn't have the model \"${m.groupValues[2]}\" (${n?.optString("class_type")}, ${m.groupValues[1]}). Pick one it has under Models."
+                }
+                return "Comfy Cloud: ${n?.optString("class_type") ?: "a node"} — $what"
+            }
+            val where = e.optString("class_type").takeIf { it.isNotBlank() && it != "null" }
+            val msg = e.optString("message").lineSequence().firstOrNull().orEmpty()
+            return "Comfy Cloud: " + (if (where != null) "$where — " else "") + msg.ifBlank { e.optString("code") }
+        }
+    }
+}
+
+/**
  * Just enough of a WebSocket client for ComfyUI's progress messages: connects, then hands each
  * text message to [onText] and each binary one (live previews) to [onBinary] until [close].
  * Runs on the thread that calls [run].
@@ -324,6 +475,9 @@ enum class ComfyKind(val label: String) {
  * is new each time.
  */
 class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean, val fileName: String) {
+    /** A Comfy Cloud workflow (they're kept apart from your server's, under cloud/). */
+    val cloud: Boolean get() = fileName.startsWith("cloud/")
+
     private fun nodes(): List<Pair<String, JSONObject>> = json.keys().asSequence().mapNotNull { k -> json.optJSONObject(k)?.let { k to it } }.toList()
 
     private fun cls(o: JSONObject) = o.optString("class_type")
@@ -430,6 +584,18 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         inp.keys().asSequence().filter { k -> inp.opt(k) is Number && k.startsWith("strength") }.map { k ->
             ComfySetting(id, c, k, title(o).ifBlank { c }, (inp.get(k) as Number).toString())
         }.toList()
+    }
+
+    /**
+     * On/off switches in the workflow (Boolean nodes, like "Enable LoRA 2?"), but not the one for the
+     * prompt enhancer (Improve the prompt first does that).
+     */
+    val toggles: List<ComfySetting> = nodes().filter { (id, o) ->
+        cls(o) == "PrimitiveBoolean" && inputs(o).opt("value") is Boolean &&
+            promptSwitch?.let { sw -> link(json.optJSONObject(sw)?.optJSONObject("inputs")?.opt("switch"))?.first == id } != true
+    }.map { (id, o) ->
+        val t = title(o).removePrefix("Boolean").trim().removePrefix("(").removeSuffix(")").trim().ifBlank { "Switch $id" }
+        ComfySetting(id, cls(o), "value", t, inputs(o).optBoolean("value").toString())
     }
 
     /** LoRA Manager's Lora Loader nodes: (node id, its LoRAs as saved). */

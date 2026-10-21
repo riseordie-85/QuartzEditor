@@ -118,6 +118,7 @@ class ComfyJob(val title: String) {
     internal var promptId: String? = null
     internal var job: kotlinx.coroutines.Job? = null
     internal var client: ComfyClient? = null
+    internal var cloud: com.tim.quartzeditor.engine.ComfyCloud? = null
 }
 
 private const val PREF_URL = "comfyUrl"
@@ -141,32 +142,55 @@ fun EditorViewModel.setComfyServer(url: String) {
 
 private fun EditorViewModel.userWorkflowDir() = File(ctx.filesDir, "comfy")
 
-/** The workflows that came with the app, then the ones you added. Reads files: background threads. */
-fun EditorViewModel.loadComfyWorkflows(): List<ComfyWorkflow> {
+/** Comfy Cloud instead of your own server (each has its own workflows). */
+var EditorViewModel.comfyCloud: Boolean
+    get() = prefs.getString("comfyTarget", "server") == "cloud"
+    set(v) {
+        prefs.edit().putString("comfyTarget", if (v) "cloud" else "server").apply()
+    }
+
+/** Your Comfy Cloud API key (kept on this device only). */
+fun EditorViewModel.comfyCloudKey(): String = prefs.getString("comfyCloudKey", "").orEmpty()
+
+fun EditorViewModel.setComfyCloudKey(k: String) {
+    prefs.edit().putString("comfyCloudKey", k.trim()).apply()
+}
+
+/**
+ * The workflows that came with the app, then the ones you added, for your server or ([cloud]) Comfy
+ * Cloud: Cloud's live in a cloud/ folder of their own (their names start "cloud/"). Background threads.
+ */
+fun EditorViewModel.loadComfyWorkflows(cloud: Boolean = comfyCloud): List<ComfyWorkflow> {
     val out = ArrayList<ComfyWorkflow>()
     val assets = ctx.assets
-    for (f in (runCatching { assets.list("comfy") }.getOrNull() ?: emptyArray()).sorted()) {
+    val sub = if (cloud) "cloud/" else ""
+    val assetDir = if (cloud) "comfy/cloud" else "comfy"
+    for (f in (runCatching { assets.list(assetDir) }.getOrNull() ?: emptyArray()).sorted()) {
         if (!f.endsWith(".json", ignoreCase = true)) continue
-        val text = runCatching { assets.open("comfy/$f").bufferedReader().use { it.readText() } }.getOrNull() ?: continue
-        ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(f), builtIn = true, fileName = f)?.let { out.add(it) }
+        val text = runCatching { assets.open("$assetDir/$f").bufferedReader().use { it.readText() } }.getOrNull() ?: continue
+        ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(f), builtIn = true, fileName = sub + f)?.let { out.add(it) }
     }
-    val mine = userWorkflowDir().listFiles()?.filter { it.isFile && it.name.endsWith(".json", ignoreCase = true) }?.sortedBy { it.name.lowercase() }.orEmpty()
+    val dir = if (cloud) File(userWorkflowDir(), "cloud") else userWorkflowDir()
+    val mine = dir.listFiles()?.filter { it.isFile && it.name.endsWith(".json", ignoreCase = true) }?.sortedBy { it.name.lowercase() }.orEmpty()
     for (f in mine) {
         val text = runCatching { f.readText() }.getOrNull() ?: continue
-        ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(f.name), builtIn = false, fileName = f.name)?.let { out.add(it) }
+        ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(f.name), builtIn = false, fileName = sub + f.name)?.let { out.add(it) }
     }
     return out
 }
 
 /** Reloads the list of workflows (in the background). */
 fun EditorViewModel.refreshComfyWorkflows() {
+    val cloud = comfyCloud
     viewModelScope.launch {
-        comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows() }
+        comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) }
     }
 }
 
 /** Adds a workflow file (saved from ComfyUI with Export (API)) to the list. */
 fun EditorViewModel.importComfyWorkflow(uri: Uri) {
+    // Into the list on screen: your server's, or Comfy Cloud's
+    val cloud = comfyCloud
     viewModelScope.launch {
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -178,9 +202,9 @@ fun EditorViewModel.importComfyWorkflow(uri: Uri) {
                 } ?: return@runCatching null
                 ComfyWorkflow.parse(text, ComfyWorkflow.nameFrom(name), builtIn = false, fileName = name) ?: return@runCatching null
                 val base = name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9 ._-]"), "_").trim().ifBlank { "Workflow" }
-                val dir = userWorkflowDir().apply { mkdirs() }
+                val dir = (if (cloud) File(userWorkflowDir(), "cloud") else userWorkflowDir()).apply { mkdirs() }
                 // A name of its own (not one that came with the app, nor one already added)
-                val taken = (runCatching { ctx.assets.list("comfy") }.getOrNull()?.toList().orEmpty() + (dir.list()?.toList().orEmpty())).map { it.lowercase() }.toSet()
+                val taken = (runCatching { ctx.assets.list(if (cloud) "comfy/cloud" else "comfy") }.getOrNull()?.toList().orEmpty() + (dir.list()?.toList().orEmpty())).map { it.lowercase() }.toSet()
                 var safe = "$base.json"
                 var n = 2
                 while (safe.lowercase() in taken) safe = "$base ${n++}.json"
@@ -195,8 +219,8 @@ fun EditorViewModel.importComfyWorkflow(uri: Uri) {
                 else "That isn't a workflow in API format. In ComfyUI, save it with Workflow → Export (API)"
             )
         } else {
-            toast("Added \"$added\"")
-            comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows() }
+            toast("Added \"$added\"" + if (cloud) " to Comfy Cloud's workflows" else "")
+            comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) }
         }
     }
 }
@@ -210,7 +234,7 @@ fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
     viewModelScope.launch {
         comfyWorkflows = withContext(Dispatchers.IO) {
             File(userWorkflowDir(), w.fileName).delete()
-            loadComfyWorkflows()
+            loadComfyWorkflows(w.cloud)
         }
     }
 }
@@ -259,7 +283,12 @@ fun EditorViewModel.runComfy(
     }
     if (pendingFirst { runComfy(w, prompt, enhance, merged, overrides, megapixels, count) }) return
     val server = comfyServer()
-    if (server.isBlank()) {
+    val cloudKey = comfyCloudKey()
+    if (w.cloud && cloudKey.isBlank()) {
+        toast("Add your Comfy Cloud API key first")
+        return
+    }
+    if (!w.cloud && server.isBlank()) {
         toast("Add your ComfyUI server's address first")
         return
     }
@@ -312,7 +341,9 @@ fun EditorViewModel.runComfy(
     val job = ComfyJob(w.name)
     comfyJob = job
     val client = ComfyClient(server)
-    job.client = client
+    // Comfy Cloud runs it instead, when it's one of Cloud's workflows
+    val cloud = if (w.cloud) com.tim.quartzeditor.engine.ComfyCloud(cloudKey) else null
+    if (cloud == null) job.client = client else job.cloud = cloud
     val clientId = UUID.randomUUID().toString()
     val promptForRun = if (w.hasPrompt) prompt else null
     val runs = count.coerceIn(1, 16)
@@ -325,12 +356,12 @@ fun EditorViewModel.runComfy(
             val uploaded = withContext(Dispatchers.IO) {
                 upload?.let {
                     job.phase = "Sending the picture…"
-                    client.upload(it.png, "quartz-${clientId.take(8)}.png")
+                    cloud?.upload(it.png, "quartz-${clientId.take(8)}.png") ?: client.upload(it.png, "quartz-${clientId.take(8)}.png")
                 }
             }
             // Progress and live previews come over the WebSocket; if that doesn't connect, asking now and then still works
             var current: JSONObject = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides)
-            socket = ComfySocket(
+            if (cloud == null) socket = ComfySocket(
                 client.socketUrl(clientId),
                 onText = { t -> comfyMessage(job, current, t) },
                 onBinary = { b -> comfyPreview(job, b) },
@@ -346,7 +377,7 @@ fun EditorViewModel.runComfy(
                 // Each run gets new seeds
                 if (run > 1) current = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides)
                 val prepared = current
-                val results = withContext(Dispatchers.IO) {
+                val results = if (cloud != null) withContext(Dispatchers.IO) { cloudRun(cloud, prepared, job, w) } else withContext(Dispatchers.IO) {
                     // Cancelled while sending: don't queue it
                     ensureActive()
                     val id = client.queue(prepared, clientId)
@@ -417,16 +448,16 @@ fun EditorViewModel.runComfy(
             socket?.close()
             upload?.alpha?.recycle()
             // Queued just before the cancel: take it off the server too
-            job.promptId?.let { id -> viewModelScope.launch(Dispatchers.IO + NonCancellable) { client.cancel(id) } }
+            job.promptId?.let { id -> viewModelScope.launch(Dispatchers.IO + NonCancellable) { if (cloud != null) cloud.cancel(id) else client.cancel(id) } }
             throw e
         } catch (e: Throwable) {
             socket?.close()
             upload?.alpha?.recycle()
             val why = when (e) {
                 is ComfyException -> e.message ?: "ComfyUI couldn't do it"
-                is java.net.UnknownHostException -> "Can't find ${client.base}. Is Tailscale on, on this tablet?"
+                is java.net.UnknownHostException -> if (cloud != null) "Can't reach Comfy Cloud: is this tablet online?" else "Can't find ${client.base}. Is Tailscale on, on this tablet?"
                 is java.net.ConnectException, is java.net.SocketTimeoutException, is java.net.NoRouteToHostException ->
-                    "Can't reach ComfyUI at ${client.base}. Is the computer on, with ComfyUI running (started with --listen)?"
+                    if (cloud != null) "Can't reach Comfy Cloud right now (the connection failed)" else "Can't reach ComfyUI at ${client.base}. Is the computer on, with ComfyUI running (started with --listen)?"
                 is OutOfMemoryError -> "The result is too big to bring in"
                 else -> e.message ?: e.javaClass.simpleName
             }
@@ -442,8 +473,78 @@ fun EditorViewModel.cancelComfy() {
     j.job?.cancel()
     val id = j.promptId
     val c = j.client
+    val cl = j.cloud
     // (After an error too: if it was the connection that failed, the server may still be at it)
     if (id != null && c != null) viewModelScope.launch(Dispatchers.IO) { c.cancel(id) }
+    if (id != null && cl != null) viewModelScope.launch(Dispatchers.IO) { cl.cancel(id) }
+}
+
+/**
+ * One run on Comfy Cloud: submits [prepared], follows the job (its queue place, node, step) until
+ * it ends, and fetches the pictures it saved (from [w]'s Save nodes when it names them).
+ */
+private suspend fun cloudRun(cloud: com.tim.quartzeditor.engine.ComfyCloud, prepared: JSONObject, job: ComfyJob, w: ComfyWorkflow): List<Bitmap> {
+    val submitted = cloud.submit(prepared)
+    val id = submitted.optString("id").ifBlank { submitted.optString("prompt_id") }.ifBlank { throw ComfyException("Comfy Cloud didn't take the job") }
+    job.promptId = id
+    job.phase = "Queued on Comfy Cloud"
+    job.step = 0
+    job.steps = 0
+    var failures = 0
+    var polls = 0
+    var j: JSONObject
+    while (true) {
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        delay(if (polls < 5) 800L else if (failures > 0) 3000L else 1500L)
+        polls++
+        j = try {
+            cloud.job(id).also { failures = 0 }
+        } catch (e: java.io.IOException) {
+            if (e is ComfyException || ++failures > 10) throw e
+            continue
+        }
+        when (j.optString("status")) {
+            "queued" -> {
+                val q = j.opt("queue_position")
+                job.phase = if (q is Number && q.toInt() > 0) "Waiting (${q.toInt()} ahead on Comfy Cloud)" else "Queued on Comfy Cloud"
+            }
+            "running" -> {
+                val p = j.optJSONObject("progress")
+                val cls = p?.optString("current_node_class")?.takeIf { it.isNotBlank() && it != "null" }
+                job.phase = if (cls != null) phaseFor(JSONObject().put("class_type", cls)) else "Working…"
+                val st = p?.opt("step")
+                val sts = p?.opt("steps")
+                if (st is Number && sts is Number && sts.toInt() > 0) {
+                    job.step = st.toInt()
+                    job.steps = sts.toInt()
+                } else {
+                    job.step = 0
+                    job.steps = 0
+                }
+            }
+            "succeeded" -> break
+            "failed", "expired" -> throw ComfyException(com.tim.quartzeditor.engine.ComfyCloud.jobError(j))
+            "canceled", "canceling" -> throw ComfyException("It was stopped on Comfy Cloud")
+        }
+    }
+    job.promptId = null
+    job.phase = "Bringing it back…"
+    val outs = j.optJSONArray("outputs") ?: org.json.JSONArray()
+    val images = (0 until outs.length()).mapNotNull { outs.optJSONObject(it) }.filter {
+        it.optString("type") == "image" || it.optString("content_type").startsWith("image/")
+    }
+    // From the Save nodes when it says which node each came from (not previews along the way)
+    val saves = w.resultNodes()
+    val chosen = images.filter { it.optString("node_id") in saves }.ifEmpty { images }
+    if (chosen.isEmpty()) throw ComfyException("The workflow finished without saving a picture")
+    return chosen.map { o ->
+        val url = o.optString("url").takeIf { it.isNotBlank() }
+            ?: o.optString("id").takeIf { it.isNotBlank() }?.let { "${cloud.base}/api/v2/assets/$it/content" }
+            ?: throw ComfyException("Comfy Cloud didn't say where the picture is")
+        val data = cloud.download(url)
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        BitmapFactory.decodeByteArray(data, 0, data.size, opts) ?: throw ComfyException("Comfy Cloud sent something that isn't a picture")
+    }
 }
 
 /** Rounds to a multiple of 16 (what the models work in, so nothing is cropped off and the result lines up). */
@@ -770,10 +871,15 @@ fun EditorViewModel.setComfyOverrides(file: String, o: com.tim.quartzeditor.engi
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit) {
-    LaunchedEffect(Unit) { vm.refreshComfyWorkflows() }
-    val list = vm.comfyWorkflows
+    // Your own server, or Comfy Cloud: each has its own workflows (and presets)
+    var cloudMode by remember { mutableStateOf(vm.comfyCloud) }
+    fun lastKey() = if (cloudMode) "comfyLast:cloud" else "comfyLast"
+    LaunchedEffect(cloudMode) { vm.refreshComfyWorkflows() }
+    // (Only the list for the side picked: the other's may still be showing while it loads)
+    val list = vm.comfyWorkflows?.filter { it.cloud == cloudMode }
     var server by remember { mutableStateOf(vm.comfyServer()) }
-    var pickedFile by remember { mutableStateOf(vm.prefs.getString("comfyLast", null)) }
+    var cloudKey by remember { mutableStateOf(vm.comfyCloudKey()) }
+    var pickedFile by remember(cloudMode) { mutableStateOf(vm.prefs.getString(lastKey(), null)) }
     val picked = list?.firstOrNull { it.fileName == pickedFile } ?: list?.firstOrNull()
     val file = picked?.fileName
     var prompt by remember(file) { mutableStateOf(picked?.let { vm.comfyPrompt(it) }.orEmpty()) }
@@ -801,7 +907,8 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
         onDismiss()
     }
     var test by remember { mutableStateOf<String?>(null) }
-    var presets by remember { mutableStateOf(vm.comfyPresets()) }
+    var allPresets by remember { mutableStateOf(vm.comfyPresets()) }
+    val presets = allPresets.filter { it.fileName.startsWith("cloud/") == cloudMode }
     var savingPreset by remember { mutableStateOf(false) }
     var promptsOpen by remember { mutableStateOf(false) }
     var savingPrompt by remember { mutableStateOf(false) }
@@ -812,26 +919,29 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     // What the server has to choose from (model files, LoRAs), for the workflow's loaders
     // (Test asks again, after the computer or ComfyUI was started, say)
     var fetchAgain by remember { mutableIntStateOf(0) }
-    var info by remember(file, server) { mutableStateOf<Map<String, JSONObject?>>(emptyMap()) }
-    var infoError by remember(file, server) { mutableStateOf<String?>(null) }
-    var infoDone by remember(file, server) { mutableStateOf(false) }
-    LaunchedEffect(file, server, fetchAgain) {
+    // (Comfy Cloud's lists come from Cloud, with the key)
+    val source = if (picked?.cloud == true) "cloud:" + cloudKey else server
+    var info by remember(file, source) { mutableStateOf<Map<String, JSONObject?>>(emptyMap()) }
+    var infoError by remember(file, source) { mutableStateOf<String?>(null) }
+    var infoDone by remember(file, source) { mutableStateOf(false) }
+    LaunchedEffect(file, source, fetchAgain) {
         val w = picked ?: return@LaunchedEffect
         val classes = (w.modelSettings.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
-        if (classes.isEmpty() || server.isBlank()) return@LaunchedEffect
-        // Not while the address is still being typed
+        if (classes.isEmpty() || (if (w.cloud) cloudKey.isBlank() else server.isBlank())) return@LaunchedEffect
+        // Not while the address or key is still being typed
         delay(600)
         infoError = null
         val c = ComfyClient(server)
+        val cl = if (w.cloud) com.tim.quartzeditor.engine.ComfyCloud(cloudKey) else null
         val got = HashMap<String, JSONObject?>()
         var err: String? = null
         for (k in classes) {
             try {
-                got[k] = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { c.objectInfo(k) }
+                got[k] = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { cl?.objectInfo(k) ?: if (cl == null) c.objectInfo(k) else null }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                err = "Couldn't get the lists of models from ComfyUI (${e.message ?: e.javaClass.simpleName}). Test the server below to try again."
+                err = "Couldn't get the lists of models from ${if (cl != null) "Comfy Cloud" else "ComfyUI"} (${e.message ?: e.javaClass.simpleName}). Test ${if (cl != null) "the key" else "the server"} below to try again."
                 break
             }
         }
@@ -855,12 +965,14 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
                 TextButton(onClick = close) { Text("Close") }
                 Text("ComfyUI", color = Q.text, fontSize = 20.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                val ready = picked != null && server.isNotBlank() && (picked.kind != ComfyKind.INPAINT || hasSel) && (!picked.hasPrompt || prompt.isNotBlank())
+                val ready = picked != null && (if (picked.cloud) cloudKey.isNotBlank() else server.isNotBlank()) &&
+                    (picked.kind != ComfyKind.INPAINT || hasSel) && (!picked.hasPrompt || prompt.isNotBlank())
                 SmallButton("Run", primary = true, enabled = ready) {
                     val w = picked ?: return@SmallButton
                     vm.setComfyServer(server)
+                    vm.setComfyCloudKey(cloudKey)
                     vm.prefs.edit()
-                        .putString("comfyLast", w.fileName)
+                        .putString(lastKey(), w.fileName)
                         .putBoolean("comfyMerged", merged)
                         .putBoolean("comfyEnhance:" + w.fileName, enhance)
                         .putFloat("comfyMP:" + w.fileName, megapixels)
@@ -868,6 +980,23 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                     vm.prefs.edit().putInt("comfyCount", count).apply()
                     onDismiss()
                     vm.runComfy(w, prompt.trim(), enhance, merged, overrides, megapixels, count)
+                }
+            }
+            // Where it runs
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
+                SmallButton("My server", primary = !cloudMode) {
+                    if (cloudMode) {
+                        keepTyped()
+                        cloudMode = false
+                        vm.comfyCloud = false
+                    }
+                }
+                SmallButton("Comfy Cloud", primary = cloudMode) {
+                    if (!cloudMode) {
+                        keepTyped()
+                        cloudMode = true
+                        vm.comfyCloud = true
+                    }
                 }
             }
             HorizontalDividerLine()
@@ -892,7 +1021,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             ) { i ->
                                 keepTyped()
                                 pickedFile = list[i].fileName
-                                vm.prefs.edit().putString("comfyLast", list[i].fileName).apply()
+                                vm.prefs.edit().putString(lastKey(), list[i].fileName).apply()
                             }
                         }
                         SmallButton("Add…") { onImport() }
@@ -917,7 +1046,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 Modifier.weight(1f),
                                 onDelete = { i ->
                                     vm.deleteComfyPreset(presets[i].name)
-                                    presets = vm.comfyPresets()
+                                    allPresets = vm.comfyPresets()
                                 },
                             ) { i ->
                                 val p = presets[i]
@@ -931,7 +1060,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 pickedFile = w.fileName
                                 vm.setComfyOverrides(w.fileName, w.keep(p.overrides))
                                 vm.prefs.edit()
-                                    .putString("comfyLast", w.fileName)
+                                    .putString(lastKey(), w.fileName)
                                     .putString("comfyPrompt:" + w.fileName, p.prompt)
                                     .putBoolean("comfyEnhance:" + w.fileName, p.enhance)
                                     .putFloat("comfyMP:" + w.fileName, p.megapixels)
@@ -1038,6 +1167,29 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             }
                         }
 
+                        // The workflow's own on/off switches (Enable LoRA 2? and the like)
+                        if (w.toggles.isNotEmpty()) {
+                            Spacer(Modifier.height(16.dp))
+                            SectionTitle("Switches")
+                            for (t in w.toggles) {
+                                val saved = t.value == "true"
+                                val on = overrides.values[t.node]?.get("value") as? Boolean ?: saved
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        setOverrides(if (!on == saved) overrides.without(t.node, "value") else overrides.with(t.node, "value", !on, w.baseOf(t.node, "value").orEmpty()))
+                                    }.padding(vertical = 2.dp),
+                                ) {
+                                    androidx.compose.material3.Switch(
+                                        checked = on,
+                                        onCheckedChange = { v -> setOverrides(if (v == saved) overrides.without(t.node, "value") else overrides.with(t.node, "value", v, w.baseOf(t.node, "value").orEmpty())) },
+                                        colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Q.accent),
+                                    )
+                                    Text(t.nodeTitle, color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(start = 10.dp))
+                                }
+                            }
+                        }
+
                         // LoRA Manager
                         for ((node, saved) in w.loraManagers) {
                             Spacer(Modifier.height(16.dp))
@@ -1056,8 +1208,35 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         }
                     }
 
-                    // Server
+                    // Server, or Comfy Cloud's key
                     Spacer(Modifier.height(20.dp))
+                    if (cloudMode) {
+                        SectionTitle("Comfy Cloud")
+                        var showKey by remember { mutableStateOf(false) }
+                        OutlinedTextField(
+                            cloudKey, { cloudKey = it.trim(); test = null }, label = { Text("API key") }, singleLine = true,
+                            placeholder = { Text("comfyui-…") },
+                            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show") } },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text("From platform.comfy.org. It stays on this tablet. Runs use your Comfy Cloud credits.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                            SmallButton("Test") {
+                                vm.setComfyCloudKey(cloudKey)
+                                fetchAgain++
+                                test = "Connecting…"
+                                val c = com.tim.quartzeditor.engine.ComfyCloud(cloudKey)
+                                scope.launch {
+                                    test = withContext(Dispatchers.IO) {
+                                        runCatching { "✓ " + c.hello() }.getOrElse { e -> e.message ?: e.javaClass.simpleName }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            test?.let { Text(it, color = Q.textDim, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        }
+                    } else {
                     SectionTitle("Server")
                     OutlinedTextField(
                         server, { server = it.trim(); test = null }, label = { Text("Address") }, singleLine = true,
@@ -1080,6 +1259,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         }
                         Spacer(Modifier.width(10.dp))
                         test?.let { Text(it, color = Q.textDim, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    }
                     }
                     Spacer(Modifier.height(40.dp))
                 }
@@ -1113,7 +1293,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
             val n = name.trim()
             if (n.isNotEmpty()) {
                 vm.saveComfyPreset(ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count))
-                presets = vm.comfyPresets()
+                allPresets = vm.comfyPresets()
                 vm.toast("Saved preset \"$n\"")
             }
         }
