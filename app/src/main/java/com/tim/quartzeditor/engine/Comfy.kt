@@ -19,7 +19,11 @@ import kotlin.random.Random
 // following its progress, and fetching what it made. Plain HTTP and a small WebSocket client, so
 // nothing else needs to be in the app.
 
-class ComfyException(message: String) : Exception(message)
+/** [code]: the HTTP answer it came from (0 when it isn't one). */
+class ComfyException(message: String, val code: Int = 0) : Exception(message) {
+    /** Worth asking again (busy, or the server had a moment): not a wrong key, credits, or a bad workflow. */
+    val passing: Boolean get() = code == 429 || code >= 500 || code == 408
+}
 
 /** A ComfyUI server at [base] (like http://pc.tailnet.ts.net:8188). Every call blocks: background threads only. */
 class ComfyClient(base: String) {
@@ -38,7 +42,7 @@ class ComfyClient(base: String) {
         val code = c.responseCode
         val stream = if (code in 200..299) c.inputStream else c.errorStream
         val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
-        if (code !in 200..299) throw ComfyException(errorText(code, String(bytes, Charsets.UTF_8)))
+        if (code !in 200..299) throw ComfyException(errorText(code, String(bytes, Charsets.UTF_8)), code)
         return bytes
     }
 
@@ -205,18 +209,22 @@ class ComfyCloud(apiKey: String, val base: String = "https://cloud.comfy.org") {
         val code = c.responseCode
         val stream = if (code in 200..299) c.inputStream else c.errorStream
         val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
-        if (code !in 200..299) throw ComfyException(errorText(code, String(bytes, Charsets.UTF_8)))
+        if (code !in 200..299) throw ComfyException(errorText(code, String(bytes, Charsets.UTF_8)), code)
         return bytes
     }
 
     private fun errorText(code: Int, body: String): String {
         val o = runCatching { JSONObject(body) }.getOrNull()
         val e = o?.optJSONObject("error")
+        // A workflow turned down before it ran: which node, and what it said
+        if (e?.optJSONObject("node_errors")?.length()?.let { it > 0 } == true) return jobError(JSONObject().put("error", e))
         val msg = e?.optString("message")?.takeIf { it.isNotBlank() } ?: o?.optString("message")?.takeIf { it.isNotBlank() }
-        return when (code) {
-            401 -> "Comfy Cloud didn't accept the API key"
-            402 -> "Comfy Cloud: not enough credits"
-            429 -> if (e?.optString("code") == "rate_limited") "Comfy Cloud is busy (too many requests): try again in a moment" else "Comfy Cloud: the subscription isn't active"
+        val c = e?.optString("code").orEmpty()
+        return when {
+            code == 401 -> "Comfy Cloud didn't accept the API key"
+            code == 402 -> "Comfy Cloud: not enough credits"
+            code == 429 && (c.contains("subscription") || c.contains("inactive")) -> "Comfy Cloud: the subscription isn't active"
+            code == 429 -> "Comfy Cloud is busy (too many requests): trying again"
             else -> "Comfy Cloud: " + (msg ?: "answered $code${if (body.isNotBlank()) ": " + body.take(200) else ""}")
         }
     }
@@ -280,16 +288,34 @@ class ComfyCloud(apiKey: String, val base: String = "https://cloud.comfy.org") {
         runCatching { postJson("/api/v2/jobs/" + URLEncoder.encode(id, "UTF-8") + "/cancel", JSONObject(), 15_000) }
     }
 
-    /** An output's bytes from its signed link (no key sent: the link carries its own permission). */
+    /**
+     * An output's bytes from its link: the key goes only to Comfy Cloud itself (over https), never to
+     * the storage a signed link points at (that link carries its own permission).
+     */
     fun download(url: String): ByteArray {
-        var u = url
-        repeat(4) {
-            val c = open(u, timeout = 120_000, auth = u.startsWith(base))
+        val home = URL(base)
+        var u = URL(home, url)
+        repeat(5) {
+            val ours = u.protocol == "https" && u.host.equals(home.host, ignoreCase = true) && (u.port == -1 || u.port == 443)
+            val c = u.openConnection() as HttpURLConnection
+            c.connectTimeout = 10_000
+            c.readTimeout = 120_000
+            c.useCaches = false
+            c.instanceFollowRedirects = false
+            if (ours) {
+                c.setRequestProperty("Authorization", "Bearer $key")
+                c.setRequestProperty("X-API-Key", key)
+            }
             val code = c.responseCode
             if (code in 300..399) {
-                u = c.getHeaderField("Location") ?: throw ComfyException("Comfy Cloud: a download went nowhere")
+                val loc = c.getHeaderField("Location") ?: throw ComfyException("Comfy Cloud: a download went nowhere")
                 c.disconnect()
+                u = URL(u, loc)
                 return@repeat
+            }
+            if (!ours && code !in 200..299) {
+                c.errorStream?.close()
+                throw ComfyException("Comfy Cloud: couldn't download the picture (the storage answered $code)", code)
             }
             return read(c)
         }

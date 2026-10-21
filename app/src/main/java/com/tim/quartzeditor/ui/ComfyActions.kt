@@ -182,8 +182,19 @@ fun EditorViewModel.loadComfyWorkflows(cloud: Boolean = comfyCloud): List<ComfyW
 /** Reloads the list of workflows (in the background). */
 fun EditorViewModel.refreshComfyWorkflows() {
     val cloud = comfyCloud
+    // Loading (rather than the other side's list) until it's read
+    if (comfyWorkflowsCloud != cloud) comfyWorkflows = null
     viewModelScope.launch {
-        comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) }
+        val l = withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) }
+        setComfyList(cloud, l)
+    }
+}
+
+/** The list just read for [cloud]'s side, if that's still the side on screen. */
+private fun EditorViewModel.setComfyList(cloud: Boolean, l: List<ComfyWorkflow>) {
+    if (comfyCloud == cloud) {
+        comfyWorkflows = l
+        comfyWorkflowsCloud = cloud
     }
 }
 
@@ -220,7 +231,7 @@ fun EditorViewModel.importComfyWorkflow(uri: Uri) {
             )
         } else {
             toast("Added \"$added\"" + if (cloud) " to Comfy Cloud's workflows" else "")
-            comfyWorkflows = withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) }
+            setComfyList(cloud, withContext(Dispatchers.IO) { loadComfyWorkflows(cloud) })
         }
     }
 }
@@ -232,10 +243,10 @@ fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
     val f = w.fileName
     prefs.edit().remove("comfyOv:$f").remove("comfyPrompt:$f").remove("comfyMP:$f").remove("comfyEnhance:$f").apply()
     viewModelScope.launch {
-        comfyWorkflows = withContext(Dispatchers.IO) {
+        setComfyList(w.cloud, withContext(Dispatchers.IO) {
             File(userWorkflowDir(), w.fileName).delete()
             loadComfyWorkflows(w.cloud)
-        }
+        })
     }
 }
 
@@ -396,14 +407,19 @@ fun EditorViewModel.runComfy(
                         // A dropped connection now and then (the tablet changing networks, say) doesn't end the run
                         val h = try {
                             client.history(id).also { failures = 0 }
-                        } catch (e: java.io.IOException) {
-                            if (e is ComfyException || ++failures > 12) throw e
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // Only a wrong request ends it; a busy server or a dropped connection is asked again
+                            if ((e is ComfyException && !e.passing) || ++failures > 12) throw e
                             continue
                         }
                         if (h == null) {
                             val place = try {
                                 client.queuePlace(id)
-                            } catch (e: java.io.IOException) {
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
                                 continue
                             }
                             when {
@@ -491,6 +507,7 @@ private suspend fun cloudRun(cloud: com.tim.quartzeditor.engine.ComfyCloud, prep
     job.step = 0
     job.steps = 0
     var failures = 0
+    var unknown = 0
     var polls = 0
     var j: JSONObject
     while (true) {
@@ -499,11 +516,17 @@ private suspend fun cloudRun(cloud: com.tim.quartzeditor.engine.ComfyCloud, prep
         polls++
         j = try {
             cloud.job(id).also { failures = 0 }
-        } catch (e: java.io.IOException) {
-            if (e is ComfyException || ++failures > 10) throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Only a wrong request (key, credits) ends it; busy or a dropped connection is asked again
+            if ((e is ComfyException && !e.passing) || ++failures > 12) throw e
             continue
         }
-        when (j.optString("status")) {
+        val status = j.optString("status").lowercase()
+        if (status in setOf("queued", "running", "succeeded", "failed", "expired", "canceled", "canceling", "cancelled")) unknown = 0
+        else if (++unknown > 40) throw ComfyException("Comfy Cloud said the job is \"${status.ifBlank { "?" }}\", which this app doesn't know")
+        when (status) {
             "queued" -> {
                 val q = j.opt("queue_position")
                 job.phase = if (q is Number && q.toInt() > 0) "Waiting (${q.toInt()} ahead on Comfy Cloud)" else "Queued on Comfy Cloud"
@@ -524,7 +547,7 @@ private suspend fun cloudRun(cloud: com.tim.quartzeditor.engine.ComfyCloud, prep
             }
             "succeeded" -> break
             "failed", "expired" -> throw ComfyException(com.tim.quartzeditor.engine.ComfyCloud.jobError(j))
-            "canceled", "canceling" -> throw ComfyException("It was stopped on Comfy Cloud")
+            "canceled", "cancelled", "canceling" -> throw ComfyException("It was stopped on Comfy Cloud")
         }
     }
     job.promptId = null
@@ -845,12 +868,14 @@ fun EditorViewModel.comfyPresets(): List<ComfyPreset> {
 
 /** Saves [p] (replacing one with the same name). */
 fun EditorViewModel.saveComfyPreset(p: ComfyPreset) {
-    val list = comfyPresets().filter { !it.name.equals(p.name, ignoreCase = true) } + p
+    // (Each side has its own: a name only replaces one on the same side)
+    val side = p.fileName.startsWith("cloud/")
+    val list = comfyPresets().filter { !(it.name.equals(p.name, ignoreCase = true) && it.fileName.startsWith("cloud/") == side) } + p
     prefs.edit().putString("comfyPresets", org.json.JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString()).apply()
 }
 
-fun EditorViewModel.deleteComfyPreset(name: String) {
-    val list = comfyPresets().filter { it.name != name }
+fun EditorViewModel.deleteComfyPreset(name: String, cloud: Boolean) {
+    val list = comfyPresets().filter { !(it.name == name && it.fileName.startsWith("cloud/") == cloud) }
     prefs.edit().putString("comfyPresets", org.json.JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString()).apply()
 }
 
@@ -876,7 +901,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     fun lastKey() = if (cloudMode) "comfyLast:cloud" else "comfyLast"
     LaunchedEffect(cloudMode) { vm.refreshComfyWorkflows() }
     // (Only the list for the side picked: the other's may still be showing while it loads)
-    val list = vm.comfyWorkflows?.filter { it.cloud == cloudMode }
+    val list = vm.comfyWorkflows?.takeIf { vm.comfyWorkflowsCloud == cloudMode }
     var server by remember { mutableStateOf(vm.comfyServer()) }
     var cloudKey by remember { mutableStateOf(vm.comfyCloudKey()) }
     var pickedFile by remember(cloudMode) { mutableStateOf(vm.prefs.getString(lastKey(), null)) }
@@ -987,6 +1012,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                 SmallButton("My server", primary = !cloudMode) {
                     if (cloudMode) {
                         keepTyped()
+                        test = null
                         cloudMode = false
                         vm.comfyCloud = false
                     }
@@ -994,6 +1020,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                 SmallButton("Comfy Cloud", primary = cloudMode) {
                     if (!cloudMode) {
                         keepTyped()
+                        test = null
                         cloudMode = true
                         vm.comfyCloud = true
                     }
@@ -1045,7 +1072,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 presets.map { p -> p.name to (list?.firstOrNull { it.fileName == p.fileName }?.name ?: "workflow not found") },
                                 Modifier.weight(1f),
                                 onDelete = { i ->
-                                    vm.deleteComfyPreset(presets[i].name)
+                                    vm.deleteComfyPreset(presets[i].name, cloudMode)
                                     allPresets = vm.comfyPresets()
                                 },
                             ) { i ->

@@ -456,6 +456,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var comfyJob by mutableStateOf<ComfyJob?>(null)
     /** The ComfyUI workflows, once read. */
     var comfyWorkflows by mutableStateOf<List<com.tim.quartzeditor.engine.ComfyWorkflow>?>(null)
+    /** Which side [comfyWorkflows] is for (Comfy Cloud's or your server's). */
+    var comfyWorkflowsCloud by mutableStateOf<Boolean?>(null)
     /** Your swatches and the ones you imported (SwatchPanel.kt); null until first needed. */
     var swatchGroups by mutableStateOf<List<com.tim.quartzeditor.engine.SwatchGroup>?>(null)
     /** Color pickers' tab: 0 the picker, 1 swatches (the same in every picker). */
