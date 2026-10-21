@@ -803,6 +803,8 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var test by remember { mutableStateOf<String?>(null) }
     var presets by remember { mutableStateOf(vm.comfyPresets()) }
     var savingPreset by remember { mutableStateOf(false) }
+    var promptsOpen by remember { mutableStateOf(false) }
+    var savingPrompt by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val d = vm.doc
     val hasSel = d?.selection?.isEmpty == false
@@ -972,12 +974,13 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 prompt, { prompt = it }, label = { Text("Prompt") },
                                 minLines = 4, maxLines = 12, modifier = Modifier.fillMaxWidth(),
                             )
-                            if (prompt != w.savedPrompt && w.savedPrompt.isNotBlank()) {
-                                Text(
-                                    "Use the workflow's own prompt",
-                                    color = Q.accent, fontSize = 13.sp,
-                                    modifier = Modifier.padding(top = 4.dp).clickable { prompt = w.savedPrompt },
-                                )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(top = 6.dp),
+                            ) {
+                                SmallButton("Saved prompts…") { promptsOpen = true }
+                                SmallButton("Save prompt…", enabled = prompt.isNotBlank()) { savingPrompt = true }
+                                if (prompt != w.savedPrompt && w.savedPrompt.isNotBlank()) SmallButton("Workflow's own") { prompt = w.savedPrompt }
                             }
                         }
                         if (w.canEnhance) {
@@ -1084,6 +1087,26 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
         }
     }
 
+    if (savingPrompt) {
+        // Named after its start unless you give it a name
+        RenameDialog(prompt.trim().replace(Regex("\\s+"), " ").take(40), title = "Save prompt", onDismiss = { savingPrompt = false }) { name ->
+            savingPrompt = false
+            val n = name.trim().ifBlank { prompt.trim().take(40) }
+            if (prompt.isNotBlank()) {
+                vm.saveComfyPrompt(n, prompt.trim())
+                vm.toast("Saved prompt \"$n\"")
+            }
+        }
+    }
+    if (promptsOpen) {
+        SavedPromptsDialog(vm, onDismiss = { promptsOpen = false }, onAdd = { t ->
+            promptsOpen = false
+            prompt = if (prompt.isBlank()) t else prompt.trimEnd() + (if (prompt.trimEnd().endsWith(",")) " " else ", ") + t
+        }) { t ->
+            promptsOpen = false
+            prompt = t
+        }
+    }
     if (savingPreset && picked != null) {
         RenameDialog("", title = "Save as preset", onDismiss = { savingPreset = false }) { name ->
             savingPreset = false
@@ -1095,6 +1118,74 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
             }
         }
     }
+}
+
+// ===================================================================== saved prompts
+
+/** A prompt kept to use again: just its text, under a name. */
+class SavedPrompt(val name: String, val text: String)
+
+fun EditorViewModel.comfyPromptList(): List<SavedPrompt> {
+    val a = runCatching { org.json.JSONArray(prefs.getString("comfyPrompts", "[]")) }.getOrNull() ?: return emptyList()
+    return (0 until a.length()).mapNotNull { i ->
+        val o = a.optJSONObject(i) ?: return@mapNotNull null
+        val t = o.optString("text").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        SavedPrompt(o.optString("name").ifBlank { t.take(40) }, t)
+    }
+}
+
+private fun EditorViewModel.putPromptList(list: List<SavedPrompt>) {
+    prefs.edit().putString("comfyPrompts", org.json.JSONArray().also { a -> list.forEach { a.put(JSONObject().put("name", it.name).put("text", it.text)) } }.toString()).apply()
+}
+
+/** Keeps [text] under [name] (newest first; one with the same name is replaced). */
+fun EditorViewModel.saveComfyPrompt(name: String, text: String) {
+    putPromptList(listOf(SavedPrompt(name, text)) + comfyPromptList().filter { !it.name.equals(name, ignoreCase = true) })
+}
+
+fun EditorViewModel.deleteComfyPrompt(name: String) {
+    putPromptList(comfyPromptList().filter { it.name != name })
+}
+
+/** Your saved prompts: tap one to use it, Add to put it after what's typed, × to delete. */
+@Composable
+private fun SavedPromptsDialog(vm: EditorViewModel, onDismiss: () -> Unit, onAdd: (String) -> Unit, onUse: (String) -> Unit) {
+    var list by remember { mutableStateOf(vm.comfyPromptList()) }
+    var q by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Saved prompts") },
+        text = {
+            Column {
+                if (list.isEmpty()) {
+                    Text("None yet. Type a prompt, then Save prompt… keeps it here.", color = Q.textDim, fontSize = 13.sp)
+                } else {
+                    OutlinedTextField(q, { q = it }, label = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    val words = q.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                    val shown = list.filter { p -> words.all { w -> p.name.lowercase().contains(w) || p.text.lowercase().contains(w) } }
+                    if (shown.isEmpty()) Text("Nothing matches", color = Q.textDim, fontSize = 13.sp)
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                        items(shown.size) { i ->
+                            val p = shown[i]
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onUse(p.text) }.padding(vertical = 6.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(p.name, color = Q.text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(p.text, color = Q.textDim, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                                TextButton(onClick = { onAdd(p.text) }) { Text("Add") }
+                                androidx.compose.material3.IconButton(onClick = {
+                                    vm.deleteComfyPrompt(p.name)
+                                    list = vm.comfyPromptList()
+                                }) { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Close, contentDescription = "Delete", tint = Q.textDim) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable

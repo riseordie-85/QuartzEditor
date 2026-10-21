@@ -522,6 +522,10 @@ off, a model is missing) the chip says what ComfyUI said.
 - **LoRA Manager**: its Lora Loader's list, with the ones switched on shown first (On only switches to
   all of them; Find searches): switch each on or off, set its strength, take it out (×), or **Add…** any
   LoRA your ComfyUI has. Its trigger words node gets the trigger words as LoRA Manager works them out.
+- **Saved prompts** (under the prompt): **Save prompt…** keeps the text under a name (its start, unless
+  you give it one); **Saved prompts…** lists them (newest first, with a Find box): tap one to use it, **Add**
+  puts it after what's typed (handy for style bits), × deletes it. They're shared by every workflow.
+  **Workflow's own** puts back the prompt the workflow was saved with.
 - What you change is remembered for each workflow (**Back to the workflow's own models and LoRAs** clears
   it). **Save as preset…** keeps the whole setup — workflow, prompt, enhancer, size, how many, what it
   works on, models and LoRAs — under a name; pick it from Presets to get it all back (× deletes one).
@@ -539,7 +543,7 @@ off, a model is missing) the chip says what ComfyUI said.
   - **The prompt** goes where the workflow keeps it: the text side of an If/Else prompt switch and its
     prompt enhancer (Text Generate), or the text node they both take it from, else the CLIP Text Encode titled Positive (or the first that isn't
     titled Negative), else a node's own prompt field. It starts as what you last typed for that
-    workflow (or the workflow's own); **Use the workflow's own prompt** puts that back.
+    workflow (or the workflow's own).
   - **Improve the prompt first** turns the workflow's prompt enhancer (the If/Else switch) on or off.
     Off, the enhancer is left out of what's sent, so ComfyUI doesn't run it and its model doesn't have
     to be installed.
