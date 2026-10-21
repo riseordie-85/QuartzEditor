@@ -667,6 +667,47 @@ private fun EditorViewModel.finishContinued(cont: Pair<Long, Boolean>, pts: List
     penSelected = -1
 }
 
+/**
+ * Selection to shape: the selection's outline becomes a shape layer filled with the foreground color
+ * (one outline: a pen shape whose points you can edit; several, or with holes: one shape of them all).
+ */
+fun EditorViewModel.selectionToShape() {
+    val d = doc ?: return
+    if (pendingFirst { selectionToShape() }) return
+    val sel = d.selection?.takeIf { !it.isEmpty }
+    if (sel == null) {
+        toast("Select something first")
+        return
+    }
+    val color = foreground
+    runBusy("Making a shape…") {
+        val loops = withContext(Dispatchers.Default) { com.tim.quartzeditor.engine.SelectionTrace.outlines(sel, d.width, d.height) }
+        if (doc !== d) return@runBusy
+        if (loops.isEmpty()) {
+            toast("The selection is too faint or small to make a shape from")
+            return@runBusy
+        }
+        val all = loops.flatten()
+        val left = all.minOf { it.x }
+        val top = all.minOf { it.y }
+        val w = (all.maxOf { it.x } - left).coerceAtLeast(1f)
+        val h = (all.maxOf { it.y } - top).coerceAtLeast(1f)
+        fun local(pts: List<PenPoint>) = pts.map { it.copy(x = it.x - left, y = it.y - top) }
+        val spec = if (loops.size == 1) {
+            ShapeSpec(kind = ShapeKind.PATH, w = w, h = h, path = local(loops[0]), closed = true, fill = color, stroke = null, matrix = translation(left, top))
+        } else {
+            // Outlines inside outlines are holes (even-odd), like the selection
+            ShapeSpec(
+                kind = ShapeKind.CUSTOM, w = w, h = h, viewW = w, viewH = h, evenOdd = true,
+                parts = loops.map { com.tim.quartzeditor.engine.ShapePart(local(it), closed = true) },
+                fill = color, stroke = null, matrix = translation(left, top),
+            )
+        }
+        addShapeLayer(spec, "Shape from selection")
+        toast(if (loops.size == 1) "New shape layer: the Pen's Edit points works on it" else "New shape layer (${loops.size} outlines)")
+    }
+}
+
 // ===================================================================== Text tool
 
 /** Text tool tap at canvas point ([x], [y]): edits the text there, or starts new text. */

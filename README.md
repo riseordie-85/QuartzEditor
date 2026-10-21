@@ -93,9 +93,13 @@ the list; the button shows the one you used last.
   device: a first look at the whole picture, a second, closer look at the area around the subject, then
   the edge is snapped to the picture's own edges (hair and fine outlines follow what's really there). Remove
   background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ with
-  pages for Modify edge (Feather, Expand / Shrink), Select (subject, background), New layer (Copy or Cut),
-  Fill and remove (Fill, Delete selected pixels, AI Remove selected), then Mask from selection, Define
-  pattern and Crop to selection.
+  pages for Modify edge (Feather, Expand / Shrink), Select (subject, background), New layer (Copy or Cut, or
+  **Shape from selection**), Fill and remove (Fill, Delete selected pixels, AI Remove selected), then Mask
+  from selection, Define pattern and Crop to selection.
+  - **Shape from selection** traces the selection's edge (where it's at least half selected; any kind of
+    selection, Select subject and the magic wand too) into a shape layer filled with the foreground color.
+    Straight runs stay straight, sharp turns stay corners, the rest become smooth curves. One outline makes
+    a pen shape (Edit points works on it); several, or one with holes, make one shape of all of them.
   Brushes, fills, gradients and adjustments only change what's selected. Tap without dragging to deselect.
 - **Crop** (hold the Transform button) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.

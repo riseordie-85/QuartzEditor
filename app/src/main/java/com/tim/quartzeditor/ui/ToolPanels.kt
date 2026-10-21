@@ -347,6 +347,7 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 Page("New layer") {
                     Item("Copy to new layer", Icons.Outlined.ContentCopy) { vm.selectionToLayer(cut = false) }
                     Item("Cut to new layer", Icons.Outlined.ContentCut) { vm.selectionToLayer(cut = true) }
+                    Item("Shape from selection") { vm.selectionToShape() }
                 }
                 Page("Fill and remove") {
                     Item("Fill with foreground color") { vm.fillWithColor(vm.foreground) }
