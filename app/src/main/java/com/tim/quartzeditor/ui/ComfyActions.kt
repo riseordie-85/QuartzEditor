@@ -204,6 +204,9 @@ fun EditorViewModel.importComfyWorkflow(uri: Uri) {
 /** Takes a workflow you added off the list. */
 fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
     if (w.builtIn) return
+    // What was remembered for it goes too (a workflow added again later under its name starts fresh)
+    val f = w.fileName
+    prefs.edit().remove("comfyOv:$f").remove("comfyPrompt:$f").remove("comfyMP:$f").remove("comfyEnhance:$f").apply()
     viewModelScope.launch {
         comfyWorkflows = withContext(Dispatchers.IO) {
             File(userWorkflowDir(), w.fileName).delete()
@@ -333,6 +336,11 @@ fun EditorViewModel.runComfy(
                 onBinary = { b -> comfyPreview(job, b) },
             ).also { s -> Thread({ runCatching { s.run() } }, "ComfySocket").apply { isDaemon = true }.start() }
             for (run in 1..runs) {
+                // The picture closed, or cropped or resized: the rest of a batch would have nowhere to go
+                if (doc !== d || d.width != input.docW || d.height != input.docH) {
+                    if (run > 1) toast("${w.name}: stopped after $placed (the picture changed)")
+                    break
+                }
                 job.run = run
                 job.runs = runs
                 // Each run gets new seeds
@@ -398,8 +406,7 @@ fun EditorViewModel.runComfy(
                 }
                 // Each picture as its own layer, as soon as it's back
                 for (bmp in results) {
-                    placed++
-                    placeComfyResult(d, w, prompt, input, upload?.alpha, bmp, number = if (runs > 1 || results.size > 1) placed else 0)
+                    if (placeComfyResult(d, w, prompt, input, upload?.alpha, bmp, number = if (runs > 1 || results.size > 1) placed + 1 else 0)) placed++
                 }
             }
             socket?.close()
@@ -647,7 +654,8 @@ private fun resultImage(outputs: JSONObject, saveNodes: Set<String>): Triple<Str
 }
 
 /** The result as a new smart layer above the active one (shaped by the selection when one was used). */
-private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, prompt: String, input: ComfyInput, alpha: Bitmap?, result: Bitmap, number: Int = 0) {
+/** Returns whether it was added. */
+private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, prompt: String, input: ComfyInput, alpha: Bitmap?, result: Bitmap, number: Int = 0): Boolean {
     // (The source's see-through [alpha] is the caller's: a batch uses it for every result)
     if (doc !== d || d.width != input.docW || d.height != input.docH) {
         result.recycle()
@@ -655,7 +663,7 @@ private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, p
             if (doc !== d) "${w.name} finished, but its picture was closed or another tab is open, so it wasn't added"
             else "${w.name} finished, but the canvas was cropped or resized meanwhile, so it wasn't added"
         )
-        return
+        return false
     }
     val name = "${w.name}${if (w.kind == ComfyKind.GENERATE && prompt.isNotBlank()) ": " + prompt.trim().take(32) else ""}${if (number > 0) " #$number" else ""}"
     val r = RectF(input.region)
@@ -685,7 +693,7 @@ private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, p
         val mask = comfyMask(d, grid, input.region, alpha.takeIf { exact }, input.selection)
         Triple(spec, grid, mask)
     }
-    if (doc !== d) return
+    if (doc !== d) return false
     stackEdit(w.name) {
         val (at, parent) = insertPoint(d)
         val l = Layer(d.newId(), LayerProps(d.uniqueName(name), parent = parent, smart = spec), grid, 0, 0, mask, LayerKind.SMART)
@@ -696,6 +704,7 @@ private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, p
     }
     multiSelected = emptySet()
     if (number == 0) toast("${w.name} is done: it's the new layer \"${d.active?.props?.name ?: name}\"")
+    return true
 }
 
 // ===================================================================== presets and remembered settings
@@ -772,10 +781,24 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var merged by remember { mutableStateOf(vm.prefs.getBoolean("comfyMerged", false)) }
     var count by remember { mutableIntStateOf(vm.prefs.getInt("comfyCount", 1)) }
     var megapixels by remember(file) { mutableStateOf(picked?.let { vm.prefs.getFloat("comfyMP:" + it.fileName, it.savedMegapixels) } ?: 1f) }
-    var overrides by remember(file) { mutableStateOf(file?.let { vm.comfyOverrides(it) } ?: com.tim.quartzeditor.engine.ComfyOverrides()) }
-    fun setOverrides(o: com.tim.quartzeditor.engine.ComfyOverrides) {
+    // (Changes made over something the workflow no longer has are dropped)
+    var overrides by remember(file) { mutableStateOf(file?.let { f -> picked.keep(vm.comfyOverrides(f)) } ?: com.tim.quartzeditor.engine.ComfyOverrides()) }
+    /** [save] false while a slider moves (saved when it's let go). */
+    fun setOverrides(o: com.tim.quartzeditor.engine.ComfyOverrides, save: Boolean = true) {
         overrides = o
-        file?.let { vm.setComfyOverrides(it, o) }
+        if (save) file?.let { vm.setComfyOverrides(it, o) }
+    }
+    fun saveOverrides() {
+        file?.let { vm.setComfyOverrides(it, overrides) }
+    }
+    /** What's typed for the workflow on screen, kept when another is picked or the page closes. */
+    fun keepTyped() {
+        val f = file ?: return
+        vm.prefs.edit().putString("comfyPrompt:$f", prompt).putBoolean("comfyEnhance:$f", enhance).putFloat("comfyMP:$f", megapixels).apply()
+    }
+    val close = {
+        keepTyped()
+        onDismiss()
     }
     var test by remember { mutableStateOf<String?>(null) }
     var presets by remember { mutableStateOf(vm.comfyPresets()) }
@@ -785,31 +808,38 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     val hasSel = d?.selection?.isEmpty == false
 
     // What the server has to choose from (model files, LoRAs), for the workflow's loaders
+    // (Test asks again, after the computer or ComfyUI was started, say)
+    var fetchAgain by remember { mutableIntStateOf(0) }
     var info by remember(file, server) { mutableStateOf<Map<String, JSONObject?>>(emptyMap()) }
     var infoError by remember(file, server) { mutableStateOf<String?>(null) }
-    LaunchedEffect(file, server) {
+    var infoDone by remember(file, server) { mutableStateOf(false) }
+    LaunchedEffect(file, server, fetchAgain) {
         val w = picked ?: return@LaunchedEffect
         val classes = (w.modelSettings.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
         if (classes.isEmpty() || server.isBlank()) return@LaunchedEffect
+        // Not while the address is still being typed
+        delay(600)
+        infoError = null
         val c = ComfyClient(server)
         val got = HashMap<String, JSONObject?>()
         var err: String? = null
-        withContext(Dispatchers.IO) {
-            for (k in classes) {
-                try {
-                    got[k] = c.objectInfo(k)
-                } catch (e: Exception) {
-                    err = "Couldn't get the lists of models from ComfyUI (${e.message ?: e.javaClass.simpleName})"
-                    break
-                }
+        for (k in classes) {
+            try {
+                got[k] = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { c.objectInfo(k) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                err = "Couldn't get the lists of models from ComfyUI (${e.message ?: e.javaClass.simpleName}). Test the server below to try again."
+                break
             }
         }
         info = got
         infoError = err
+        infoDone = true
     }
 
     androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = close,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(
@@ -821,7 +851,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
         ) {
             // Top: close, title, run
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
-                TextButton(onClick = onDismiss) { Text("Close") }
+                TextButton(onClick = close) { Text("Close") }
                 Text("ComfyUI", color = Q.text, fontSize = 20.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
                 val ready = picked != null && server.isNotBlank() && (picked.kind != ComfyKind.INPAINT || hasSel) && (!picked.hasPrompt || prompt.isNotBlank())
                 SmallButton("Run", primary = true, enabled = ready) {
@@ -858,6 +888,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 list.map { it.name to it.kind.label },
                                 Modifier.weight(1f),
                             ) { i ->
+                                keepTyped()
                                 pickedFile = list[i].fileName
                                 vm.prefs.edit().putString("comfyLast", list[i].fileName).apply()
                             }
@@ -894,8 +925,9 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                     return@DropdownPick
                                 }
                                 // The workflow first (its own settings load), then the preset's on top
+                                keepTyped()
                                 pickedFile = w.fileName
-                                vm.setComfyOverrides(w.fileName, p.overrides)
+                                vm.setComfyOverrides(w.fileName, w.keep(p.overrides))
                                 vm.prefs.edit()
                                     .putString("comfyLast", w.fileName)
                                     .putString("comfyPrompt:" + w.fileName, p.prompt)
@@ -908,7 +940,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 megapixels = p.megapixels
                                 merged = p.merged
                                 count = p.count
-                                overrides = p.overrides
+                                overrides = w.keep(p.overrides)
                                 vm.toast("Loaded \"${p.name}\"")
                             }
                         }
@@ -981,12 +1013,15 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             Spacer(Modifier.height(16.dp))
                             SectionTitle("Models")
                             infoError?.let { Text(it, color = Q.accent, fontSize = 12.sp) }
-                            for (s in files) ModelRow(s, overrides, info[s.cls]) { v -> setOverrides(if (v == null || v == s.value) overrides.without(s.node, s.input) else overrides.with(s.node, s.input, v)) }
+                            fun pick(s: com.tim.quartzeditor.engine.ComfySetting, v: String?) =
+                                setOverrides(if (v == null || v == s.value) overrides.without(s.node, s.input) else overrides.with(s.node, s.input, v, w.baseOf(s.node, s.input).orEmpty()))
+                            for (s in files) ModelRow(s, overrides, info[s.cls], loaded = infoDone) { v -> pick(s, v) }
                             for (s in w.loraStrengths) {
                                 val cur = (overrides.values[s.node]?.get(s.input) as? Number)?.toFloat() ?: s.value.toFloatOrNull() ?: 1f
                                 PanelSlider(
                                     "${s.label} · ${s.nodeTitle}", cur.coerceIn(-2f, 2f), -2f..2f, "%.2f".format(java.util.Locale.US, cur),
-                                    onChange = { v -> setOverrides(overrides.with(s.node, s.input, (v * 100).roundToInt() / 100.0)) },
+                                    onChange = { v -> setOverrides(overrides.with(s.node, s.input, (v * 100).roundToInt() / 100.0, w.baseOf(s.node, s.input).orEmpty()), save = false) },
+                                    onDone = { saveOverrides() },
                                 )
                             }
                             if (minor.isNotEmpty()) {
@@ -996,7 +1031,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                     color = Q.accent, fontSize = 13.sp,
                                     modifier = Modifier.padding(vertical = 6.dp).clickable { more = !more },
                                 )
-                                if (more) for (s in minor) ModelRow(s, overrides, info[s.cls]) { v -> setOverrides(if (v == null || v == s.value) overrides.without(s.node, s.input) else overrides.with(s.node, s.input, v)) }
+                                if (more) for (s in minor) ModelRow(s, overrides, info[s.cls], loaded = infoDone) { v -> pick(s, v) }
                             }
                         }
 
@@ -1004,8 +1039,11 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         for ((node, saved) in w.loraManagers) {
                             Spacer(Modifier.height(16.dp))
                             val loras = overrides.loras[node] ?: saved
-                            LoraManagerSection(loras, info["LoraLoader"], changed = overrides.loras.containsKey(node)) { next ->
-                                setOverrides(overrides.withLoras(node, next))
+                            // (Its own search and filter for each workflow's list)
+                            androidx.compose.runtime.key(file, node) {
+                                LoraManagerSection(loras, info["LoraLoader"], loaded = infoDone, changed = overrides.loras.containsKey(node), onDone = { saveOverrides() }) { next, save ->
+                                    setOverrides(overrides.withLoras(node, next, w.baseOf(node, "loras").orEmpty()), save)
+                                }
                             }
                         }
 
@@ -1026,6 +1064,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
                         SmallButton("Test") {
                             vm.setComfyServer(server)
+                            fetchAgain++
                             test = "Connecting…"
                             val c = ComfyClient(server)
                             scope.launch {
@@ -1114,7 +1153,7 @@ private fun DropdownPick(current: String, options: List<Pair<String, String>>, m
 
 /** One model choice: what it is, and the file in use (tap to pick another from what ComfyUI has). */
 @Composable
-private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.quartzeditor.engine.ComfyOverrides, info: JSONObject?, set: (String?) -> Unit) {
+private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.quartzeditor.engine.ComfyOverrides, info: JSONObject?, loaded: Boolean, set: (String?) -> Unit) {
     val cur = o.values[s.node]?.get(s.input) as? String ?: s.value
     val changed = cur != s.value
     var picking by remember { mutableStateOf(false) }
@@ -1138,7 +1177,7 @@ private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.qua
     }
     if (picking) {
         val choices = com.tim.quartzeditor.engine.ComfyOverrides.choices(info, s.input)
-        ChoicePicker("${s.label}: ${s.nodeTitle}", choices, cur, onDismiss = { picking = false }) { v ->
+        ChoicePicker("${s.label}: ${s.nodeTitle}", choices, cur, loaded, onDismiss = { picking = false }) { v ->
             picking = false
             set(v)
         }
@@ -1147,7 +1186,7 @@ private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.qua
 
 /** A list to pick from, with a search box ([choices] null: still asking ComfyUI). */
 @Composable
-private fun ChoicePicker(title: String, choices: List<String>?, current: String?, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+private fun ChoicePicker(title: String, choices: List<String>?, current: String?, loaded: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     var q by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1157,7 +1196,8 @@ private fun ChoicePicker(title: String, choices: List<String>?, current: String?
                 OutlinedTextField(q, { q = it }, label = { Text("Search") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 when {
-                    choices == null -> Text("Getting the list from ComfyUI… (is the server reachable? Test it at the bottom)", color = Q.textDim, fontSize = 13.sp)
+                    choices == null && loaded -> Text("ComfyUI didn't give a list for this (the server couldn't be reached, or it doesn't have this node). Test the server at the bottom to ask again.", color = Q.textDim, fontSize = 13.sp)
+                    choices == null -> Text("Getting the list from ComfyUI…", color = Q.textDim, fontSize = 13.sp)
                     else -> {
                         val words = q.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
                         val shown = choices.filter { c -> words.all { c.lowercase().contains(it) } }
@@ -1186,14 +1226,21 @@ private fun ChoicePicker(title: String, choices: List<String>?, current: String?
  * what ComfyUI has ([info]: the LoRA loader's description, for the list of LoRA files).
  */
 @Composable
-private fun LoraManagerSection(loras: List<com.tim.quartzeditor.engine.ComfyLora>, info: JSONObject?, changed: Boolean, set: (List<com.tim.quartzeditor.engine.ComfyLora>?) -> Unit) {
+private fun LoraManagerSection(
+    loras: List<com.tim.quartzeditor.engine.ComfyLora>,
+    info: JSONObject?,
+    loaded: Boolean,
+    changed: Boolean,
+    onDone: () -> Unit,
+    set: (List<com.tim.quartzeditor.engine.ComfyLora>?, Boolean) -> Unit,
+) {
     val active = loras.count { it.active }
     var activeOnly by remember { mutableStateOf(loras.size > 8) }
     var q by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("LoRAs ($active on, of ${loras.size})", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        if (changed) Text("Reset", color = Q.accent, fontSize = 13.sp, modifier = Modifier.clickable { set(null) }.padding(horizontal = 6.dp))
+        if (changed) Text("Reset", color = Q.accent, fontSize = 13.sp, modifier = Modifier.clickable { set(null, true) }.padding(horizontal = 6.dp))
     }
     Spacer(Modifier.height(6.dp))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1206,8 +1253,8 @@ private fun LoraManagerSection(loras: List<com.tim.quartzeditor.engine.ComfyLora
     if (shown.isEmpty()) {
         Text(if (activeOnly && words.isEmpty()) "None on. Tap On only to see them all." else "Nothing matches", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
     }
-    for ((i, l) in shown) {
-        fun put(n: com.tim.quartzeditor.engine.ComfyLora) = set(loras.toMutableList().also { it[i] = n })
+    for ((i, l) in shown) androidx.compose.runtime.key(l.name, i) {
+        fun put(n: com.tim.quartzeditor.engine.ComfyLora, save: Boolean = true) = set(loras.toMutableList().also { it[i] = n }, save)
         Column(
             Modifier
                 .fillMaxWidth()
@@ -1222,7 +1269,7 @@ private fun LoraManagerSection(loras: List<com.tim.quartzeditor.engine.ComfyLora
                     colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Q.accent),
                 )
                 Text(l.name, color = if (l.active) Q.text else Q.textDim, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                androidx.compose.material3.IconButton(onClick = { set(loras.filterIndexed { k, _ -> k != i }) }) {
+                androidx.compose.material3.IconButton(onClick = { set(loras.filterIndexed { k, _ -> k != i }, true) }) {
                     androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Close, contentDescription = "Take out", tint = Q.textDim)
                 }
             }
@@ -1232,19 +1279,20 @@ private fun LoraManagerSection(loras: List<com.tim.quartzeditor.engine.ComfyLora
                     onChange = { v ->
                         val r = (v * 100).roundToInt() / 100f
                         // The text encoder's strength follows, unless it was set apart
-                        put(l.copy(strength = r, clipStrength = if (abs(l.clipStrength - l.strength) < 0.001f) r else l.clipStrength))
+                        put(l.copy(strength = r, clipStrength = if (abs(l.clipStrength - l.strength) < 0.001f) r else l.clipStrength), save = false)
                     },
+                    onDone = onDone,
                 )
             }
         }
     }
     if (adding) {
         val files = com.tim.quartzeditor.engine.ComfyOverrides.choices(info, "lora_name")
-        ChoicePicker("Add a LoRA", files, null, onDismiss = { adding = false }) { f ->
+        ChoicePicker("Add a LoRA", files, null, loaded, onDismiss = { adding = false }) { f ->
             adding = false
             val name = com.tim.quartzeditor.engine.ComfyLora.nameOf(f)
             val at = loras.indexOfFirst { it.name == name }
-            set(if (at >= 0) loras.toMutableList().also { it[at] = it[at].copy(active = true) } else loras + com.tim.quartzeditor.engine.ComfyLora(name, 1f, 1f, true))
+            set(if (at >= 0) loras.toMutableList().also { it[at] = it[at].copy(active = true) } else loras + com.tim.quartzeditor.engine.ComfyLora(name, 1f, 1f, true), true)
         }
     }
 }

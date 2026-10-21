@@ -439,6 +439,26 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
 
     private fun isLoraManager(o: JSONObject): Boolean = inputs(o).optJSONObject("loras")?.optJSONArray("__value__") != null
 
+    /** What a change to node [node]'s [input] is made over: the node's type and the value it has here. */
+    fun baseOf(node: String, input: String): String? {
+        val o = json.optJSONObject(node) ?: return null
+        val v = inputs(o).opt(input) ?: return null
+        val s = if (input == "loras") (v as? JSONObject)?.optJSONArray("__value__")?.toString()?.hashCode()?.toString() ?: return null else v.toString()
+        return cls(o) + "|" + s
+    }
+
+    /** [o] without the changes made over something this workflow no longer has (it was edited and added again). */
+    fun keep(o: ComfyOverrides): ComfyOverrides {
+        var out = o
+        for ((node, m) in o.values) for (k in m.keys) {
+            if (o.bases[ComfyOverrides.key(node, k)] != baseOf(node, k)) out = out.without(node, k)
+        }
+        for (node in o.loras.keys) {
+            if (o.bases[ComfyOverrides.key(node, "loras")] != baseOf(node, "loras")) out = out.withLoras(node, null, "")
+        }
+        return out
+    }
+
     val kind: ComfyKind = when {
         loadImages.isEmpty() -> ComfyKind.GENERATE
         usesMask -> ComfyKind.INPAINT
@@ -554,8 +574,11 @@ class ComfySetting(val node: String, val cls: String, val input: String, val nod
 /** A LoRA in LoRA Manager's list: [active] ones are used, at [strength] (and [clipStrength] for the text encoder). */
 data class ComfyLora(val name: String, val strength: Float, val clipStrength: Float, val active: Boolean) {
     fun toJson(): JSONObject = JSONObject()
-        .put("name", name).put("strength", strength.toDouble()).put("active", active).put("expanded", false)
-        .put("clipStrength", clipStrength.toDouble()).put("selected", false).put("locked", false)
+        .put("name", name).put("strength", r2(strength)).put("active", active).put("expanded", false)
+        .put("clipStrength", r2(clipStrength)).put("selected", false).put("locked", false)
+
+    /** Two decimals, written without float noise (0.6, not 0.6000000238). */
+    private fun r2(v: Float): Double = Math.round(v * 100.0) / 100.0
 
     companion object {
         private fun num(v: Any?, d: Float): Float = when (v) {
@@ -591,19 +614,24 @@ data class ComfyLora(val name: String, val strength: Float, val clipStrength: Fl
 class ComfyOverrides(
     val values: Map<String, Map<String, Any>> = emptyMap(),
     val loras: Map<String, List<ComfyLora>> = emptyMap(),
+    /**
+     * What each change was made over ("node·input" → the node's type and the value it had), so a
+     * change is dropped when the workflow it was made for has changed there (see [ComfyWorkflow.keep]).
+     */
+    val bases: Map<String, String> = emptyMap(),
 ) {
     val isEmpty: Boolean get() = values.isEmpty() && loras.isEmpty()
 
-    fun with(node: String, input: String, value: Any): ComfyOverrides =
-        ComfyOverrides(values + (node to ((values[node] ?: emptyMap()) + (input to value))), loras)
+    fun with(node: String, input: String, value: Any, base: String): ComfyOverrides =
+        ComfyOverrides(values + (node to ((values[node] ?: emptyMap()) + (input to value))), loras, bases + (key(node, input) to base))
 
     fun without(node: String, input: String): ComfyOverrides {
         val m = (values[node] ?: emptyMap()) - input
-        return ComfyOverrides(if (m.isEmpty()) values - node else values + (node to m), loras)
+        return ComfyOverrides(if (m.isEmpty()) values - node else values + (node to m), loras, bases - key(node, input))
     }
 
-    fun withLoras(node: String, list: List<ComfyLora>?): ComfyOverrides =
-        ComfyOverrides(values, if (list == null) loras - node else loras + (node to list))
+    fun withLoras(node: String, list: List<ComfyLora>?, base: String): ComfyOverrides =
+        ComfyOverrides(values, if (list == null) loras - node else loras + (node to list), if (list == null) bases - key(node, "loras") else bases + (key(node, "loras") to base))
 
     fun applyTo(p: JSONObject) {
         for ((node, m) in values) {
@@ -612,12 +640,15 @@ class ComfyOverrides(
         }
         for ((node, list) in loras) {
             val inp = p.optJSONObject(node)?.optJSONObject("inputs") ?: continue
+            // Only on a LoRA Manager loader
+            if (inp.optJSONObject("loras")?.optJSONArray("__value__") == null) continue
             inp.put("loras", JSONObject().put("__value__", JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }))
             if (inp.opt("text") is String) inp.put("text", ComfyLora.text(list))
         }
     }
 
     fun toJson(): JSONObject = JSONObject()
+        .put("bases", JSONObject().also { o -> for ((k, v) in bases) o.put(k, v) })
         .put("values", JSONObject().also { o -> for ((n, m) in values) o.put(n, JSONObject().also { x -> for ((k, v) in m) x.put(k, v) }) })
         .put("loras", JSONObject().also { o -> for ((n, l) in loras) o.put(n, JSONArray().also { a -> l.forEach { a.put(it.toJson()) } }) })
 
@@ -633,8 +664,12 @@ class ComfyOverrides(
             }
             val loras = HashMap<String, List<ComfyLora>>()
             o.optJSONObject("loras")?.let { ls -> for (n in ls.keys()) loras[n] = ComfyLora.listFrom(ls.optJSONArray(n)) }
-            return ComfyOverrides(values, loras)
+            val bases = HashMap<String, String>()
+            o.optJSONObject("bases")?.let { bs -> for (k in bs.keys()) bases[k] = bs.optString(k) }
+            return ComfyOverrides(values, loras, bases)
         }
+
+        fun key(node: String, input: String) = "$node\u00B7$input"
 
         /** The choices a node input takes, from ComfyUI's description of the node type ([objectInfo]). */
         fun choices(info: JSONObject?, input: String): List<String>? {
