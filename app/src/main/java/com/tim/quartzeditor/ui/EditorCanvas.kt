@@ -60,7 +60,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, WARP, GUIDE, DEPTH, DONE }
+private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, PEN_MOVE, WARP, GUIDE, DEPTH, DONE }
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -288,6 +288,15 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 mode = GestureMode.PEN_EDIT
                             }
                         }
+                        // Drawing with a pen: a point already placed under the finger is dragged around
+                        var penGrab = -1
+                        var penGrabStart: com.tim.quartzeditor.engine.PenPoint? = null
+                        if (tool == Tool.PEN && vm.penEditTarget == null && vm.penPoints.isNotEmpty()) {
+                            penGrab = vm.penPointAt(startCx, startCy, 24.dp.toPx() / vm.scale)
+                            // (With the Pen, dragging on the first point closes the shape with a curve there)
+                            if (!vm.penCurvature && penGrab == 0 && vm.penPoints.size >= 2 && vm.penContinue == null) penGrab = -1
+                            penGrabStart = vm.penPoints.getOrNull(penGrab)
+                        }
                         // Move or Pan tool on a guide: drag it (off the picture removes it)
                         var guidePos = 0f
                         // (vm.tool, not tool: holding Space pans with any tool and shouldn't grab guides)
@@ -422,6 +431,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         vm.penPreview(null)
                                         mode = GestureMode.NAV
                                     }
+                                    GestureMode.PEN_MOVE -> {
+                                        penGrabStart?.let { vm.penPutPoint(penGrab, it) }
+                                        mode = GestureMode.NAV
+                                    }
                                     GestureMode.PEN_EDIT -> {
                                         vm.penEditCancel()
                                         mode = GestureMode.NAV
@@ -507,7 +520,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         Tool.GRADIENT -> if (vm.beginGradient(startCx, startCy)) GestureMode.GRADIENT else GestureMode.DONE
                                         Tool.SHAPE -> GestureMode.SHAPING
                                         // Dragging while placing a point pulls out a curve handle
-                                        Tool.PEN -> if (vm.penEditTarget != null) GestureMode.PAN else GestureMode.PEN
+                                        Tool.PEN -> if (vm.penEditTarget != null) GestureMode.PAN else if (penGrab >= 0) GestureMode.PEN_MOVE else GestureMode.PEN
                                         // With the Text tool, dragging moves the text layer you're on
                                         Tool.TEXT -> if (vm.doc?.active?.isText == true && vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
                                         Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> {
@@ -530,6 +543,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     if (mode == GestureMode.MOVE) {
                                         val d = axisLock(vm, main.position - start)
                                         vm.moveTo(d.x / vm.scale, d.y / vm.scale, 10.dp.toPx() / vm.scale, lockedAxis(vm, main.position - start))
+                                    }
+                                    if (mode == GestureMode.PEN_MOVE) {
+                                        val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        penGrabStart?.let { p0 ->
+                                            val (px, py) = vm.snapPoint(p0.x + (cx - startCx), p0.y + (cy - startCy), 10.dp.toPx() / vm.scale)
+                                            vm.penPutPoint(penGrab, p0.copy(x = px, y = py))
+                                        }
                                     }
                                     if (mode == GestureMode.SHAPING || mode == GestureMode.PEN) {
                                         val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
@@ -635,6 +655,15 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 GestureMode.SHAPING -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                     dragShapeSnapped(vm, startCx, startCy, cx, cy, 10.dp.toPx() / vm.scale)
+                                }
+                                GestureMode.PEN_MOVE -> if (main != null) {
+                                    val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
+                                    val p0 = penGrabStart
+                                    if (p0 != null) {
+                                        // By how far the finger moved (no jump to the finger); it snaps like a new point
+                                        val (px, py) = vm.snapPoint(p0.x + (cx - startCx), p0.y + (cy - startCy), 10.dp.toPx() / vm.scale)
+                                        vm.penPutPoint(penGrab, p0.copy(x = px, y = py))
+                                    }
                                 }
                                 GestureMode.PEN -> if (main != null) {
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)

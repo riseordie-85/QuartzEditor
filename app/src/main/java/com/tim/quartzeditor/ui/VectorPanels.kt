@@ -146,8 +146,8 @@ fun ShapeOptions(vm: EditorViewModel) {
     }
     if (layer == null && vm.tool == Tool.PEN) {
         Text(
-            if (vm.penCurvature) "Tap to place points: the line curves smoothly through them. Tap the last point again to make it a sharp corner. Tap the first point to close the shape."
-            else "Tap to place corners. Drag as you place a point to bend the line into a curve. Tap the first point to close the shape.",
+            if (vm.penCurvature) "Tap to place points: the line curves smoothly through them. Double-tap a point to make it a sharp corner (or smooth again); drag a point to move it. Tap the first point to close the shape."
+            else "Tap to place corners. Drag as you place a point to bend the line into a curve. Double-tap a point to switch it between a corner and a curve; drag a point to move it. Tap the first point to close the shape.",
             color = Q.textDim, fontSize = 12.sp,
         )
         Spacer(Modifier.height(8.dp))

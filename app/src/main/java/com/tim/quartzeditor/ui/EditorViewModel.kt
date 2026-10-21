@@ -210,7 +210,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The Curvature Pen (tap points and the curve runs smoothly through them) instead of the Pen. */
     var penCurvature by mutableStateOf(prefs.getBoolean("penCurvature", false))
 
-    /** Curvature Pen: which of [penPoints] are sharp corners (tap a point again to switch). */
+    /** The point last tapped while drawing, and when (a second tap on it soon after switches corner / smooth). */
+    internal var penLastTap = -1
+    internal var penLastTapAt = 0L
+
+    /** Curvature Pen: which of [penPoints] are sharp corners (double-tap a point to switch). */
     val penCorners = androidx.compose.runtime.mutableStateListOf<Boolean>()
 
     /**

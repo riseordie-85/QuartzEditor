@@ -447,16 +447,68 @@ fun EditorViewModel.penAdd(p0: PenPoint, closeRadius: Float) {
             return
         }
     }
-    val last = penPoints.lastOrNull()
-    if (penCurvature && last != null && near(last)) {
-        val i = penPoints.lastIndex
+    // A tap on a point already placed doesn't add one: a double tap makes it a corner or a curve
+    val hit = penPointAt(p.x, p.y, closeRadius)
+    if (hit >= 0) {
+        penTapPoint(hit)
+        return
+    }
+    penLastTap = -1
+    penPoints.add(p)
+    while (penCorners.size < penPoints.size) penCorners.add(false)
+}
+
+/** The placed point nearest canvas point ([cx], [cy]) within [radius], or −1. */
+fun EditorViewModel.penPointAt(cx: Float, cy: Float, radius: Float): Int {
+    var best = -1
+    var bestD = radius
+    penPoints.forEachIndexed { i, q ->
+        val d = hypot(q.x - cx, q.y - cy)
+        if (d <= bestD) {
+            bestD = d
+            best = i
+        }
+    }
+    return best
+}
+
+/** Puts placed point [i] at [p] (dragging it while drawing). */
+fun EditorViewModel.penPutPoint(i: Int, p: PenPoint) {
+    if (i in penPoints.indices) penPoints[i] = p
+}
+
+/** A tap on placed point [i]: the second of two quick taps switches it between a sharp corner and a smooth curve. */
+private fun EditorViewModel.penTapPoint(i: Int) {
+    val now = android.os.SystemClock.uptimeMillis()
+    if (penLastTap != i || now - penLastTapAt > 450) {
+        penLastTap = i
+        penLastTapAt = now
+        return
+    }
+    penLastTap = -1
+    if (penCurvature) {
         while (penCorners.size < penPoints.size) penCorners.add(false)
         penCorners[i] = !penCorners[i]
         toast(if (penCorners[i]) "Corner point" else "Smooth point")
         return
     }
-    penPoints.add(p)
-    while (penCorners.size < penPoints.size) penCorners.add(false)
+    // The Pen: a curve point gets handles along the line from its neighbors; a corner loses them
+    val q = penPoints[i]
+    if (q.smooth) {
+        penPoints[i] = q.corner()
+        toast("Corner point")
+        return
+    }
+    val prev = penPoints.getOrNull(i - 1) ?: q
+    val next = penPoints.getOrNull(i + 1) ?: q
+    var dx = (next.x - prev.x) * 0.2f
+    var dy = (next.y - prev.y) * 0.2f
+    if (dx == 0f && dy == 0f) {
+        dx = 20f
+        dy = 0f
+    }
+    penPoints[i] = q.copy(hx = dx, hy = dy, ix = -dx, iy = -dy)
+    toast("Curve point")
 }
 
 /**
@@ -501,9 +553,11 @@ fun EditorViewModel.undoPenPoint() {
     }
     penPoints.removeAt(penPoints.lastIndex)
     while (penCorners.size > penPoints.size) penCorners.removeAt(penCorners.lastIndex)
+    penLastTap = -1
 }
 
 fun EditorViewModel.cancelPen() {
+    penLastTap = -1
     penPoints.clear()
     penCorners.clear()
     penDrag = null
