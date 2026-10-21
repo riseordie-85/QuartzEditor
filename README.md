@@ -166,8 +166,8 @@ the list; the button shows the one you used last.
 - **Shape pen** — tap to place corners; drag as you place a point to bend the line into a curve. Tap the first
   point (or Close shape) to finish, or Open line for an unclosed line. Two-finger tap or the bar's undo
   removes the last point. **Edit points** comes on after finishing (or tap the pen again, or Edit points in
-  Properties): drag points and curve handles, tap the outline to add a point, tap a point to make it a
-  corner or a curve or delete it. Done (or the pen again) goes back to drawing.
+  Properties): drag points and curve handles, tap the outline to add a point, tap a point to pick it
+  (then Corner / Curve or Delete), or double-tap a point to switch it between a corner and a curve. Done (or the pen again) goes back to drawing.
 - **Curvature pen** (hold the pen button, or the Pen / Curvature pen switch in Properties; Shift+P) — tap to
   place points and the line curves smoothly through all of them, reshaping as you go. Double-tap any point
   to make it a sharp corner (a diamond), again for smooth; drag a point to move it (or hold, then drag). Tap

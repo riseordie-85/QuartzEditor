@@ -784,8 +784,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.PEN -> vm.penDrag?.let { vm.penAdd(it, 24.dp.toPx() / vm.scale, startCx, startCy) }
                             GestureMode.PEN_EDIT -> {
                                 vm.penEditEnd(penMoved)
-                                // A tap on a point picks it
-                                if (!penMoved) penHit?.let { vm.penSelected = it.index }
+                                // A tap on a point picks it; a second tap on it soon after makes it a corner or a curve
+                                if (!penMoved) penHit?.let { vm.penEditTapPoint(it) }
                             }
                             GestureMode.NAV -> when {
                                 !moved && duration < 350 && maxPointers == 2 -> vm.undo()

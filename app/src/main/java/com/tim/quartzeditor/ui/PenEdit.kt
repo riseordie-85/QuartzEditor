@@ -172,9 +172,10 @@ fun EditorViewModel.penEditCancel() {
 fun EditorViewModel.penEditTap(cx: Float, cy: Float, radius: Float) {
     val l = penEditTarget ?: return
     penHit(cx, cy, radius)?.let {
-        penSelected = it.index
+        penEditTapPoint(it)
         return
     }
+    penLastTap = -1
     val added = insertPenPoint(l, cx, cy, radius)
     penSelected = added ?: -1
 }
@@ -260,6 +261,20 @@ fun EditorViewModel.deletePenPoint() {
     penSelected = -1
 }
 
+/** A tap on a point (or handle) while editing points: picks it; a quick second tap on the same point switches corner / curve. */
+fun EditorViewModel.penEditTapPoint(hit: PenHit) {
+    val now = android.os.SystemClock.uptimeMillis()
+    val again = hit is PenHit.Anchor && penLastTap == hit.index && now - penLastTapAt <= 450 && penSelected == hit.index
+    penSelected = hit.index
+    if (again) {
+        penLastTap = -1
+        togglePenPointCurve()
+        return
+    }
+    penLastTap = if (hit is PenHit.Anchor) hit.index else -1
+    penLastTapAt = now
+}
+
 /** Makes the picked point a sharp corner, or a smooth curve (handles along its neighbors). */
 fun EditorViewModel.togglePenPointCurve() {
     val l = penEditTarget ?: return
@@ -272,16 +287,23 @@ fun EditorViewModel.togglePenPointCurve() {
         p.corner()
     } else {
         val n = pts.size
-        val prev = if (i > 0) pts[i - 1] else if (s.closed) pts[n - 1] else p
-        val next = if (i < n - 1) pts[i + 1] else if (s.closed) pts[0] else p
-        // Handles point along the line from the previous point to the next one
-        var dx = (next.x - prev.x) * 0.2f
-        var dy = (next.y - prev.y) * 0.2f
-        if (dx == 0f && dy == 0f) {
-            dx = 20f
-            dy = 0f
+        val prev = if (i > 0) pts[i - 1] else if (s.closed) pts[n - 1] else null
+        val next = if (i < n - 1) pts[i + 1] else if (s.closed) pts[0] else null
+        if (prev != null && next != null) {
+            // Like the Curvature Pen: handles along the line from the previous point to the next, a
+            // third of the way to each, so the curve runs smoothly through
+            PenPoint.curvature(listOf(prev, p, next), { k -> k != 1 }, closed = false)[1]
+        } else {
+            // An end of an open line: one handle toward its only neighbor
+            val o = prev ?: next ?: p
+            var dx = (o.x - p.x) * 0.3f
+            var dy = (o.y - p.y) * 0.3f
+            if (dx == 0f && dy == 0f) {
+                dx = 20f
+                dy = 0f
+            }
+            if (next != null) p.copy(hx = dx, hy = dy, ix = -dx, iy = -dy) else p.copy(hx = -dx, hy = -dy, ix = dx, iy = dy)
         }
-        p.copy(hx = dx, hy = dy, ix = -dx, iy = -dy)
     }
     editVector(l.id, if (p.smooth) "Corner point" else "Curve point") { it.copy(shape = it.shape?.copy(path = pts)) }
 }
