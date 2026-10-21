@@ -140,7 +140,8 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             tool != Tool.GRADIENT && tool != Tool.BUCKET -> onToolButton(Tool.GRADIENT)
         }
         KeyEvent.KEYCODE_U -> if (shift && tool == Tool.SHAPE) onToolButton(Tool.SHAPE) else if (tool != Tool.SHAPE) onToolButton(Tool.SHAPE)
-        KeyEvent.KEYCODE_P -> choosePen(edit = false)
+        // P: the pen; Shift+P switches between the Pen and the Curvature Pen
+        KeyEvent.KEYCODE_P -> if (shift && tool == Tool.PEN) choosePen(edit = false, curvature = !penCurvature) else choosePen(edit = false)
         KeyEvent.KEYCODE_A -> choosePen(edit = true)
         KeyEvent.KEYCODE_T -> if (tool != Tool.TEXT) onToolButton(Tool.TEXT)
         KeyEvent.KEYCODE_B -> if (tool != Tool.BRUSH) onToolButton(Tool.BRUSH)

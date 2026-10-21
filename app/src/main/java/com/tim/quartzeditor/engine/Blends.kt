@@ -14,7 +14,7 @@ import android.graphics.Shader
  */
 object BlendShader {
 
-    private const val COMMON = """
+    internal const val COMMON = """
 uniform float mode;
 // Canvas pixel = position × docMap.xy + docMap.zw (Dissolve's pattern stays put on the picture)
 uniform float4 docMap;
@@ -107,3 +107,84 @@ half4 main(float2 p) {
         }
     }
 }
+
+/**
+ * Blend If (Layer Style → Blending Options): the layer shows only where its own gray, and the gray
+ * of what's below it, are in their ranges. The layer is drawn once on its own (for its gray) and once
+ * blended onto what's below (Android's blend modes); the result is what's below, moved toward that
+ * blend by how much shows. (A layer's blend is a straight mix in its opacity, so this is the same as
+ * changing its opacity pixel by pixel.) Blend modes Android lacks are mixed here as [BlendShader] does.
+ */
+object BlendIfShader {
+    private const val WEIGHT = """
+uniform float4 thisR;
+uniform float4 underR;
+uniform float useComp;
+
+float ramp(float v, float4 r) {
+    float lo = v >= r.y ? 1.0 : (v < r.x ? 0.0 : (v - r.x) / max(r.y - r.x, 0.0001));
+    float hi = v <= r.z ? 1.0 : (v > r.w ? 0.0 : (r.w - v) / max(r.w - r.z, 0.0001));
+    return lo * hi;
+}
+
+float4 blendIf(float4 pb, float4 ps, float4 pc, float2 p) {
+    if (ps.a <= 0.0) return pb;
+    float4 comp = useComp > 0.5 ? pc : mixPx(pb, ps, p);
+    float ws = ramp(lum(ps.rgb / ps.a) * 255.0, thisR);
+    // Over nothing there's nothing to compare with: the layer shows
+    float wu = pb.a > 0.0 ? mix(1.0, ramp(lum(pb.rgb / pb.a) * 255.0, underR), pb.a) : 1.0;
+    return pb + (comp - pb) * (ws * wu);
+}
+"""
+
+    private const val COMMON = BlendShader.COMMON + WEIGHT
+
+    /** One picture: what's below, then the layer alone, then the layer blended onto what's below, each [shift] apart. */
+    private const val TRIPLE = COMMON + """
+uniform shader content;
+uniform float shift;
+half4 main(float2 p) {
+    if (p.x >= shift) return half4(0.0);
+    return half4(blendIf(float4(content.eval(p)), float4(content.eval(p + float2(shift, 0.0))), float4(content.eval(p + float2(2.0 * shift, 0.0))), p));
+}
+"""
+
+    private const val THREE = COMMON + """
+uniform shader below;
+uniform shader layer;
+uniform shader comp;
+half4 main(float2 p) { return half4(blendIf(float4(below.eval(p)), float4(layer.eval(p)), float4(comp.eval(p)), p)); }
+"""
+
+    private fun RuntimeShader.setUp(blend: Blend, b: BlendIf, sx: Float, sy: Float, tx: Float, ty: Float) {
+        setFloatUniform("mode", blend.custom.toFloat())
+        setFloatUniform("docMap", sx, sy, tx, ty)
+        setFloatUniform("thisR", b.thisLo0.toFloat(), b.thisLo1.toFloat(), b.thisHi0.toFloat(), b.thisHi1.toFloat())
+        setFloatUniform("underR", b.underLo0.toFloat(), b.underLo1.toFloat(), b.underHi0.toFloat(), b.underHi1.toFloat())
+        setFloatUniform("useComp", if (blend.custom != 0) 0f else 1f)
+    }
+
+    private val screen = HashMap<Long, RuntimeShader>()
+
+    /** On screen: a node [width] × 3 wide (below, alone, blended); its left third becomes the result. Main thread only. */
+    fun tripleEffect(layerId: Long, blend: Blend, b: BlendIf, width: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
+        if (screen.size > 64) screen.clear()
+        val sh = screen.getOrPut(layerId) { RuntimeShader(TRIPLE) }
+        sh.setUp(blend, b, sx, sy, tx, ty)
+        sh.setFloatUniform("shift", width.toFloat())
+        return RenderEffect.createRuntimeShaderEffect(sh, "content")
+    }
+
+    /** Off screen: [below], the [layer] alone and [comp] (the layer blended onto below), all the same size. */
+    fun mix(below: Bitmap, layer: Bitmap, comp: Bitmap, blend: Blend, b: BlendIf, sx: Float, sy: Float, tx: Float, ty: Float): Bitmap {
+        val sh = RuntimeShader(THREE)
+        sh.setUp(blend, b, sx, sy, tx, ty)
+        sh.setInputShader("below", BitmapShader(below, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+        sh.setInputShader("layer", BitmapShader(layer, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+        sh.setInputShader("comp", BitmapShader(comp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+        return Gpu.renderOffscreen(below.width, below.height) { c ->
+            c.drawRect(0f, 0f, below.width.toFloat(), below.height.toFloat(), Paint().apply { shader = sh })
+        }
+    }
+}
+

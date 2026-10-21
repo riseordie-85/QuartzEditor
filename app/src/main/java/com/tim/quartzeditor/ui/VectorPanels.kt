@@ -130,12 +130,26 @@ fun ShapeOptions(vm: EditorViewModel) {
     if (vm.penEditTarget != null) {
         Text("Drag points and their handles. Tap a point to pick it, tap the outline to add a point. Tap the pen again (or Done) to draw a new shape.", color = Q.textDim, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
-    } else if (layer?.props?.shape?.kind == ShapeKind.PATH && vm.tool == Tool.PEN) {
-        Text("Tap the pen again to edit this shape's points, or tap the picture to draw a new shape.", color = Q.textDim, fontSize = 12.sp)
+    }
+    // Which pen draws (not while editing points)
+    if (vm.tool == Tool.PEN && vm.penEditTarget == null) {
+        ChipRow(listOf("Pen", "Curvature pen"), if (vm.penCurvature) 1 else 0) { i -> vm.choosePen(edit = false, curvature = i == 1) }
+        Spacer(Modifier.height(6.dp))
+    }
+    if (vm.penEditTarget == null && layer?.props?.shape?.kind == ShapeKind.PATH && vm.tool == Tool.PEN) {
+        Text(
+            "Tap its outline to add a point" + (if (layer.props.shape?.closed == false) ", or one of its ends to carry it on" else "") +
+                ". Tap the pen again to edit its points, or tap anywhere else to draw a new shape.",
+            color = Q.textDim, fontSize = 12.sp,
+        )
         Spacer(Modifier.height(8.dp))
     }
     if (layer == null && vm.tool == Tool.PEN) {
-        Text("Tap to place corners. Drag as you place a point to bend the line into a curve. Tap the first point to close the shape.", color = Q.textDim, fontSize = 12.sp)
+        Text(
+            if (vm.penCurvature) "Tap to place points: the line curves smoothly through them. Tap the last point again to make it a sharp corner. Tap the first point to close the shape."
+            else "Tap to place corners. Drag as you place a point to bend the line into a curve. Tap the first point to close the shape.",
+            color = Q.textDim, fontSize = 12.sp,
+        )
         Spacer(Modifier.height(8.dp))
     }
     if (spec.kind == ShapeKind.PATH) {

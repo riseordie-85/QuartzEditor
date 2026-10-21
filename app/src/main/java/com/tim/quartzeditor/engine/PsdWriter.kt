@@ -427,6 +427,8 @@ class PsdLayerOut(
     val pixelsIrrelevant: Boolean = false,
     /** Tagged blocks: key and contents (lengths and padding are added). */
     val blocks: List<Pair<String, ByteArray>> = emptyList(),
+    /** Blend If (gray): this layer's black low/high and white low/high, then the underlying layer's; null: everything blends. */
+    val blendRanges: IntArray? = null,
 )
 
 object PsdWriter {
@@ -567,9 +569,14 @@ object PsdWriter {
                         s.zeros(2)
                     }
                 }
-                // Blending ranges: everything blends
+                // Blending ranges: gray (Blend If), then each color channel (everything blends)
                 s.section(1) {
-                    repeat(5) {
+                    val g = l.blendRanges
+                    if (g != null && g.size >= 8) for (v in g.take(8)) s.u8(v.coerceIn(0, 255)) else {
+                        s.u32(0x0000FFFFL)
+                        s.u32(0x0000FFFFL)
+                    }
+                    repeat(4) {
                         s.u32(0x0000FFFFL)
                         s.u32(0x0000FFFFL)
                     }

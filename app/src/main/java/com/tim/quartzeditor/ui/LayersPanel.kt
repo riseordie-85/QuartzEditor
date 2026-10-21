@@ -226,8 +226,9 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             }
         }
 
-        // Up to four rows while Color or Properties is open; it gives up rows before the buttons
-        val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 4)
+        // Two rows while Color or Properties is open (scroll for the rest), so they get the room;
+        // it gives up rows before the buttons
+        val listMod = if (fillList) Modifier.layoutId(LIST_ID) else Modifier.layoutId(LIST_ID).heightIn(max = rowH * 2)
         // Only the rows on screen are built (big files have hundreds of layers), and each picture
         // keeps its own place in the list (coming back from a smart layer's tab, it's where it was)
         val listKey = d
@@ -358,6 +359,14 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     }
                 },
         ) {
+            // With only two rows showing, the active layer is kept in sight
+            val activeIndex = shown.indexOfFirst { it.id == d.activeId }
+            androidx.compose.runtime.LaunchedEffect(fillList, activeIndex) {
+                if (fillList || activeIndex < 0 || dragId != null) return@LaunchedEffect
+                val visible = listState.layoutInfo.visibleItemsInfo
+                val fully = visible.filter { it.offset >= 0 && it.offset + it.size <= listState.layoutInfo.viewportEndOffset }.map { it.index }
+                if (activeIndex !in fully) listState.animateScrollToItem(activeIndex)
+            }
             androidx.compose.foundation.lazy.LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
                 items(shown.size, key = { shown[it].id }) { i ->
                     val l = shown[i]

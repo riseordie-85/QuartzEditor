@@ -319,9 +319,16 @@ fun EditorViewModel.saveProjectFile(uri: Uri) {
 }
 
 /** Flattens and saves a picture to Pictures/Quartz Editor. Calls [onSaved] with its address. */
-fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
+/** Quick export: a PNG of the whole picture straight into Pictures/Quartz Editor, named for when it was saved. */
+fun EditorViewModel.quickExport() {
+    val stamp = java.text.SimpleDateFormat("MM-dd-yy HH-mm-ss", java.util.Locale.US).format(java.util.Date())
+    export(ExportFormat.PNG, fileName = "Quartz $stamp")
+}
+
+/** [fileName]: the name to save under (without its extension), instead of the image's. */
+fun EditorViewModel.export(format: ExportFormat, fileName: String? = null, onSaved: (Uri) -> Unit = {}) {
     if (doc == null) return
-    if (pendingFirst { export(format, onSaved) }) return
+    if (pendingFirst { export(format, fileName, onSaved) }) return
     // The whole picture (with what's being edited in smart layers' tabs)
     val sc = saveCopy() ?: return
     val copy = sc.doc
@@ -357,12 +364,12 @@ fun EditorViewModel.export(format: ExportFormat, onSaved: (Uri) -> Unit = {}) {
             val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
             val bmp = DocRenderer.flatten(copy, bg, effects = { fx[it.id] })
             try {
-                Media.saveImage(ctx, bmp, copy.name.ifBlank { "Quartz" }, format)
+                Media.saveImage(ctx, bmp, fileName ?: copy.name.ifBlank { "Quartz" }, format)
             } finally {
                 bmp.recycle()
             }
         }
-        toast("Saved to Pictures/${Media.FOLDER}")
+        toast(if (fileName != null) "Saved \"$fileName.${format.ext}\" to Pictures/${Media.FOLDER}" else "Saved to Pictures/${Media.FOLDER}")
         onSaved(uri)
     }
 }

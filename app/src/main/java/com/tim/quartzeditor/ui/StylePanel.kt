@@ -45,7 +45,10 @@ import com.tim.quartzeditor.engine.StrokePosition
 import kotlin.math.roundToInt
 
 private enum class StyleFx(val label: String) {
-    BEVEL("Bevel & Emboss"), GRADIENT("Gradient Fill"), PATTERN("Pattern Overlay"), LONG_SHADOW("Long Shadow"), STROKE("Stroke"), DROP_SHADOW("Drop Shadow"), INNER_SHADOW("Inner Shadow"), INNER_GLOW("Inner Glow"), SATIN("Satin"), OUTER_GLOW("Outer Glow"), COLOR_OVERLAY("Color Overlay")
+    // Photoshop's order, with Long Shadow at the end
+    BEVEL("Bevel & Emboss"), STROKE("Stroke"), INNER_SHADOW("Inner Shadow"), INNER_GLOW("Inner Glow"), SATIN("Satin"),
+    COLOR_OVERLAY("Color Overlay"), GRADIENT("Gradient Overlay"), PATTERN("Pattern Overlay"), OUTER_GLOW("Outer Glow"),
+    DROP_SHADOW("Drop Shadow"), LONG_SHADOW("Long Shadow")
 }
 
 /** Layer Style: switch effects on and off and tune them. They never change the layer's pixels. */
@@ -59,6 +62,34 @@ fun StylePanel(vm: EditorViewModel) {
     Spacer(Modifier.height(6.dp))
     StylePresetsRow(vm)
     Spacer(Modifier.height(6.dp))
+
+    // Blending Options (Blend If), above the effects like Photoshop's
+    run {
+        val expanded = open == "BLENDING"
+        val active = l.props.blendIf.active
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (expanded) Q.panelDark else Color.Transparent)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { open = if (expanded) null else "BLENDING" }
+                    .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            ) {
+                Text("Blending Options", color = if (active) Q.text else Q.textDim, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                if (active) Text("Blend If", color = Q.accent, fontSize = 12.sp, modifier = Modifier.padding(end = 6.dp))
+                Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Q.textDim)
+            }
+            if (expanded) {
+                Column(Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp)) { BlendIfControls(vm, l) }
+            }
+        }
+    }
 
     StyleFx.entries.forEach { kind ->
         val on = when (kind) {
@@ -237,8 +268,8 @@ private fun BevelControls(vm: EditorViewModel, st: LayerStyle) {
 
 @Composable
 private fun GradientFillControls(vm: EditorViewModel, st: LayerStyle) {
-    GradientFxControls(vm, st.gradientFill, "Gradient fill", showOpacity = true) { change -> copy(gradientFill = gradientFill.change().copy(on = true)) }
-    FxBlend(st.gradientFill.blend) { b -> vm.setStyle("Gradient fill blend") { it.copy(gradientFill = it.gradientFill.copy(blend = b, on = true)) } }
+    GradientFxControls(vm, st.gradientFill, "Gradient overlay", showOpacity = true) { change -> copy(gradientFill = gradientFill.change().copy(on = true)) }
+    FxBlend(st.gradientFill.blend) { b -> vm.setStyle("Gradient overlay blend") { it.copy(gradientFill = it.gradientFill.copy(blend = b, on = true)) } }
 }
 
 /**
@@ -491,5 +522,63 @@ private fun glossCurve(g: com.tim.quartzeditor.engine.GlossContour, t: Float): F
         val s = t * 4f
         val f = s - kotlin.math.floor(s)
         ((kotlin.math.floor(s) + f * f * (3f - 2f * f)) / 4f).coerceAtMost(1f)
+    }
+}
+
+/**
+ * Blend If (gray): where the layer shows, by its own brightness and by the brightness of what's below.
+ * Each end is a pair: between its two values the layer fades (the same value twice cuts sharply).
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun BlendIfControls(vm: EditorViewModel, l: com.tim.quartzeditor.engine.Layer) {
+    val b = l.props.blendIf
+    Text(
+        "Blend If (gray): the layer shows only where it, and what's below it, are in these ranges. " +
+            "Pull the black or white ends in to hide its darks or lights; spread an end's two values apart for a soft edge.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    fun live(change: (com.tim.quartzeditor.engine.BlendIf) -> com.tim.quartzeditor.engine.BlendIf) =
+        vm.setPropsLive(l.id) { it.copy(blendIf = change(it.blendIf).sane()) }
+    val done = { vm.commitProps("Blend If") }
+
+    @Composable
+    fun part(title: String, lo0: Int, lo1: Int, hi0: Int, hi1: Int, set: (com.tim.quartzeditor.engine.BlendIf, Int, Int, Int, Int) -> com.tim.quartzeditor.engine.BlendIf) {
+        Spacer(Modifier.height(10.dp))
+        Text(title, color = Q.text, fontSize = 14.sp)
+        Spacer(Modifier.height(4.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .padding(horizontal = 10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Black, Color.White)))
+        )
+        val colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Q.sliderThumb, activeTrackColor = Q.accent, inactiveTrackColor = Q.field)
+        Text("Black end: hidden below ${lo0}, fully shown from ${lo1}", color = Q.textDim, fontSize = 12.sp)
+        androidx.compose.material3.RangeSlider(
+            value = lo0.toFloat()..lo1.toFloat(),
+            onValueChange = { r -> live { set(it, r.start.toInt(), r.endInclusive.toInt().coerceAtMost(hi0), hi0, hi1) } },
+            onValueChangeFinished = done,
+            valueRange = 0f..255f,
+            colors = colors,
+            modifier = Modifier.height(36.dp),
+        )
+        Text("White end: fully shown up to ${hi0}, hidden above ${hi1}", color = Q.textDim, fontSize = 12.sp)
+        androidx.compose.material3.RangeSlider(
+            value = hi0.toFloat()..hi1.toFloat(),
+            onValueChange = { r -> live { set(it, lo0, lo1, r.start.toInt().coerceAtLeast(lo1), r.endInclusive.toInt()) } },
+            onValueChangeFinished = done,
+            valueRange = 0f..255f,
+            colors = colors,
+            modifier = Modifier.height(36.dp),
+        )
+    }
+    part("This Layer", b.thisLo0, b.thisLo1, b.thisHi0, b.thisHi1) { o, a, c, e, f -> o.copy(thisLo0 = a, thisLo1 = c, thisHi0 = e, thisHi1 = f) }
+    part("Underlying Layer", b.underLo0, b.underLo1, b.underHi0, b.underHi1) { o, a, c, e, f -> o.copy(underLo0 = a, underLo1 = c, underHi0 = e, underHi1 = f) }
+    if (b.active) {
+        Spacer(Modifier.height(6.dp))
+        SmallButton("Reset Blend If") { vm.setProps(l.id, "Reset Blend If") { it.copy(blendIf = com.tim.quartzeditor.engine.BlendIf()) } }
     }
 }

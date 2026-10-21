@@ -30,15 +30,15 @@ val EditorViewModel.penEditTarget: Layer?
     }
 
 /** Shape space → canvas. */
-private fun Layer.pathMatrix(): Matrix = (props.shape?.matrix?.toMatrix() ?: Matrix()).apply { postTranslate(x.toFloat(), y.toFloat()) }
+internal fun Layer.pathMatrix(): Matrix = (props.shape?.matrix?.toMatrix() ?: Matrix()).apply { postTranslate(x.toFloat(), y.toFloat()) }
 
-private fun Matrix.map(x: Float, y: Float): PointF {
+internal fun Matrix.map(x: Float, y: Float): PointF {
     val a = floatArrayOf(x, y)
     mapPoints(a)
     return PointF(a[0], a[1])
 }
 
-private fun Layer.toSpec(cx: Float, cy: Float): PointF {
+internal fun Layer.toSpec(cx: Float, cy: Float): PointF {
     val inv = Matrix()
     if (!pathMatrix().invert(inv)) return PointF(cx, cy)
     return inv.map(cx, cy)
@@ -175,16 +175,22 @@ fun EditorViewModel.penEditTap(cx: Float, cy: Float, radius: Float) {
         penSelected = it.index
         return
     }
-    val s = l.props.shape ?: return
+    val added = insertPenPoint(l, cx, cy, radius)
+    penSelected = added ?: -1
+}
+
+/**
+ * Adds a point to pen shape [l] where its outline passes within [radius] of canvas point ([cx], [cy])
+ * (the shape doesn't change, it just gains a point there). Returns the new point's index, or null
+ * if the outline isn't there.
+ */
+internal fun EditorViewModel.insertPenPoint(l: Layer, cx: Float, cy: Float, radius: Float): Int? {
+    val s = l.props.shape ?: return null
     val local = l.toSpec(cx, cy)
     // Distance is measured on the canvas, so convert the touch radius roughly into shape space
     val r0 = l.toSpec(cx + radius, cy)
     val r = hypot(r0.x - local.x, r0.y - local.y).coerceAtLeast(0.5f)
-    val hit = nearestOnOutline(s, local.x, local.y, r)
-    if (hit == null) {
-        penSelected = -1
-        return
-    }
+    val hit = nearestOnOutline(s, local.x, local.y, r) ?: return null
     val (seg, t) = hit
     val pts = s.path.toMutableList()
     val a = pts[seg]
@@ -210,7 +216,7 @@ fun EditorViewModel.penEditTap(cx: Float, cy: Float, radius: Float) {
     }
     pts.add(seg + 1, mid)
     editVector(l.id, "Add point") { it.copy(shape = it.shape?.copy(path = pts)) }
-    penSelected = seg + 1
+    return seg + 1
 }
 
 /** Nearest place on a pen shape's outline to ([x], [y]) within [r]: segment index and position along it. */

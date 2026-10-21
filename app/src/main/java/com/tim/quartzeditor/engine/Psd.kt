@@ -75,6 +75,8 @@ class PsdLayer {
     var realMask: PsdMask? = null
     /** Locks: bit 0 transparency, bit 31 everything. */
     var protection = 0
+    /** Blend If (gray): this layer's black low/high and white low/high, then the underlying layer's (0..255). */
+    var blendRanges: IntArray? = null
     /** The keys of the extra blocks it has (for telling what kind of layer it is). */
     val keys = HashSet<String>()
     /** Layer style (Photoshop's "lfx2" descriptor). */
@@ -517,8 +519,11 @@ object PsdReader {
                 }
             }
             r.pos = maskEnd
-            // Blending ranges
-            r.skip(r.u32())
+            // Blending ranges: the first two are Blend If's gray ranges (this layer, underlying)
+            val rangesLen = r.u32().toInt()
+            val rangesEnd = r.pos + rangesLen
+            if (rangesLen >= 8) l.blendRanges = IntArray(8) { r.u8() }
+            r.pos = rangesEnd
             // Name (Pascal string padded to 4 bytes)
             val nameLen = r.u8()
             l.name = r.latin1(nameLen)

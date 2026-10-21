@@ -41,11 +41,18 @@ fun EditorViewModel.chooseShapeKind(k: ShapeKind) {
     saveVectorPrefs()
 }
 
-fun EditorViewModel.choosePen(edit: Boolean) {
-    if (pendingFirst { choosePen(edit) }) return
+/** The pen button's list: draw with the Pen or the Curvature Pen ([curvature]; null keeps the one in use), or edit points. */
+fun EditorViewModel.choosePen(edit: Boolean, curvature: Boolean? = null) {
+    if (pendingFirst { choosePen(edit, curvature) }) return
     if (edit) {
         startPenEditing()
         return
+    }
+    if (curvature != null && curvature != penCurvature) {
+        // A shape half drawn becomes a shape first (its points were placed for the other pen)
+        if (penPoints.size >= 2) finishPen(closed = false) else cancelPen()
+        penCurvature = curvature
+        prefs.edit().putBoolean("penCurvature", curvature).apply()
     }
     if (tool != Tool.PEN) onToolButton(Tool.PEN)
     penEditing = false

@@ -110,6 +110,37 @@ data class PenPoint(
 
     /** The same point as a sharp corner. */
     fun corner(): PenPoint = PenPoint(x, y)
+
+    companion object {
+        /**
+         * The Curvature Pen: a smooth curve through [anchors] (their handles are ignored). Each point's
+         * handles lie along the line from the point before it to the point after it, a third of the way
+         * to each (so the curve passes through every point without kinks); [corner] points, and the two
+         * ends of an open line, stay sharp. [before]/[after]: the points beyond the ends, when the line
+         * carries on from an existing shape.
+         */
+        fun curvature(anchors: List<PenPoint>, corner: (Int) -> Boolean, closed: Boolean, before: PenPoint? = null, after: PenPoint? = null): List<PenPoint> {
+            val n = anchors.size
+            if (n < 2) return anchors.map { it.corner() }
+            val wrap = closed && n > 2
+            return List(n) { i ->
+                val p = anchors[i]
+                if (corner(i)) return@List p.corner()
+                val prev = if (i > 0) anchors[i - 1] else if (wrap) anchors[n - 1] else before
+                val next = if (i < n - 1) anchors[i + 1] else if (wrap) anchors[0] else after
+                if (prev == null || next == null) return@List p.corner()
+                val dx = next.x - prev.x
+                val dy = next.y - prev.y
+                val len = kotlin.math.hypot(dx, dy)
+                if (len < 0.001f) return@List p.corner()
+                val ux = dx / len
+                val uy = dy / len
+                val dOut = kotlin.math.hypot(next.x - p.x, next.y - p.y) / 3f
+                val dIn = kotlin.math.hypot(p.x - prev.x, p.y - prev.y) / 3f
+                PenPoint(p.x, p.y, ux * dOut, uy * dOut, -ux * dIn, -uy * dIn)
+            }
+        }
+    }
 }
 
 /**

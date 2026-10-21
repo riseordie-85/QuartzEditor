@@ -97,7 +97,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
         val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES)
         val layersOpen = vm.isOpen(PanelSection.LAYERS)
         // With Color and Properties folded, the Layers list fills the column. Otherwise Layers is
-        // measured first (its settings, up to four rows and its buttons, which always stay on
+        // measured first (its settings, two rows and its buttons, which always stay on
         // screen) and Color/Properties scroll in whatever is left.
         val fillLayers = layersOpen && !anyOpen
         val layersMax = (maxHeight - 150.dp).coerceAtLeast(120.dp)

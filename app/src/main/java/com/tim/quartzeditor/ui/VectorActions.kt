@@ -382,39 +382,143 @@ internal fun EditorViewModel.addShapeLayer(spec: ShapeSpec, name: String) {
 
 /** Shows the point being placed (with its curve handle while you drag). */
 fun EditorViewModel.penPreview(p: PenPoint?) {
-    penDrag = p
+    penDrag = if (p != null && penCurvature) p.corner() else p
+}
+
+/** The open pen shape being carried on (see [EditorViewModel.penContinue]), if it's still there. */
+private fun EditorViewModel.continuedLayer(): Layer? {
+    val (id, _) = penContinue ?: return null
+    return doc?.layer(id)?.takeIf { it.isShape && it.props.shape?.kind == ShapeKind.PATH && !it.props.locked }
+}
+
+/** Canvas positions of the continued shape's points, in drawing order (the end being carried on last). */
+private fun EditorViewModel.continuedPath(): List<PenPoint>? {
+    val l = continuedLayer() ?: return null
+    val (_, atEnd) = penContinue ?: return null
+    val m = l.pathMatrix()
+    val pts = l.props.shape!!.path.map { p ->
+        val a = m.map(p.x, p.y)
+        val v = floatArrayOf(p.hx, p.hy, p.ix, p.iy)
+        m.mapVectors(v)
+        PenPoint(a.x, a.y, v[0], v[1], v[2], v[3])
+    }
+    // Carrying on from the first point: the shape is walked backwards (each point's handles swap)
+    return if (atEnd) pts else pts.reversed().map { PenPoint(it.x, it.y, it.ix, it.iy, it.hx, it.hy) }
+}
+
+/**
+ * The points as they'll be made (canvas pixels): the Curvature Pen's smoothed through the taps,
+ * the Pen's as placed. [extra] (the point being placed) is added at the end.
+ */
+fun EditorViewModel.penShown(extra: PenPoint? = null, closed: Boolean = false): List<PenPoint> {
+    val raw = penPoints.toList() + listOfNotNull(extra)
+    if (!penCurvature) return raw
+    val before = continuedPath()?.let { it.getOrNull(it.size - 2) }
+    return PenPoint.curvature(raw, { i -> penCorners.getOrElse(i) { false } }, closed, before = before)
 }
 
 /**
  * Places a pen point (canvas pixels). Tapping near the first point (within [closeRadius]) closes
- * the shape and makes the layer.
+ * the shape and makes the layer. With nothing placed yet and a pen shape selected, a tap on its
+ * outline adds a point to it, and a tap on an open shape's end carries that shape on.
+ * Curvature Pen: tapping the last point again makes it a sharp corner (or smooth again).
  */
-fun EditorViewModel.penAdd(p: PenPoint, closeRadius: Float) {
+fun EditorViewModel.penAdd(p0: PenPoint, closeRadius: Float) {
     penDrag = null
-    val first = penPoints.firstOrNull()
-    if (first != null && penPoints.size >= 2 && hypot(p.x - first.x, p.y - first.y) <= closeRadius) {
-        // Dragging on the first point reshapes its curve as it closes
-        if (p.smooth) penPoints[0] = first.copy(hx = p.hx, hy = p.hy, ix = -p.hx, iy = -p.hy)
-        finishPen(closed = true)
+    val p = if (penCurvature) p0.corner() else p0
+    if (penPoints.isEmpty() && penStartOnShape(p.x, p.y, closeRadius)) return
+    fun near(q: PenPoint) = hypot(p.x - q.x, p.y - q.y) <= closeRadius
+    val cont = continuedPath()
+    if (penContinue != null && cont != null) {
+        // Closing onto the continued shape's other end
+        if (penPoints.size >= 2 && cont.size >= 2 && near(cont.first())) {
+            finishPen(closed = true)
+            return
+        }
+    } else {
+        val first = penPoints.firstOrNull()
+        if (first != null && penPoints.size >= 2 && near(first)) {
+            // Dragging on the first point reshapes its curve as it closes
+            if (p.smooth) penPoints[0] = first.copy(hx = p.hx, hy = p.hy, ix = -p.hx, iy = -p.hy)
+            finishPen(closed = true)
+            return
+        }
+    }
+    val last = penPoints.lastOrNull()
+    if (penCurvature && last != null && near(last)) {
+        val i = penPoints.lastIndex
+        while (penCorners.size < penPoints.size) penCorners.add(false)
+        penCorners[i] = !penCorners[i]
+        toast(if (penCorners[i]) "Corner point" else "Smooth point")
         return
     }
     penPoints.add(p)
+    while (penCorners.size < penPoints.size) penCorners.add(false)
+}
+
+/**
+ * The first tap with a pen shape selected: on one of an open shape's ends, carries that shape on;
+ * on its outline, adds a point there (and goes on to editing points, so it can be dragged).
+ */
+private fun EditorViewModel.penStartOnShape(cx: Float, cy: Float, radius: Float): Boolean {
+    val l = doc?.active?.takeIf { it.isShape && it.props.shape?.kind == ShapeKind.PATH && !it.props.locked && it.props.visible } ?: return false
+    val s = l.props.shape ?: return false
+    if (!s.closed && s.path.size >= 2) {
+        val m = l.pathMatrix()
+        val a = m.map(s.path.first().x, s.path.first().y)
+        val z = m.map(s.path.last().x, s.path.last().y)
+        val atEnd = when {
+            hypot(z.x - cx, z.y - cy) <= radius -> true
+            hypot(a.x - cx, a.y - cy) <= radius -> false
+            else -> null
+        }
+        if (atEnd != null) {
+            penContinue = l.id to atEnd
+            val path = continuedPath() ?: return false.also { penContinue = null }
+            penPoints.add(path.last())
+            // The Curvature Pen smooths the end into the new part; the Pen keeps it as it was
+            penCorners.add(false)
+            toast("Carrying on \"${l.props.name}\": tap to add points, its other end to close it")
+            return true
+        }
+    }
+    val i = insertPenPoint(l, cx, cy, radius) ?: return false
+    penEditing = true
+    penSelected = i
+    toast("Point added: drag it to reshape")
+    return true
 }
 
 fun EditorViewModel.undoPenPoint() {
-    if (penPoints.isNotEmpty()) penPoints.removeAt(penPoints.lastIndex)
+    if (penPoints.isEmpty()) return
+    // Carrying on a shape: its own end stays (taking it away stops carrying on)
+    if (penContinue != null && penPoints.size == 1) {
+        cancelPen()
+        return
+    }
+    penPoints.removeAt(penPoints.lastIndex)
+    while (penCorners.size > penPoints.size) penCorners.removeAt(penCorners.lastIndex)
 }
 
 fun EditorViewModel.cancelPen() {
     penPoints.clear()
+    penCorners.clear()
     penDrag = null
+    penContinue = null
 }
 
 /** Makes a shape layer from the pen points: [closed] joins the last point to the first. */
 fun EditorViewModel.finishPen(closed: Boolean) {
-    val pts = penPoints.toList()
+    val pts = penShown(closed = closed && penContinue == null)
+    val cont = penContinue
     penPoints.clear()
+    penCorners.clear()
     penDrag = null
+    penContinue = null
+    if (cont != null) {
+        finishContinued(cont, pts, closed)
+        return
+    }
     if (pts.size < 2) {
         if (pts.isNotEmpty()) toast("Add at least two points")
         return
@@ -436,6 +540,37 @@ fun EditorViewModel.finishPen(closed: Boolean) {
     }
     addShapeLayer(spec, "Shape")
     // Straight on to adjusting its points
+    penEditing = true
+    penSelected = -1
+}
+
+/**
+ * Puts the points drawn on from an open shape's end into that shape ([pts] in canvas pixels, the
+ * first being the end it carried on from); [closed] joins it up.
+ */
+private fun EditorViewModel.finishContinued(cont: Pair<Long, Boolean>, pts: List<PenPoint>, closed: Boolean) {
+    val d = doc ?: return
+    val (id, atEnd) = cont
+    val l = d.layer(id)?.takeIf { it.isShape && it.props.shape?.kind == ShapeKind.PATH } ?: return
+    val s = l.props.shape ?: return
+    if (pts.size < 2 && !closed) return
+    val inv = android.graphics.Matrix()
+    if (!l.pathMatrix().invert(inv)) return
+    // Back into the shape's own space
+    val local = pts.map { p ->
+        val a = inv.map(p.x, p.y)
+        val v = floatArrayOf(p.hx, p.hy, p.ix, p.iy)
+        inv.mapVectors(v)
+        PenPoint(a.x, a.y, v[0], v[1], v[2], v[3])
+    }
+    // The end it carried on from takes its handles from the drawing (the Curvature Pen smooths it);
+    // the rest are new. Walking backwards (from the first point) is turned the right way round.
+    val joined = if (atEnd) {
+        s.path.dropLast(1) + local
+    } else {
+        local.reversed().map { PenPoint(it.x, it.y, it.ix, it.iy, it.hx, it.hy) } + s.path.drop(1)
+    }
+    editVector(id, if (closed) "Close shape" else "Add points") { it.copy(shape = it.shape?.copy(path = joined, closed = closed && joined.size >= 3)) }
     penEditing = true
     penSelected = -1
 }

@@ -182,7 +182,7 @@ object DocRenderer {
         canvas.save()
         canvas.clipRect(area)
         // Blend modes mix with the layers below, not with whatever is behind the canvas (the checkerboard)
-        val isolate = doc.layers.any { it.props.visible && (it.props.blend != Blend.NORMAL || it.props.style.anyBlend) }
+        val isolate = doc.layers.any { it.props.visible && (it.props.blend != Blend.NORMAL || it.props.style.anyBlend || it.props.blendIf.active) }
         if (isolate) canvas.saveLayer(bounds, null)
         val ctx = Ctx(doc, w, h, bounds, Paint().apply { isFilterBitmap = smooth }, stroke, preview, smooth, effects, view, viewW, viewH, pixelScale)
         drawList(canvas, doc.children(0L), ctx)
@@ -202,7 +202,7 @@ object DocRenderer {
             shown = list.filter { it.props.visible }
             ctx = ctx0
         }
-        val adjusts = shown.any { (it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f) || customBlend(it, ctx) }
+        val adjusts = shown.any { (it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f) || customBlend(it, ctx) || blendIfOn(it, ctx) }
         if (!adjusts) {
             for (l in shown) drawNode(canvas, l, ctx)
             return
@@ -218,6 +218,10 @@ object DocRenderer {
     private fun customBlend(l: Layer, ctx: Ctx): Boolean =
         l.props.blend.custom != 0 && !l.isAdjustment && l !== ctx.clipBase && !(l.isGroup && l.props.passThrough) && l.props.opacity > 0f
 
+    /** Blend If: drawn twice (alone, and blended onto what's below) and mixed by [BlendIfShader]. */
+    private fun blendIfOn(l: Layer, ctx: Ctx): Boolean =
+        l.props.blendIf.active && !l.isAdjustment && l !== ctx.clipBase && !(l.isGroup && l.props.passThrough) && l.props.opacity > 0f
+
     /**
      * [clipGroups], with Pass Through folders opened up: their layers are drawn in among the layers
      * around them, so their blend modes and adjustment layers reach the layers below the folder
@@ -226,7 +230,7 @@ object DocRenderer {
     private fun passThrough(list: List<Layer>, ctx: Ctx): Pair<List<Layer>, Map<Long, List<Layer>>> {
         val (shown, clips) = clipGroups(list)
         val doc = ctx.doc ?: return shown to clips
-        fun opens(l: Layer) = l.isGroup && l.props.passThrough && !l.maskActive && !l.props.style.any &&
+        fun opens(l: Layer) = l.isGroup && l.props.passThrough && !l.maskActive && !l.props.style.any && !l.props.blendIf.active &&
             l.props.opacity * l.props.fill >= 0.999f && clips[l.id].isNullOrEmpty() && ctx.preview?.of(l.id) == null
         if (shown.none { opens(it) }) return shown to clips
         val out = ArrayList<Layer>(shown.size + 8)
@@ -430,6 +434,39 @@ object DocRenderer {
         // Screen pixel → canvas pixel (for Dissolve's pattern)
         val toDoc = FloatArray(9).also { v -> Matrix().also { inv -> view.invert(inv) }.getValues(v) }
         for (l in list) {
+            if (blendIfOn(l, ctx)) {
+                // What's below, the layer alone, and the layer blended onto what's below, side by side
+                below.endRecording()
+                val trio = RenderNode("blendIf").apply { setPosition(0, 0, 3 * w, h) }
+                val tc = trio.beginRecording(3 * w, h)
+                tc.drawRenderNode(below)
+                tc.save()
+                tc.translate(w.toFloat(), 0f)
+                tc.clipRect(0, 0, w, h)
+                tc.concat(view)
+                drawNode(tc, l, ctx, forceNormal = true)
+                tc.restore()
+                if (l.props.blend.custom == 0) {
+                    tc.save()
+                    tc.translate(2f * w, 0f)
+                    tc.clipRect(0, 0, w, h)
+                    tc.drawRenderNode(below)
+                    tc.concat(view)
+                    drawNode(tc, l, ctx)
+                    tc.restore()
+                }
+                trio.endRecording()
+                trio.setRenderEffect(BlendIfShader.tripleEffect(
+                    l.id, l.props.blend, l.props.blendIf, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
+                ))
+                val next = node("next")
+                val nr = next.beginRecording(w, h)
+                nr.drawRenderNode(trio)
+                nr.concat(view)
+                below = next
+                rec = nr
+                continue
+            }
             if (customBlend(l, ctx)) {
                 // What's below on the left, the layer alone on the right, mixed by the blend shader
                 below.endRecording()
@@ -574,6 +611,27 @@ object DocRenderer {
         }
         prepare(pc)
         for (l in list) {
+            if (blendIfOn(l, ctx)) {
+                // The layer alone, and blended onto what's below; then mixed by how much of it shows
+                val alone = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                val ac = Canvas(alone)
+                prepare(ac)
+                drawNode(ac, l, ctx, forceNormal = true)
+                val comp = pic.copy(Bitmap.Config.ARGB_8888, true)
+                if (l.props.blend.custom == 0) {
+                    val cc = Canvas(comp)
+                    prepare(cc)
+                    drawNode(cc, l, ctx)
+                }
+                val mixed = BlendIfShader.mix(pic, alone, comp, l.props.blend, l.props.blendIf, area.width() / pw.toFloat(), area.height() / ph.toFloat(), area.left.toFloat(), area.top.toFloat())
+                alone.recycle()
+                comp.recycle()
+                pic.recycle()
+                pic = mixed
+                pc = Canvas(pic)
+                prepare(pc)
+                continue
+            }
             if (customBlend(l, ctx)) {
                 // The layer drawn alone the same size, then the two mixed by the blend shader
                 val alone = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)

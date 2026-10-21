@@ -145,6 +145,9 @@ object PsdExport {
             return list
         }
 
+        fun ranges(b: BlendIf): IntArray? =
+            if (!b.active) null else intArrayOf(b.thisLo0, b.thisLo1, b.thisHi0, b.thisHi1, b.underLo0, b.underLo1, b.underHi0, b.underHi1)
+
         fun folder(l: Layer): PsdLayerOut {
             val p = l.props
             val blend = if (p.passThrough) "pass" else blendKey(p.blend)
@@ -152,6 +155,7 @@ object PsdExport {
                 p.name, blend = blend, opacity = (p.opacity * 255).roundToInt(), clipping = p.clip, hidden = !p.visible,
                 mask = mask(l), pixelsIrrelevant = true,
                 blocks = common(l, listOf(PsdWriter.lsct(if (l.collapsed) 2 else 1, blend))),
+                blendRanges = ranges(p.blendIf),
             )
         }
 
@@ -167,6 +171,7 @@ object PsdExport {
                     blend = blendKey(p.blend), opacity = (p.opacity * 255).roundToInt(), clipping = p.clip, hidden = !p.visible,
                     lockAlpha = p.lockAlpha, pixelsIrrelevant = !withPixels,
                     blocks = common(l, blocks),
+                    blendRanges = ranges(p.blendIf),
                 )
             }
             return when {

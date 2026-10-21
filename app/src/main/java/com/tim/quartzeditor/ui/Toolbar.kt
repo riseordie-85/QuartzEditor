@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Approval
 import androidx.compose.material.icons.outlined.Healing
 import androidx.compose.material.icons.outlined.Polyline
+import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ChangeHistory
@@ -249,9 +250,11 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             ) { vm.retouchButton(heal = false) }
             // 8. Pen
             ToolButton(
-                QIcons.Pen, "Shape pen (hold for point editing)", t == Tool.PEN, buttonSize,
+                if (vm.penCurvature) Icons.Outlined.ShowChart else QIcons.Pen,
+                if (vm.penCurvature) "Curvature pen (hold for the Pen and point editing)" else "Shape pen (hold for the Curvature pen and point editing)", t == Tool.PEN, buttonSize,
                 options = listOf(
-                    ToolOption(QIcons.Pen, "Draw a shape", t == Tool.PEN && !vm.penEditing) { vm.choosePen(edit = false) },
+                    ToolOption(QIcons.Pen, "Pen", t == Tool.PEN && !vm.penEditing && !vm.penCurvature) { vm.choosePen(edit = false, curvature = false) },
+                    ToolOption(Icons.Outlined.ShowChart, "Curvature pen", t == Tool.PEN && !vm.penEditing && vm.penCurvature) { vm.choosePen(edit = false, curvature = true) },
                     ToolOption(Icons.Outlined.Polyline, "Edit points", t == Tool.PEN && vm.penEditing) { vm.choosePen(edit = true) },
                 ),
             ) { vm.onToolButton(Tool.PEN) }

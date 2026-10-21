@@ -142,7 +142,7 @@ the list; the button shows the one you used last.
   Linear / Radial / Reflected / Angle / Diamond, reverse and opacity are in Properties. **+** makes your own gradient
   (starting from the one picked): tap the bar to add a color, drag the markers to move them, tap one to
   change its color, location or opacity (see-through stops work), Reverse, Even spacing, a name. Hold one of
-  yours to edit or delete it. Your gradients are also in Layer Style → Gradient Fill (with its own **+**).
+  yours to edit or delete it. Your gradients are also in Layer Style → Gradient Overlay (with its own **+**).
 - **Shape** — drag to draw a Rectangle, Ellipse, Triangle, Polygon (number of sides), Star or Arrow (from
   where you start dragging to where you stop) on a new shape layer; tap the tool again for the next shape,
   or hold it for the list. In Properties: fill (a color, a gradient with its type, angle and scale, or a
@@ -168,6 +168,12 @@ the list; the button shows the one you used last.
   removes the last point. **Edit points** comes on after finishing (or tap the pen again, or Edit points in
   Properties): drag points and curve handles, tap the outline to add a point, tap a point to make it a
   corner or a curve or delete it. Done (or the pen again) goes back to drawing.
+- **Curvature pen** (hold the pen button, or the Pen / Curvature pen switch in Properties; Shift+P) — tap to
+  place points and the line curves smoothly through all of them, reshaping as you go. Tap the last point
+  again to make it a sharp corner (a diamond), again for smooth. Tap the first point to close the shape.
+- **Adding to a shape** with either pen (while drawing, with a pen shape selected): tap its outline to add a
+  point there (the shape stays the same; point editing comes on so you can drag it), or tap one of an open
+  shape's ends to carry it on — the new points join that shape, and tapping its other end closes it.
 - **Text** — tap the picture and type (the bar at the top has the text box, Cancel and Done). Tap existing
   text to change it; drag with the Text tool to move it. Properties: font (Android's, Google Fonts, or your
   own .ttf/.otf), size, color, alignment, faux bold/italic, underline, ALL CAPS, letter and line spacing,
@@ -270,8 +276,9 @@ Only **Color**, **Properties** and **Layers** live in the column.
   current color to My swatches (hold one to remove it), and **Import** reads Photoshop's .aco and Adobe's
   .ase swatch files (RGB, CMYK, Lab and gray colors; each group becomes a set).
 - **Layers** — like Photoshop, the settings on top (blend mode, opacity, locks, fill) and the buttons at the
-  bottom stay put; only the list between them scrolls. It shows up to four layers while Color or Properties
-  is open (fewer if the screen is short; the buttons always stay), and fills the column when they're folded.
+  bottom stay put; only the list between them scrolls. It shrinks to two layers while Color or Properties
+  is open (scroll for the rest; the active layer stays in sight; the buttons always stay), and fills the column
+  when they're folded.
   Tap its header to fold it too.
   - All of Photoshop's blend modes (Normal, Dissolve, Darken, Multiply, Color Burn, Linear Burn, Darker
     Color, Lighten, Screen, Color Dodge, Linear Dodge, Lighter Color, Overlay, Soft Light, Hard Light, Vivid
@@ -322,12 +329,17 @@ Only **Color**, **Properties** and **Layers** live in the column.
 (from the bottom of the Layers panel). With the panels docked on a tablet, the window takes the panels'
 place, so the picture keeps its room; closing it brings the panels back as you left them.
 - **Layer Style** — **Presets** at the top (ready-made ones like Soft shadow, Sticker, Neon, Gold, Chrome,
-  and your own: "+ Save" saves the current style; hold one of yours to delete it). Gradient Fill (any
-  gradient, linear/radial/reflected, angle, scale, reverse), Long Shadow (angle, length, fade), Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth, size, soften, light
-  angle and altitude, gloss contour, highlight and shadow colors), Pattern Overlay (any pattern, size,
-  opacity; it moves with the layer), Stroke (outside, inside, center; a color or a gradient), Drop Shadow, Inner
-  Shadow, Inner Glow (from the edge or the center, size, choke), Satin (angle, distance, size, invert),
-  Outer Glow, Color Overlay.
+  and your own: "+ Save" saves the current style; hold one of yours to delete it).
+  **Blending Options → Blend If** (gray), like Photoshop's: **This Layer** hides the layer where it's darker
+  or lighter than its black and white ends; **Underlying Layer** hides it where what's below is. Each end
+  is a pair of values: the same value cuts sharply, spread apart it fades between them (Photoshop's split
+  sliders). Reset Blend If puts it back.
+  Then the effects, in Photoshop's order: Bevel & Emboss (inner/outer bevel, emboss, pillow; up/down, depth,
+  size, soften, light angle and altitude, gloss contour, highlight and shadow colors), Stroke (outside,
+  inside, center; a color or a gradient), Inner Shadow, Inner Glow (from the edge or the center, size,
+  choke), Satin (angle, distance, size, invert), Color Overlay, Gradient Overlay (any gradient,
+  linear/radial/reflected, angle, scale, reverse), Pattern Overlay (any pattern, size, opacity; it moves
+  with the layer), Outer Glow, Drop Shadow, and Long Shadow (angle, length, fade).
   Colors: tap the swatch or the rainbow wheel for the full picker (the layer changes as you drag), or
   tap white, black or a rainbow color; below are your last 4 colors and the 4 main colors in the
   picture.
@@ -400,10 +412,13 @@ in between. With a selection, the mask button makes a mask that shows only what'
 ### Saving
 - Your work is saved to **Projects** automatically when you go Home or switch apps, with every layer,
   mask and setting (smart layers keep their full-size contents inside the project).
+- **Quick export (.png)** (Menu, under Home) saves a PNG of the whole picture straight to
+  `Pictures/Quartz Editor`, named for when it was saved (`Quartz 10-20-26 19-30-05.png`), with no questions.
 - **Export image** saves a flattened PNG, JPG, WebP or TIFF (ZIP-compressed, with transparency) to `Pictures/Quartz Editor` (shows up in Quartz
   Gallery), optionally sharing it.
 - **Photoshop file**: Export image → Photoshop saves a `.psd` with its layers to `Download/Quartz Editor`:
-  - every layer's pixels, mask (on or off), blend mode, opacity, fill, clipping, visibility and locks;
+  - every layer's pixels, mask (on or off), blend mode, opacity, fill, clipping, visibility, locks and
+    Blend If (Photoshop files' Blend If comes in too);
     folders (Pass Through or their own blend mode, open or closed, with masks and styles)
   - **layer styles** as Photoshop's (Drop Shadow, Inner Shadow, Outer and Inner Glow, Bevel & Emboss,
     Satin, Color, Gradient Overlay, Stroke)

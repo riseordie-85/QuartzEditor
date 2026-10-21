@@ -919,7 +919,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
             // Shape pen: the outline so far, its points and curve handles
             if (vm.tool == Tool.PEN && (vm.penPoints.isNotEmpty() || vm.penDrag != null)) {
-                val pts = vm.penPoints.toList() + listOfNotNull(vm.penDrag)
+                @Suppress("UNUSED_VARIABLE") val watch = vm.penCorners.toList()
+                val pts = vm.penShown(vm.penDrag)
+                val curvature = vm.penCurvature
+                val continuing = vm.penContinue != null
                 fun sp(x: Float, y: Float) = Offset(x * s + ox, y * s + oy)
                 drawIntoCanvas { c ->
                     val nc = c.nativeCanvas
@@ -938,15 +941,25 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 val hr = 4.dp.toPx()
                 pts.forEachIndexed { i, pt ->
                     val o = sp(pt.x, pt.y)
-                    if (pt.smooth) {
+                    // (The Curvature Pen works its handles out itself: only its points show)
+                    if (pt.smooth && !curvature) {
                         val a = sp(pt.x + pt.ix, pt.y + pt.iy)
                         val b = sp(pt.x + pt.hx, pt.y + pt.hy)
                         drawLine(Q.accent, a, b, 1.5.dp.toPx())
                         drawCircle(Q.accent, hr * 0.8f, a)
                         drawCircle(Q.accent, hr * 0.8f, b)
                     }
-                    // The first point is bigger: tap it to close the shape
-                    val r = if (i == 0) hr * 1.6f else hr
+                    // The first point is bigger: tap it to close the shape (carrying a shape on, its other end closes it)
+                    val r = if (i == 0 && !continuing) hr * 1.6f else hr
+                    if (curvature && vm.penCorners.getOrElse(i) { false }) {
+                        // A sharp corner: a diamond
+                        val dp = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(o.x, o.y - r * 1.4f); lineTo(o.x + r * 1.4f, o.y); lineTo(o.x, o.y + r * 1.4f); lineTo(o.x - r * 1.4f, o.y); close()
+                        }
+                        drawPath(dp, Color.White)
+                        drawPath(dp, Color.Black.copy(alpha = 0.6f), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
+                        return@forEachIndexed
+                    }
                     drawRect(Color.Black.copy(alpha = 0.6f), Offset(o.x - r - 1.5f, o.y - r - 1.5f), androidx.compose.ui.geometry.Size(2 * r + 3f, 2 * r + 3f))
                     drawRect(Color.White, Offset(o.x - r, o.y - r), androidx.compose.ui.geometry.Size(2 * r, 2 * r))
                 }

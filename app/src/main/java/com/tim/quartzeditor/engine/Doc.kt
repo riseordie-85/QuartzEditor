@@ -99,7 +99,53 @@ data class LayerProps(
      * blended with [blend].
      */
     val passThrough: Boolean = true,
+    /** Blending Options → Blend If: shows the layer only where it, and what's below it, are in these ranges of gray. */
+    val blendIf: BlendIf = BlendIf(),
 )
+
+/**
+ * Photoshop's Blend If (gray), 0..255 each. The layer shows fully where its own brightness is between
+ * [thisLo1] and [thisHi0] and fades out to nothing at [thisLo0] and [thisHi1] (a split slider fades
+ * gradually; an unsplit one cuts sharply); likewise for what's below it ([underLo0] … [underHi1]).
+ */
+data class BlendIf(
+    val thisLo0: Int = 0,
+    val thisLo1: Int = 0,
+    val thisHi0: Int = 255,
+    val thisHi1: Int = 255,
+    val underLo0: Int = 0,
+    val underLo1: Int = 0,
+    val underHi0: Int = 255,
+    val underHi1: Int = 255,
+) {
+    /** It changes anything (the defaults let everything through). */
+    val active: Boolean get() = this != BlendIf()
+
+    val thisActive: Boolean get() = thisLo1 > 0 || thisHi0 < 255
+    val underActive: Boolean get() = underLo1 > 0 || underHi0 < 255
+
+    fun toJson(): org.json.JSONObject = org.json.JSONObject().put(
+        "v", org.json.JSONArray(listOf(thisLo0, thisLo1, thisHi0, thisHi1, underLo0, underLo1, underHi0, underHi1)),
+    )
+
+    /** Keeps each pair in order (black below white, the two halves of a split the right way round). */
+    fun sane(): BlendIf {
+        fun c(v: Int) = v.coerceIn(0, 255)
+        val a0 = c(thisLo0); val a1 = c(thisLo1).coerceAtLeast(a0)
+        val b1 = c(thisHi1); val b0 = c(thisHi0).coerceAtMost(b1)
+        val u0 = c(underLo0); val u1 = c(underLo1).coerceAtLeast(u0)
+        val w1 = c(underHi1); val w0 = c(underHi0).coerceAtMost(w1)
+        return BlendIf(a0, a1, b0, b1, u0, u1, w0, w1)
+    }
+
+    companion object {
+        fun fromJson(o: org.json.JSONObject?): BlendIf {
+            val v = o?.optJSONArray("v") ?: return BlendIf()
+            if (v.length() < 8) return BlendIf()
+            return BlendIf(v.optInt(0), v.optInt(1), v.optInt(2, 255), v.optInt(3, 255), v.optInt(4), v.optInt(5), v.optInt(6, 255), v.optInt(7, 255)).sane()
+        }
+    }
+}
 
 /**
  * One layer. Pixels live in [tiles], positioned at ([x], [y]) on the canvas. The optional [mask]

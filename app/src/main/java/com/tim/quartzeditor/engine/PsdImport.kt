@@ -245,6 +245,7 @@ object PsdImport {
                             parent = outer,
                             passThrough = pass,
                             style = if (s < 1f) style.scaled(s) else style,
+                            blendIf = blendIf(pl),
                         )
                         val mask = pixelMask(pl, isFolder = true)
                         val g = Layer(id, props.copy(maskDisabled = mask?.second ?: false), TileGrid(alphaOnly = false), mask = mask?.first, kind = LayerKind.GROUP)
@@ -318,6 +319,7 @@ object PsdImport {
                 style = if (s < 1f) style.scaled(s) else style,
                 parent = parent,
                 clip = clip,
+                blendIf = blendIf(pl),
             )
             // Text stays text, and smart objects stay smart (showing Photoshop's pixels until changed)
             pl.text?.let { t -> textProps(pl, t, props)?.let { return Layer(doc.newId(), it, grid, mask = mask?.first, kind = LayerKind.TEXT) } }
@@ -1489,6 +1491,12 @@ object PsdImport {
                 positions = sorted.map { loc(it) },
                 blend = blend,
             )
+        }
+
+        /** Blend If (gray), from the layer's blending ranges: this layer's black and white pairs, then the underlying layer's. */
+        fun blendIf(pl: PsdLayer): BlendIf {
+            val r = pl.blendRanges ?: return BlendIf()
+            return BlendIf(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]).sane()
         }
 
         /** Photoshop's layer style, as far as ours goes. */

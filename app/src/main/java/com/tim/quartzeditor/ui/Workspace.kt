@@ -176,6 +176,7 @@ fun Workspace(vm: EditorViewModel) {
                         }
                         PagedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }, offset = androidx.compose.ui.unit.DpOffset(size + 8.dp, -size)) {
                             Item("Home (saves to Projects)", Icons.Outlined.Home) { vm.closeDocument() }
+                            Item("Quick export (.png)", Icons.Outlined.Image) { vm.quickExport() }
                             Divider()
                             Page("File", Icons.Outlined.Description) {
                                 Item("Rename image…") { renameOpen = true }

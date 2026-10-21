@@ -207,6 +207,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val penPoints = androidx.compose.runtime.mutableStateListOf<com.tim.quartzeditor.engine.PenPoint>()
     var penDrag by mutableStateOf<com.tim.quartzeditor.engine.PenPoint?>(null)
 
+    /** The Curvature Pen (tap points and the curve runs smoothly through them) instead of the Pen. */
+    var penCurvature by mutableStateOf(prefs.getBoolean("penCurvature", false))
+
+    /** Curvature Pen: which of [penPoints] are sharp corners (tap a point again to switch). */
+    val penCorners = androidx.compose.runtime.mutableStateListOf<Boolean>()
+
+    /**
+     * Carrying on an open pen shape from one of its ends: the layer, and whether it's the shape's last
+     * point (else its first). [penPoints]' first point is that end.
+     */
+    var penContinue by mutableStateOf<Pair<Long, Boolean>?>(null)
+
     /** Pen in point-editing mode (for the selected pen shape), and the point picked in it (-1 = none). */
     var penEditing by mutableStateOf(false)
     private var penPickIndex by mutableIntStateOf(-1)
