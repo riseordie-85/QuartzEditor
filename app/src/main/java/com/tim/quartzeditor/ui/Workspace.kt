@@ -153,7 +153,7 @@ fun Workspace(vm: EditorViewModel) {
             }
         }
 
-        Row(Modifier.fillMaxSize().padding(if (compact) 6.dp else 12.dp)) {
+        Row(Modifier.fillMaxSize().padding(if (compact || Q.compact) 4.dp else 12.dp)) {
             Toolbar(
                 vm,
                 compact = compact,
@@ -246,7 +246,7 @@ fun Workspace(vm: EditorViewModel) {
                     }
                 },
             )
-            Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
+            Spacer(Modifier.width(if (compact || Q.compact) 4.dp else 12.dp))
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 EditorCanvas(vm, Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)))
 
@@ -319,7 +319,7 @@ fun Workspace(vm: EditorViewModel) {
                 exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
             ) {
               Row {
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
                 Box(Modifier.width(310.dp).fillMaxHeight()) {

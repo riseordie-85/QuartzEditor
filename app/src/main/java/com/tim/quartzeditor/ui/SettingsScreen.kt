@@ -150,11 +150,18 @@ private fun AppearanceSettings(vm: EditorViewModel) {
         onDone = { Q.save(vm.prefs) },
     )
     Text("Lower lets the picture show through behind them.", color = Q.textDim, fontSize = 12.sp)
+    Spacer(Modifier.height(10.dp))
+    ToggleRow("Compact interface", Q.compact) {
+        Q.compact = it
+        Q.save(vm.prefs)
+    }
+    Text("Smaller margins and padding around the toolbar, panels, buttons and layer rows, so the picture gets more room.", color = Q.textDim, fontSize = 12.sp)
     Spacer(Modifier.height(12.dp))
     SmallButton("Back to the original look") {
         Q.palette = Palette.DARK
         Q.accentColor = ACCENTS[0]
         Q.panelAlpha = 1f
+        Q.compact = false
         Q.save(vm.prefs)
     }
 }

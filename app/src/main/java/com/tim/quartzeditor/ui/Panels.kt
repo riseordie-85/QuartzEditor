@@ -101,7 +101,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
         // screen) and Color/Properties scroll in whatever is left.
         val fillLayers = layersOpen && !anyOpen
         val layersMax = (maxHeight - 150.dp).coerceAtLeast(120.dp)
-        Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
+        Column(Modifier.fillMaxSize().padding(top = Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp))) {
             Column(
                 (if (fillLayers) Modifier else Modifier.weight(1f, fill = false))
                     .verticalScroll(rememberScrollState())
@@ -128,7 +128,7 @@ private fun Section(vm: EditorViewModel, s: PanelSection, content: @Composable (
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { vm.toggleSection(s) }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = Q.gap(10.dp, 6.dp), vertical = Q.gap(6.dp, 1.dp)),
         ) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -148,9 +148,9 @@ private fun Section(vm: EditorViewModel, s: PanelSection, content: @Composable (
             Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Q.text, modifier = Modifier.size(28.dp))
         }
         AnimatedVisibility(open) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 10.dp)) { content() }
+            Column(Modifier.fillMaxWidth().padding(horizontal = Q.gap(12.dp, 8.dp)).padding(bottom = Q.gap(10.dp, 4.dp))) { content() }
         }
-        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(1.dp).background(Q.divider))
+        Box(Modifier.fillMaxWidth().padding(horizontal = Q.gap(20.dp, 12.dp)).height(1.dp).background(Q.divider))
     }
 }
 
@@ -180,8 +180,8 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
             Modifier
                 .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp)
-                .padding(bottom = 12.dp)
+                .padding(horizontal = Q.gap(14.dp, 8.dp))
+                .padding(bottom = Q.gap(12.dp, 6.dp))
         ) {
             when (kind) {
                 PopupKind.STYLE -> StylePanel(vm)
@@ -289,7 +289,7 @@ fun SmallButton(text: String, modifier: Modifier = Modifier, primary: Boolean = 
             .clip(RoundedCornerShape(10.dp))
             .background(if (primary) Q.accent else Q.field)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = Q.gap(12.dp, 9.dp), vertical = Q.gap(8.dp, 5.dp)),
     ) {
         Text(text, color = if (!enabled) Q.textDim else if (primary) Color.White else Q.text, fontSize = 14.sp, maxLines = 1)
     }
@@ -330,7 +330,7 @@ fun PanelField(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(Q.field)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = Q.gap(10.dp, 8.dp), vertical = Q.gap(8.dp, 5.dp))
             .onFocusChanged {
                 if (it.isFocused) {
                     wasFocused = true

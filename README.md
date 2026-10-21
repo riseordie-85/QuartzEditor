@@ -604,6 +604,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 ## Settings
 Menu → Settings (or the gear on the home screen).
 - **Appearance**: theme (Dark, Midnight, Medium gray, Light), accent color, and how solid the toolbar,
-  panels and windows are (lower lets the picture show through).
+  panels and windows are (lower lets the picture show through). **Compact interface** (under Panels, off
+  by default) trims margins and padding: a narrower toolbar with tighter spacing, slimmer workspace edges,
+  tighter panel sections, buttons and fields, and shorter layer rows — more room for the picture.
 - **Your library**: your patterns (hold to delete, + to add), gradients (hold to edit or delete, + for a
   new one), layer style presets (delete) and imported fonts (delete, import).

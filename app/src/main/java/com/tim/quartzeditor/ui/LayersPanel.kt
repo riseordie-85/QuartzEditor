@@ -117,7 +117,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
     val active = d.active
     var renaming by remember { mutableStateOf<Layer?>(null) }
     // Top settings and bottom buttons stay put; only the list between them scrolls (like Photoshop)
-    SqueezeColumn(fillList, modifier.padding(horizontal = 12.dp)) {
+    SqueezeColumn(fillList, modifier.padding(horizontal = Q.gap(12.dp, 6.dp))) {
         val open = vm.isOpen(PanelSection.LAYERS)
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -191,7 +191,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
 
         // The layers, top of the stack first
         val density = LocalDensity.current
-        val rowH = 58.dp
+        val rowH = Q.gap(58.dp, 48.dp)
         val rowPx = with(density) { rowH.toPx() }
         var dragId by remember { mutableStateOf<Long?>(null) }
         var dragOffset by remember { mutableFloatStateOf(0f) }

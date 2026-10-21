@@ -134,10 +134,10 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
 
 @Composable
 private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onColorTap: () -> Unit, menu: @Composable (Dp) -> Unit) {
-    BoxWithConstraints(Modifier.width(if (compact) 52.dp else 62.dp).fillMaxHeight()) {
-        // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space) and the two
+    BoxWithConstraints(Modifier.width(if (compact || Q.compact) 52.dp else 62.dp).fillMaxHeight()) {
+        // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space, 2dp when compact) and the two
         // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
-        val fitted = (maxHeight - 124.dp) / 13.8f
+        val fitted = (maxHeight - Q.gap(124.dp, 64.dp)) / 13.8f
         val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
         val swatchSize = buttonSize * 0.9f
         val tight = fitted < MIN_TOOL_BUTTON
@@ -146,7 +146,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (tight) Modifier.verticalScroll(rememberScrollState()) else Modifier.fillMaxHeight())
-                .padding(vertical = 10.dp),
+                .padding(vertical = Q.gap(10.dp, 4.dp)),
         ) {
             val t = vm.tool
             // 1. The menu
@@ -459,7 +459,7 @@ private fun ToolButton(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .padding(vertical = 3.dp)
+                .padding(vertical = Q.gap(3.dp, 1.dp))
                 .size(size)
                 .clip(if (ring) CircleShape else RoundedCornerShape(10.dp))
                 .background(if (selected) Q.text.copy(alpha = 0.16f) else Color.Transparent)

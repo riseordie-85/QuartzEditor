@@ -63,6 +63,12 @@ object Q {
     /** How solid the toolbar, panels and windows are (1 = not see-through). */
     var panelAlpha by mutableFloatStateOf(1f)
 
+    /** Compact interface: smaller margins and padding around the toolbar, panels, buttons and rows. */
+    var compact by mutableStateOf(false)
+
+    /** [normal] spacing, or [tight] with the compact interface on. */
+    fun gap(normal: androidx.compose.ui.unit.Dp, tight: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (compact) tight else normal
+
     val workspace: Color get() = palette.workspace
     val toolbar: Color get() = palette.toolbar.copy(alpha = panelAlpha)
     val panel: Color get() = palette.panel.copy(alpha = panelAlpha)
@@ -88,6 +94,7 @@ object Q {
         palette = Palette.entries.getOrElse(prefs.getInt("uiPalette", 0)) { Palette.DARK }
         accentColor = Color(prefs.getInt("uiAccent", 0xFF4C8DFF.toInt()))
         panelAlpha = prefs.getFloat("uiPanelAlpha", 1f).coerceIn(0.4f, 1f)
+        compact = prefs.getBoolean("uiCompact", false)
     }
 
     fun save(prefs: android.content.SharedPreferences) {
@@ -95,6 +102,7 @@ object Q {
             .putInt("uiPalette", palette.ordinal)
             .putInt("uiAccent", accentColor.toArgb())
             .putFloat("uiPanelAlpha", panelAlpha)
+            .putBoolean("uiCompact", compact)
             .apply()
     }
 }
