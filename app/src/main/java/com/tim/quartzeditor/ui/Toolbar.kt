@@ -207,9 +207,14 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                 },
             ) { vm.retouchButton(heal = true) }
             // 6. Gradient, Paint bucket, Pattern fill
+            // Shows the fill tool a tap picks: the one in use, else the last one used
+            val lastFill = vm.prefs.getString("lastFill", "GRADIENT")
             val fillIcon = when {
                 t == Tool.BUCKET && vm.bucketPattern -> Icons.Outlined.Texture
                 t == Tool.BUCKET -> Icons.Outlined.FormatColorFill
+                t == Tool.GRADIENT -> Icons.Outlined.Gradient
+                lastFill == "PATTERN" -> Icons.Outlined.Texture
+                lastFill == "BUCKET" -> Icons.Outlined.FormatColorFill
                 else -> Icons.Outlined.Gradient
             }
             ToolButton(

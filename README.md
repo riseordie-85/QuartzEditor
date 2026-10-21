@@ -175,7 +175,8 @@ the list; the button shows the one you used last.
   Rise, Fisheye, Inflate, Squeeze, Twist, with Bend, Horizontal and Vertical distortion, bent along the
   width or the height (the text stays editable).
   Outline, shadow and glow come from Layer Style (fx). **3D** works on text too (see Shape).
-- **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one).
+- **Gradient / Paint bucket / Pattern fill** share a button (tap again for the next one). It shows the one a
+  tap picks: the one in use, or the last one you used.
 - **Brush** and **Eraser** (one button) — tap it to switch between the brush and the eraser. While either is
   picked, a second column shows the tips (Round, Square, Triangle, Grunge) and the Softness, Size and
   Opacity sliders; any other tool folds it away.
@@ -189,7 +190,8 @@ the list; the button shows the one you used last.
   - **Clone stamp** — hold ⇧ and tap where to copy from (or Pick source), then paint; slide out to Alt for
     a straight line. Aligned keeps the source moving with each new stroke. A crosshair shows where it copies
     from.
-  - **Dodge / Burn** (Shadows / Midtones / Highlights), **Smudge**, **Blur**, **Sharpen**.
+  - **Dodge / Burn** (Shadows / Midtones / Highlights), **Smudge**, **Blur**, **Sharpen**. Smudge drags paint
+    into empty parts of the layer too (not with the transparency lock on).
   - "Look at all layers" (healing, AI Remove, clone): read the picture as you see it and paint onto the
     layer you're on — an empty layer keeps the photo untouched.
 - The toolbar's buttons shrink to fit the screen's height (it only scrolls on very short screens).

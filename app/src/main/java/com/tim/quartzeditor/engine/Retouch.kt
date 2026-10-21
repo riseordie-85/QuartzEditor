@@ -118,7 +118,9 @@ class RetouchSession(
         val h = r.height()
         val orig = readPatch(grid, r, 0, 0)
         val has = orig.any { (it ushr 24) != 0 }
-        if (!has && kind != RetouchKind.CLONE) return
+        // Smudging carries its paint into empty parts of the layer too (unless they're locked see-through)
+        val smudgeInto = kind == RetouchKind.SMUDGE && !lockAlpha && smudge?.any { (it ushr 24) != 0 } == true
+        if (!has && kind != RetouchKind.CLONE && !smudgeInto) return
         val target: IntArray = when (kind) {
             RetouchKind.DODGE, RetouchKind.BURN -> IntArray(orig.size) { tone(orig[it]) }
             RetouchKind.BLUR -> blurred(orig, w, h, blurRadius())
@@ -158,7 +160,7 @@ class RetouchSession(
             smudge = out.copyOf()
         }
         if (!any) return
-        writePatch(r, out, w, h, createMissing = kind == RetouchKind.CLONE)
+        writePatch(r, out, w, h, createMissing = kind == RetouchKind.CLONE || (kind == RetouchKind.SMUDGE && !lockAlpha))
     }
 
     private fun blurRadius(): Int = max(1, (d * 0.04f).roundToInt()).coerceAtMost(12)
