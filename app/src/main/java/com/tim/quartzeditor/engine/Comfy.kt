@@ -662,7 +662,13 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
      * goes, the enhancer [enhance]d or not, a new picture [width]×[height] (when it makes one), new
      * seeds, and side-by-side preview nodes left out.
      */
-    fun prepared(image: String?, prompt: String?, enhance: Boolean, width: Int, height: Int, overrides: ComfyOverrides = ComfyOverrides()): JSONObject {
+    /** It makes a new picture from an empty latent with a batch size: several pictures can come from one run. */
+    val canBatch: Boolean = kind == ComfyKind.GENERATE && nodes().any { (_, o) ->
+        cls(o).startsWith("Empty") && cls(o).contains("Latent") && inputs(o).opt("batch_size") is Number
+    }
+
+    /** [batch]: pictures in one run (the empty latent's batch size), when it [canBatch]. */
+    fun prepared(image: String?, prompt: String?, enhance: Boolean, width: Int, height: Int, overrides: ComfyOverrides = ComfyOverrides(), batch: Int = 1): JSONObject {
         val p = JSONObject(json.toString())
         overrides.applyTo(p)
         val drop = p.keys().asSequence().filter { k -> p.optJSONObject(k)?.optString("class_type") == "ImageCompare" }.toList()
@@ -677,6 +683,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
                     if (kind == ComfyKind.GENERATE && width > 0 && height > 0) {
                         inp.put("width", width)
                         inp.put("height", height)
+                        if (batch > 1 && inp.opt("batch_size") is Number) inp.put("batch_size", batch)
                     }
             }
             for (s in listOf("seed", "noise_seed", "sampling_mode.seed")) {

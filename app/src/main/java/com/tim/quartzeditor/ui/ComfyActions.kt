@@ -284,6 +284,7 @@ fun EditorViewModel.runComfy(
     overrides: com.tim.quartzeditor.engine.ComfyOverrides = com.tim.quartzeditor.engine.ComfyOverrides(),
     megapixels: Float = w.savedMegapixels,
     count: Int = 1,
+    oneBatch: Boolean = false,
 ) {
     val d = doc ?: return
     comfyJob?.let { j ->
@@ -292,7 +293,7 @@ fun EditorViewModel.runComfy(
             return
         }
     }
-    if (pendingFirst { runComfy(w, prompt, enhance, merged, overrides, megapixels, count) }) return
+    if (pendingFirst { runComfy(w, prompt, enhance, merged, overrides, megapixels, count, oneBatch) }) return
     val server = comfyServer()
     val cloudKey = comfyCloudKey()
     if (w.cloud && cloudKey.isBlank()) {
@@ -357,7 +358,9 @@ fun EditorViewModel.runComfy(
     if (cloud == null) job.client = client else job.cloud = cloud
     val clientId = UUID.randomUUID().toString()
     val promptForRun = if (w.hasPrompt) prompt else null
-    val runs = count.coerceIn(1, 16)
+    // One run making them all (the workflow's batch size), or a run for each
+    val batch = if (oneBatch && w.canBatch) count.coerceIn(1, 16) else 1
+    val runs = if (batch > 1) 1 else count.coerceIn(1, 16)
     job.job = viewModelScope.launch {
         var socket: ComfySocket? = null
         var upload: ComfyUpload? = null
@@ -371,7 +374,7 @@ fun EditorViewModel.runComfy(
                 }
             }
             // Progress and live previews come over the WebSocket; if that doesn't connect, asking now and then still works
-            var current: JSONObject = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides)
+            var current: JSONObject = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch)
             if (cloud == null) socket = ComfySocket(
                 client.socketUrl(clientId),
                 onText = { t -> comfyMessage(job, current, t) },
@@ -386,7 +389,7 @@ fun EditorViewModel.runComfy(
                 job.run = run
                 job.runs = runs
                 // Each run gets new seeds
-                if (run > 1) current = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides)
+                if (run > 1) current = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch)
                 val prepared = current
                 val results = if (cloud != null) withContext(Dispatchers.IO) { cloudRun(cloud, prepared, job, w) } else withContext(Dispatchers.IO) {
                     // Cancelled while sending: don't queue it
@@ -911,6 +914,9 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var enhance by remember(file) { mutableStateOf(picked?.let { vm.prefs.getBoolean("comfyEnhance:" + it.fileName, it.savedEnhance) } ?: false) }
     var merged by remember { mutableStateOf(vm.prefs.getBoolean("comfyMerged", false)) }
     var count by remember { mutableIntStateOf(vm.prefs.getInt("comfyCount", 1)) }
+    // One batch by default on Cloud (it costs less), separate runs on your server (less memory at once)
+    fun batchKey() = if (cloudMode) "comfyOneBatch:cloud" else "comfyOneBatch"
+    var oneBatch by remember(cloudMode) { mutableStateOf(vm.prefs.getBoolean(batchKey(), cloudMode)) }
     var megapixels by remember(file) { mutableStateOf(picked?.let { vm.prefs.getFloat("comfyMP:" + it.fileName, it.savedMegapixels) } ?: 1f) }
     // (Changes made over something the workflow no longer has are dropped)
     var overrides by remember(file) { mutableStateOf(file?.let { f -> picked.keep(vm.comfyOverrides(f)) } ?: com.tim.quartzeditor.engine.ComfyOverrides()) }
@@ -1004,7 +1010,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         .apply()
                     vm.prefs.edit().putInt("comfyCount", count).apply()
                     onDismiss()
-                    vm.runComfy(w, prompt.trim(), enhance, merged, overrides, megapixels, count)
+                    vm.runComfy(w, prompt.trim(), enhance, merged, overrides, megapixels, count, oneBatch)
                 }
             }
             // Where it runs
@@ -1163,7 +1169,17 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             for (n in listOf(1, 2, 3, 4, 6, 8)) SmallButton("$n", primary = count == n) { count = n }
                         }
-                        if (count > 1) Text("$count runs, each with new seeds; each picture comes in as its own layer as soon as it's done.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                        if (count > 1 && w.canBatch) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                                SmallButton("One batch", primary = oneBatch) { oneBatch = true; vm.prefs.edit().putBoolean(batchKey(), true).apply() }
+                                SmallButton("Separate runs", primary = !oneBatch) { oneBatch = false; vm.prefs.edit().putBoolean(batchKey(), false).apply() }
+                            }
+                        }
+                        if (count > 1) Text(
+                            if (w.canBatch && oneBatch) "One run with a batch size of $count (on Comfy Cloud, cheaper than $count runs; on your server it needs the memory for $count pictures at once). They all come in, each as its own layer."
+                            else "$count runs, one after another, each with new seeds; each picture comes in as its own layer as soon as it's done.",
+                            color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
+                        )
 
                         // Models
                         val files = w.modelSettings.filter { it.isFile }

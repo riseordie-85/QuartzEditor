@@ -520,9 +520,12 @@ off, a model is missing) the chip says what ComfyUI said.
 - **Switches**: a workflow's own on/off Boolean nodes (like "Enable LoRA 2?") show as switches.
 - **The page**, top to bottom: the **workflow** (a drop-down list), **presets**, what it works on, the
   **prompt**, the **size** (for a new picture: 0.5 to 4 megapixels, the canvas's shape; it starts at the
-  workflow's own Resolution Selector megapixels when it has one), **how many** (1 to 8 runs, each with new
-  seeds, each picture coming in as its own layer as soon as it's done — a workflow that saves several
-  pictures in one run brings them all in too), the **models**, the **LoRAs**, and the server. **Run** is at
+  workflow's own Resolution Selector megapixels when it has one), **how many** (1 to 8 pictures, each coming in as
+  its own layer. For a workflow making a new picture from an empty latent there's a choice: **One batch**
+  sets the latent's batch size so a single run makes them all (the default on Comfy Cloud, where it costs
+  less than separate runs), or **Separate runs** queues one run after another, each with new seeds (the
+  default on your server, which then only needs the memory for one picture at a time). Edits always run
+  once per picture), the **models**, the **LoRAs**, and the server. **Run** is at
   the top.
 - **Models**: every loader in the workflow (diffusion model, checkpoint, text encoders, VAE, LoRA loader,
   upscale model) shows the file it uses; tap it for the list of what your ComfyUI has (with a search box)
