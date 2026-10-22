@@ -78,30 +78,42 @@ class RetouchSession(
 
     val changed: Boolean get() = saved.isNotEmpty()
 
-    /** Adds the next touch point (canvas pixels). */
-    fun addPoint(cx: Float, cy: Float) {
+    /** How hard the pen presses (0..1, on its curve), when pressure sets the strength; 1 otherwise. */
+    private var pressure = 1f
+    private var lastPressure = 1f
+
+    /** Adds the next touch point (canvas pixels), with the pen's [pressure] when it sets the strength. */
+    fun addPoint(cx: Float, cy: Float, pressure: Float = 1f) {
         at = android.graphics.PointF(cx, cy)
         val x = cx - layer.x
         val y = cy - layer.y
+        val p = pressure.coerceIn(0f, 1f)
         if (lastX.isNaN()) {
+            this.pressure = p
             dab(x, y)
             lastX = x
             lastY = y
+            lastPressure = p
             carry = spacing
             return
         }
         val dx = x - lastX
         val dy = y - lastY
         val len = hypot(dx, dy)
-        if (len <= 0f) return
+        if (len <= 0f) {
+            lastPressure = p
+            return
+        }
         var t = carry
         while (t <= len) {
+            this.pressure = lastPressure + (p - lastPressure) * (t / len)
             dab(lastX + dx * t / len, lastY + dy * t / len)
             t += spacing
         }
         carry = t - len
         lastX = x
         lastY = y
+        lastPressure = p
     }
 
     /** One dab at layer-local ([x], [y]). */
@@ -137,7 +149,7 @@ class RetouchSession(
         }
         // How much of each pixel this dab changes: the dab's shape, the strength, the selection
         val sel = selection?.let { readMask(it.mask(), Rect(r).apply { offset(layer.x, layer.y) }) }
-        val k = strength * when (kind) {
+        val k = strength * pressure * when (kind) {
             RetouchKind.DODGE, RetouchKind.BURN -> 0.22f
             RetouchKind.BLUR -> 0.6f
             RetouchKind.SHARPEN -> 0.35f

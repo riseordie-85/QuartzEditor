@@ -76,8 +76,11 @@ internal fun EditorViewModel.checkHealReach(x: Float, y: Float) {
     }
 }
 
-/** Starts a retouch stroke at canvas point ([x], [y]). False when it can't. */
-internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
+/**
+ * Starts a retouch stroke at canvas point ([x], [y]). False when it can't. [pressure] is the pen's
+ * (on its curve; 1 for a finger): it sets the strength when the retouch brush has that turned on.
+ */
+internal fun EditorViewModel.beginRetouch(x: Float, y: Float, pressure: Float = 1f): Boolean {
     val d = doc ?: return false
     val layer = d.active
     if (blockPaint(layer)) return false
@@ -120,12 +123,12 @@ internal fun EditorViewModel.beginRetouch(x: Float, y: Float): Boolean {
                 CloneSource(TileGrid(alphaOnly = false).also { it.tiles.putAll(layer.tiles.tiles) }, layer.x, layer.y)
             }
             val r = RetouchSession(layer, k, b.size, b.softness, b.opacity, d.selection, source = source, offX = off.x, offY = off.y)
-            r.addPoint(x, y)
+            r.addPoint(x, y, retouchPressure(pressure))
             retouch = r
         }
         else -> {
             val r = RetouchSession(layer, k, b.size, b.softness, b.opacity, d.selection, range = dodgeRange)
-            r.addPoint(x, y)
+            r.addPoint(x, y, retouchPressure(pressure))
             retouch = r
         }
     }

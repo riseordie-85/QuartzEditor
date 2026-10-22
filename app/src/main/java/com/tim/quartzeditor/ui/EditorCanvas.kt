@@ -14,8 +14,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -47,7 +45,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
@@ -55,12 +60,48 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tim.quartzeditor.engine.DocRenderer
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, PEN_MOVE, WARP, GUIDE, DEPTH, DONE }
+
+/**
+ * Like awaitEachGesture, but the next gesture starts as soon as a new finger or pen touches, even
+ * while another touch stays down (a hand resting on the screen mustn't stop the pen). [block] gets
+ * the touch to start with when the last gesture handed one over (a pen that came down mid-gesture),
+ * and returns one to hand over to the next.
+ */
+private suspend fun PointerInputScope.awaitEachTouch(block: suspend AwaitPointerEventScope.(carried: PointerInputChange?) -> PointerInputChange?) {
+    val ctx = currentCoroutineContext()
+    awaitPointerEventScope {
+        var carried: PointerInputChange? = null
+        while (ctx.isActive) {
+            carried = try {
+                block(carried)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (!ctx.isActive) throw e
+                null
+            }
+        }
+    }
+}
+
+/** The next finger or pen to touch down (a pen first, if both do at once). */
+private suspend fun AwaitPointerEventScope.awaitNewDown(): PointerInputChange {
+    while (true) {
+        val e = awaitPointerEvent()
+        val downs = e.changes.filter { it.changedToDownIgnoreConsumed() }
+        if (downs.isNotEmpty()) return downs.firstOrNull { it.isPen } ?: downs.first()
+    }
+}
+
+/** No tool is in the middle of something the pen's eraser end shouldn't interrupt. */
+private fun EditorViewModel.penCanErase(): Boolean =
+    transform == null && warp == null && cropBox == null && cropQuad == null && pendingFx == null && enhance == null
 
 /** What a finger grabbed on the transform box. */
 private sealed class TransformHit {
@@ -112,6 +153,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     var canvasMenuAt by remember { mutableStateOf<Offset?>(null) }
     var loupe by remember { mutableStateOf<Pair<Offset, Int?>?>(null) }
     var cursor by remember { mutableStateOf<Offset?>(null) }
+    // Where the pen hovers above the screen (null when it isn't)
+    var hover by remember { mutableStateOf<Offset?>(null) }
     // A guide being moved with the Move tool: (vertical, which one)
     var movingGuide by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
     val checker = remember { checkerShader(with(density) { 8.dp.toPx() }.roundToInt().coerceAtLeast(4)) }
@@ -185,11 +228,48 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Canvas(
             Modifier
                 .fillMaxSize()
+                // Every touch event, as it comes in: the pen's pressure, tilt, eraser end and button
+                .motionEventSpy { if (vm.pen.onMotion(it)) vm.notePenSeen() }
+                // The pen hovering: the brush outline follows it
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.isPen }
+                            hover = if (c != null && !c.pressed && e.type != PointerEventType.Exit) c.position else null
+                        }
+                    }
+                }
                 .pointerInput(Unit) {
                     val slop = viewConfiguration.touchSlop
                     val longPress = viewConfiguration.longPressTimeoutMillis
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                    awaitEachTouch { carried ->
+                        vm.penOverride = null
+                        var down = carried ?: awaitNewDown()
+                        // A finger while the pen is near is the hand holding it: ignored, until the pen touches
+                        if (!down.isPen && vm.pen.near(down.uptimeMillis)) {
+                            var penDown: PointerInputChange? = null
+                            while (penDown == null) {
+                                val e = awaitPointerEvent()
+                                e.changes.forEach { it.consume() }
+                                penDown = e.changes.firstOrNull { it.isPen && it.changedToDownIgnoreConsumed() }
+                                if (penDown == null && e.changes.none { it.pressed }) return@awaitEachTouch null
+                            }
+                            down = penDown
+                        }
+                        val byPen = down.isPen
+                        // With a pen around, fingers move the view instead of painting (when that's on)
+                        val fingerNav = !byPen && vm.fingersNavigate
+                        // The pen's side button set to undo: a touch with it held does nothing (it undid when pressed)
+                        if (byPen && vm.penButton == PenButton.UNDO && vm.pen.buttonHeld) {
+                            do {
+                                val e = awaitPointerEvent()
+                                e.changes.forEach { it.consume() }
+                            } while (e.changes.any { it.id == down.id && it.pressed })
+                            return@awaitEachTouch null
+                        }
+                        // A touch the next gesture should start with (a pen coming down during a finger gesture)
+                        var handoff: PointerInputChange? = null
                         val t0 = down.uptimeMillis
                         val start = down.position
                         var mode = GestureMode.PENDING
@@ -200,10 +280,20 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var lastPos = start
                         var longPressDone = false
                         var endTime = t0
+                        if (vm.doc == null) return@awaitEachTouch null
+                        // The pen's eraser end (or its button, when set to) erases; its button can pick a color
+                        val penErases = byPen && vm.penCanErase() &&
+                            ((vm.penEraserEnd && (down.type == PointerType.Eraser || vm.pen.eraserEnd)) || (vm.penButton == PenButton.ERASER && vm.pen.buttonHeld))
+                        val penPicks = byPen && !penErases && vm.penButton == PenButton.EYEDROPPER && vm.pen.buttonHeld
+                        if (penErases) vm.penOverride = Tool.ERASER
                         // Space held on a keyboard pans with any tool
-                        val tool = if (vm.tempPan) Tool.PAN else vm.tool
-
-                        if (vm.doc == null) return@awaitEachGesture
+                        val tool = when {
+                            vm.tempPan -> Tool.PAN
+                            penErases -> Tool.ERASER
+                            penPicks -> Tool.EYEDROPPER
+                            else -> vm.tool
+                        }
+                        val downPen = vm.penSample(down, 0, 1, down.uptimeMillis)
                         vm.brushPickerFor = null
                         var hit: TransformHit? = null
                         val tStart = vm.transform?.state
@@ -300,7 +390,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         // Move or Pan tool on a guide: drag it (off the picture removes it)
                         var guidePos = 0f
                         // (vm.tool, not tool: holding Space pans with any tool and shouldn't grab guides)
-                        if ((vm.tool == Tool.MOVE || vm.tool == Tool.PAN) && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
+                        if ((vm.tool == Tool.MOVE || vm.tool == Tool.PAN) && !penErases && !penPicks && vm.showGuides && !vm.guidesLocked && mode == GestureMode.PENDING) {
                             val d0 = vm.doc
                             val r = 14.dp.toPx()
                             var best = r
@@ -337,17 +427,17 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             mode = GestureMode.DONE
                         }
                         if (mode == GestureMode.PENDING) when (tool) {
-                            Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.isOnCanvas(start.x, start.y)) {
+                            Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.isOnCanvas(start.x, start.y) && !fingerNav) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
                                 // Shift and a tap: a straight line from where the last stroke ended (like Photoshop)
                                 val join = vm.lastStrokeEnd?.takeIf { straightOn() && it.first == vm.doc?.activeId }
                                 val bx = join?.second ?: cx
                                 val by = join?.third ?: cy
                                 // Can't paint here: wait and see whether it becomes a pinch or stays a touch
-                                mode = if (vm.strokeBlockReason() == null && vm.beginStroke(bx, by)) GestureMode.STROKE else GestureMode.BLOCKED
+                                mode = if (vm.strokeBlockReason() == null && vm.beginStroke(bx, by, downPen)) GestureMode.STROKE else GestureMode.BLOCKED
                                 if (mode == GestureMode.STROKE) {
                                     cursor = start
-                                    if (join != null) vm.strokeTo(cx, cy)
+                                    if (join != null) vm.strokeTo(cx, cy, downPen)
                                     // A drag after the tap stays straight from where the finger is
                                     strokeOx = cx
                                     strokeOy = cy
@@ -380,7 +470,17 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 }
                                 continue
                             }
-                            val pressed = ev.changes.filter { it.pressed }
+                            // A pen coming down during a finger gesture ends it and starts its own
+                            if (!byPen) {
+                                val pd = ev.changes.firstOrNull { it.isPen && it.changedToDownIgnoreConsumed() }
+                                if (pd != null) {
+                                    handoff = pd
+                                    endTime = pd.uptimeMillis
+                                    break
+                                }
+                            }
+                            // With the pen, only the pen counts (a hand on the screen is ignored)
+                            val pressed = ev.changes.filter { it.pressed && (!byPen || it.id == down.id) }
                             maxPointers = max(maxPointers, pressed.size)
                             if (pressed.isEmpty()) {
                                 endTime = ev.changes.first().uptimeMillis
@@ -482,16 +582,19 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                             val ux = kotlin.math.cos(a).toFloat()
                                             val uy = kotlin.math.sin(a).toFloat()
                                             val len = (x - strokeOx) * ux + (y - strokeOy) * uy
-                                            vm.strokeTo(strokeOx + ux * len, strokeOy + uy * len)
+                                            vm.strokeTo(strokeOx + ux * len, strokeOy + uy * len, vm.penSample(main, 0, 1, main.uptimeMillis))
                                         }
                                         cursor = main.position
                                     } else {
-                                        for (h in main.historical) {
+                                        // Every in-between point, each with the pen's pressure and tilt there
+                                        val hs = main.historical
+                                        val m = hs.size + 1
+                                        hs.forEachIndexed { k, h ->
                                             val (x, y) = vm.screenToCanvas(h.position.x, h.position.y)
-                                            vm.strokeTo(x, y)
+                                            vm.strokeTo(x, y, vm.penSample(main, k, m, main.uptimeMillis))
                                         }
                                         val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
-                                        vm.strokeTo(x, y)
+                                        vm.strokeTo(x, y, vm.penSample(main, m - 1, m, main.uptimeMillis))
                                         cursor = main.position
                                     }
                                 }
@@ -526,16 +629,17 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         Tool.PEN -> if (vm.penEditTarget != null) GestureMode.PAN else if (penGrab >= 0) GestureMode.PEN_MOVE else GestureMode.PEN
                                         // With the Text tool, dragging moves the text layer you're on
                                         Tool.TEXT -> if (vm.doc?.active?.isText == true && vm.beginMove()) GestureMode.MOVE else GestureMode.PAN
-                                        Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> {
+                                        // Fingers move the view when the pen paints
+                                        Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (fingerNav) GestureMode.PAN else {
                                             // Started beside the canvas: paint from there
                                             val (sx, sy) = vm.screenToCanvas(start.x, start.y)
                                             if (vm.strokeBlockReason() != null) {
                                                 GestureMode.BLOCKED
-                                            } else if (vm.beginStroke(sx, sy)) {
+                                            } else if (vm.beginStroke(sx, sy, downPen)) {
                                                 strokeOx = sx
                                                 strokeOy = sy
                                                 val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
-                                                vm.strokeTo(x, y)
+                                                vm.strokeTo(x, y, vm.penSample(main, 0, 1, main.uptimeMillis))
                                                 cursor = main.position
                                                 GestureMode.STROKE
                                             } else {
@@ -715,7 +819,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             ev.changes.forEach { it.consume() }
                         }
 
-                        // All fingers up
+                        // All fingers up (or a pen took over: no taps, nothing undone)
+                        if (handoff != null) {
+                            if (mode == GestureMode.PENDING) mode = GestureMode.DONE
+                            moved = true
+                        }
                         val duration = endTime - t0
                         cursor = null
                         vm.clearSnapGuides()
@@ -790,10 +898,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.NAV -> when {
                                 !moved && duration < 350 && maxPointers == 2 -> vm.undo()
                                 !moved && duration < 350 && maxPointers >= 3 -> vm.redo()
-                                duration < 450 && totalZoom < 0.72f -> animateFit()
+                                handoff == null && duration < 450 && totalZoom < 0.72f -> animateFit()
                             }
                             else -> Unit
                         }
+                        vm.penOverride = null
+                        handoff
                     }
                 }
         ) {
@@ -1078,6 +1188,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 if (r > 3f) {
                     drawCircle(Color.Black.copy(alpha = 0.5f), r + 1f, p, style = Stroke(1.5f))
                     drawCircle(Color.White.copy(alpha = 0.8f), r, p, style = Stroke(1f))
+                }
+            }
+            // The pen hovering: where its brush (or its eraser end's) would paint, with a dot in the middle
+            val hp = hover
+            if (cursor == null && hp != null && vm.penHover) {
+                val eraserEnd = vm.penEraserEnd && vm.pen.eraserEnd && vm.penCanErase()
+                val painting = vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH
+                if (eraserEnd || painting) {
+                    val r = (if (eraserEnd) vm.eraser.size else vm.currentBrush.size) * s / 2f
+                    if (r > 3f) {
+                        drawCircle(Color.Black.copy(alpha = 0.45f), r + 1f, hp, style = Stroke(1.5f))
+                        drawCircle(Color.White.copy(alpha = 0.75f), r, hp, style = Stroke(1f))
+                    }
+                    drawCircle(Color.Black.copy(alpha = 0.5f), 2.5f, hp)
+                    drawCircle(Color.White, 1.5f, hp)
                 }
             }
         }

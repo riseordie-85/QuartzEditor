@@ -223,6 +223,14 @@ the list; the button shows the one you used last.
   that's off the canvas) and picks Move to place it; it pastes pictures copied in other apps too. Cut takes
   the selected pixels away (or the whole layer). Also New layer via copy / cut, Select all, Deselect.
 - One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
+- **A pen (stylus)** works like Photoshop on a tablet. **Pressure** changes the brush's and eraser's size
+  (down to a smallest size you set) and, if you want, its opacity; for the retouch brushes it changes the strength.
+  Each brush has small pen switches under its Size and Opacity sliders; they appear once you've used a pen.
+  **Tilt** the pen to stretch the brush along the way it leans, like the side of a pencil. The **eraser
+  end** erases with any tool, using the eraser's settings. The **side button** picks a color while held, by
+  default; it can erase or undo instead. Hovering shows the brush's outline. Once a pen's been used,
+  one finger moves the view and two zoom, instead of painting. Touches are ignored while the pen is near
+  the screen, so your hand can rest on it, and a pen stroke can't be turned into a pinch. All in Settings → Pen.
 - **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it
   for **Shift** (the button fills with your accent color), slide out past its edge for **Alt** (the emblem turns the accent color), double-tap to keep Shift on. A keyboard's Shift and
   Alt do the same. Brushes: straight lines at 0°/45°/90° (tap: a line from the last stroke). Shapes and
@@ -592,7 +600,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   `TransformActions`, `ToolActions` (selections, crop, bucket, gradients), `VectorActions` (shapes, pen,
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
   `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
-  `ShapeLibraryActions`, `EnhanceActions`, `ComfyActions` (ComfyUI runs, its window and status chip).
+  `ShapeLibraryActions`, `EnhanceActions`, `ComfyActions` (ComfyUI runs, its window and status chip),
+  `PenInput` (the pen's pressure, tilt, eraser end and button, read from each touch event).
 - `app/src/offline/` and `app/src/online/` — what's different in the two apps: the offline one removes
   internet access; the online one adds it (plain `http://` allowed), its name, and the built-in
   ComfyUI workflows and server address (`assets/comfy/`).
@@ -607,5 +616,8 @@ Menu → Settings (or the gear on the home screen).
   panels and windows are (lower lets the picture show through). **Compact interface** (under Panels, off
   by default) trims margins and padding: a narrower toolbar with tighter spacing, slimmer workspace edges,
   tighter panel sections, buttons and fields, and shorter layer rows — more room for the picture.
+- **Pen**: whether fingers move the view once a pen's been used, the pressure feel (light hand, normal,
+  firm hand), the smallest size at the lightest touch, tilt on or off, the eraser end on or off, what the
+  side button does (eyedropper, eraser, undo or nothing), and the brush outline while hovering.
 - **Your library**: your patterns (hold to delete, + to add), gradients (hold to edit or delete, + for a
   new one), layer style presets (delete) and imported fonts (delete, import).

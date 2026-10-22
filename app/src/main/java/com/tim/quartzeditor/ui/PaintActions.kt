@@ -39,14 +39,17 @@ fun EditorViewModel.onBlockedStroke() {
     }
 }
 
-/** Starts a brush or eraser stroke at canvas point ([x], [y]). Returns false if painting isn't possible. */
-fun EditorViewModel.beginStroke(x: Float, y: Float): Boolean {
-    if (tool == Tool.RETOUCH) {
+/**
+ * Starts a brush or eraser stroke at canvas point ([x], [y]). Returns false if painting isn't
+ * possible. [pen] is the pen's pressure and tilt there (null for a finger).
+ */
+fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boolean {
+    if (paintTool == Tool.RETOUCH) {
         if (pendingFx != null) {
             applyFx()
             return false
         }
-        return beginRetouch(x, y)
+        return beginRetouch(x, y, pen?.pressure ?: 1f)
     }
     strokeHeals = null
     val d = doc ?: return false
@@ -57,25 +60,26 @@ fun EditorViewModel.beginStroke(x: Float, y: Float): Boolean {
     val layer = d.active
     if (blockPaint(layer)) return false
     layer!!
-    val erase = tool == Tool.ERASER
+    val erase = paintTool == Tool.ERASER
     val b = if (erase) eraser else brush
     // Folders and adjustment layers have no pixels of their own: brushes paint their mask
     val target = if ((d.editMask || layer.isGroup || layer.isAdjustment) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
-    val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection)
-    s.addPoint(x, y)
+    val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection, strokeDynamics(b, pen != null))
+    s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
     stroke = s
     d.invalidate()
     return true
 }
 
-fun EditorViewModel.strokeTo(x: Float, y: Float) {
+/** The stroke's next point; [pen] as for [beginStroke]. */
+fun EditorViewModel.strokeTo(x: Float, y: Float, pen: PenSample? = null) {
     retouch?.let {
-        it.addPoint(x, y)
+        it.addPoint(x, y, retouchPressure(pen?.pressure ?: 1f))
         doc?.invalidate()
         return
     }
     val s = stroke ?: return
-    s.addPoint(x, y)
+    s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
     if (strokeHeals == com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL) checkHealReach(x, y)
     doc?.invalidate()
 }

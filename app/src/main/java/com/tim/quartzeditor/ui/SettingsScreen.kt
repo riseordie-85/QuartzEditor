@@ -52,10 +52,10 @@ import com.tim.quartzeditor.engine.GradientPreset
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-// App settings: how the app looks (theme, accent color, see-through panels), and the things you've
-// made or added (patterns, gradients, layer style presets, fonts) to tidy up.
+// App settings: how the app looks (theme, accent color, see-through panels), how a pen works, and
+// the things you've made or added (patterns, gradients, layer style presets, fonts) to tidy up.
 
-private enum class SettingsTab(val label: String) { APPEARANCE("Appearance"), LIBRARY("Your library") }
+private enum class SettingsTab(val label: String) { APPEARANCE("Appearance"), PEN("Pen"), LIBRARY("Your library") }
 
 @Composable
 fun SettingsScreen(vm: EditorViewModel, onDismiss: () -> Unit) {
@@ -84,6 +84,7 @@ fun SettingsScreen(vm: EditorViewModel, onDismiss: () -> Unit) {
                 ) {
                     when (tab) {
                         SettingsTab.APPEARANCE -> AppearanceSettings(vm)
+                        SettingsTab.PEN -> PenSettings(vm)
                         SettingsTab.LIBRARY -> LibrarySettings(vm)
                     }
                 }
@@ -163,6 +164,78 @@ private fun AppearanceSettings(vm: EditorViewModel) {
         Q.panelAlpha = 1f
         Q.compact = false
         Q.save(vm.prefs)
+    }
+}
+
+/** How a pen (stylus) works: pressure, tilt, its eraser end and button, and what fingers do. */
+@Composable
+private fun PenSettings(vm: EditorViewModel) {
+    if (!vm.penSeen) {
+        Text("These take effect once you use a pen on the canvas.", color = Q.textDim, fontSize = 12.sp)
+        Spacer(Modifier.height(12.dp))
+    }
+    Heading("Fingers")
+    ToggleRow("Fingers move the view", vm.penFingersNavigate) {
+        vm.penFingersNavigate = it
+        vm.savePenPrefs()
+    }
+    Text(
+        "With the brush, eraser and retouch brushes, the pen paints and one finger moves the view (two pinch and turn). " +
+            "Off: fingers paint too. Either way, touches are ignored while the pen is near the screen, so your hand can rest on it.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(18.dp))
+    Heading("Pressure")
+    ChipRow(PenCurve.entries.map { it.label }, vm.penCurve.ordinal) {
+        vm.penCurve = PenCurve.entries[it]
+        vm.savePenPrefs()
+    }
+    Text("Light hand: a gentle touch does more. Firm hand: you press harder for the same.", color = Q.textDim, fontSize = 12.sp)
+    Spacer(Modifier.height(10.dp))
+    PanelSlider(
+        "Smallest size at the lightest touch", vm.penMinSize, 0.01f..1f, "${(vm.penMinSize * 100).roundToInt()}%",
+        onChange = { vm.penMinSize = it },
+        onDone = { vm.savePenPrefs() },
+    )
+    Text(
+        "For brushes with pressure on size. Each brush has its own switches for size and opacity (strength for the retouch brushes), under its sliders.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(18.dp))
+    Heading("Tilt")
+    ToggleRow("Tilting the pen stretches the brush", vm.penTilt) {
+        vm.penTilt = it
+        vm.savePenPrefs()
+    }
+    Text("Lean the pen over to shade with the side of the brush, like a pencil. (Pens that don't sense tilt paint as usual.)", color = Q.textDim, fontSize = 12.sp)
+    Spacer(Modifier.height(18.dp))
+    Heading("Eraser end and button")
+    ToggleRow("The eraser end erases", vm.penEraserEnd) {
+        vm.penEraserEnd = it
+        vm.savePenPrefs()
+    }
+    Text("With any tool, using the eraser's own size and settings.", color = Q.textDim, fontSize = 12.sp)
+    Spacer(Modifier.height(10.dp))
+    Text("Side button", color = Q.text, fontSize = 14.sp)
+    Spacer(Modifier.height(6.dp))
+    ChipRow(PenButton.entries.map { it.label }, vm.penButton.ordinal) {
+        vm.penButton = PenButton.entries[it]
+        vm.savePenPrefs()
+    }
+    Text(
+        when (vm.penButton) {
+            PenButton.EYEDROPPER -> "Hold it and touch the picture to pick a color."
+            PenButton.ERASER -> "Hold it while you draw to erase."
+            PenButton.UNDO -> "Press it with the pen off the screen to undo."
+            PenButton.NOTHING -> "The button does nothing here."
+        },
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(18.dp))
+    Heading("Hover")
+    ToggleRow("Show the brush while the pen hovers", vm.penHover) {
+        vm.penHover = it
+        vm.savePenPrefs()
     }
 }
 

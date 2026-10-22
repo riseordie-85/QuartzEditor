@@ -49,6 +49,27 @@ object Dabs {
 
     const val MAX_SIZE = 1000
 
+    private data class LevelKey(val tip: BrushTip, val size: Int, val softness: Int, val level: Int)
+    private val levels = HashMap<LevelKey, Bitmap>()
+
+    /**
+     * The dab at 1/2^[level] of [size] (made the same way, not shrunk), so a pen pressing lightly
+     * draws small dabs from a picture about their size instead of squeezing a big one. Kept for
+     * the last brush only.
+     */
+    @Synchronized
+    fun level(tip: BrushTip, size: Int, softness: Float, level: Int): Bitmap {
+        if (level <= 0) return get(tip, size, softness)
+        val s = size.coerceIn(1, MAX_SIZE)
+        val soft = (softness.coerceIn(0f, 1f) * 100).roundToInt()
+        val key = LevelKey(tip, s, soft, level)
+        levels[key]?.let { if (!it.isRecycled) return it }
+        if (levels.keys.any { it.tip != tip || it.size != s || it.softness != soft }) levels.clear()
+        val bmp = make(tip, max(1, s shr level), soft / 100f)
+        levels[key] = bmp
+        return bmp
+    }
+
     fun make(tip: BrushTip, size: Int, softness: Float): Bitmap {
         val d = size.coerceAtLeast(1)
         val out = ByteArray(d * d)
@@ -131,6 +152,32 @@ object Dabs {
 enum class StrokeTarget { PIXELS, MASK }
 
 /**
+ * How a pen changes each dab. Pressure (0..1, already on the pen's curve) can shrink the dab down
+ * to [minSize] of the brush and/or lower how much it covers; tilting the pen stretches the dab
+ * along the way the pen leans, like the side of a pencil.
+ */
+data class StrokeDynamics(
+    /** Pressure changes the size, down to this fraction of it (null = it doesn't). */
+    val minSize: Float? = null,
+    /** Pressure changes how strongly it paints (the stroke's opacity). */
+    val opacity: Boolean = false,
+    /** Tilt stretches and turns the dab. */
+    val tilt: Boolean = false,
+) {
+    val any: Boolean get() = minSize != null || opacity || tilt
+
+    companion object {
+        val NONE = StrokeDynamics()
+
+        /** How much tilt (radians from upright) stretches the dab: none near upright, most when nearly flat. */
+        fun tiltStretch(tilt: Float): Float {
+            val t = ((tilt - 0.35f) / (1.2f - 0.35f)).coerceIn(0f, 1f)
+            return 1f + 1.6f * t * t * (3f - 2f * t)
+        }
+    }
+}
+
+/**
  * One brush or eraser stroke in progress. Dabs build up in a separate coverage buffer; the canvas
  * shows the buffer on top of the layer (so the stroke's opacity is even, the way Photoshop does
  * it), and [commit] applies it to the layer in one go.
@@ -151,13 +198,20 @@ class StrokeSession(
     val softness: Float,
     /** Painting only reaches inside this (null = everywhere). */
     val selection: Selection? = null,
+    /** What a pen's pressure and tilt do (fingers send full pressure and no tilt). */
+    val dynamics: StrokeDynamics = StrokeDynamics.NONE,
 ) {
     val buffer = TileGrid(alphaOnly = true)
     private val canvases = HashMap<Long, Canvas>()
-    private val dab = Dabs.get(tip, size.roundToInt().coerceAtLeast(1), softness)
+    private val dabSize = size.roundToInt().coerceAtLeast(1)
+    private val dab = Dabs.get(tip, dabSize, softness)
     private val dabPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var lastX = Float.NaN
     private var lastY = Float.NaN
+    /** Pressure, tilt and lean direction at the last point. */
+    private var lastP = 1f
+    private var lastTilt = 0f
+    private var lastAz = 0f
     /** Distance still to travel before the next dab. */
     private var carry = 0f
     private val spacing = max(1f, size * tip.spacing)
@@ -175,47 +229,108 @@ class StrokeSession(
 
     val lockAlpha: Boolean get() = target == StrokeTarget.PIXELS && layer.props.lockAlpha
 
-    /** Adds the next touch point (canvas pixels). */
-    fun addPoint(cx: Float, cy: Float) {
+    /**
+     * Adds the next touch point (canvas pixels), with the pen's [pressure] (0..1, on its curve),
+     * [tilt] (radians from upright) and [azimuth] (which way it leans: radians, 0 = toward the top
+     * of the screen, clockwise). Fingers leave them at full pressure, upright.
+     */
+    fun addPoint(cx: Float, cy: Float, pressure: Float = 1f, tilt: Float = 0f, azimuth: Float = 0f) {
         val x = cx - layer.x
         val y = cy - layer.y
+        val p = pressure.coerceIn(0f, 1f)
         if (lastX.isNaN()) {
-            stamp(x, y)
+            stamp(x, y, p, tilt, azimuth)
             lastX = x
             lastY = y
-            carry = spacing
+            lastP = p
+            lastTilt = tilt
+            lastAz = azimuth
+            carry = spacingAt(p)
             return
         }
         val dx = x - lastX
         val dy = y - lastY
         val len = hypot(dx, dy)
-        if (len <= 0f) return
+        if (len <= 0f) {
+            lastP = p
+            lastTilt = tilt
+            lastAz = azimuth
+            return
+        }
+        // The lean direction takes the short way round between the two points
+        var dAz = azimuth - lastAz
+        if (dAz > Math.PI) dAz -= (2 * Math.PI).toFloat() else if (dAz < -Math.PI) dAz += (2 * Math.PI).toFloat()
         var t = carry
         while (t <= len) {
-            stamp(lastX + dx * t / len, lastY + dy * t / len)
-            t += spacing
+            val f = t / len
+            val pf = lastP + (p - lastP) * f
+            stamp(lastX + dx * f, lastY + dy * f, pf, lastTilt + (tilt - lastTilt) * f, lastAz + dAz * f)
+            t += spacingAt(pf)
         }
         carry = t - len
         lastX = x
         lastY = y
+        lastP = p
+        lastTilt = tilt
+        lastAz = azimuth
     }
 
-    private fun stamp(x: Float, y: Float) {
-        val half = dab.width / 2f
+    /** How big a dab is at pressure [p], as a fraction of the brush. */
+    private fun sizeAt(p: Float): Float {
+        val m = dynamics.minSize ?: return 1f
+        return m + (1f - m) * p
+    }
+
+    /** Dabs get closer together as they get smaller, so a light line stays a line. */
+    private fun spacingAt(p: Float): Float = if (dynamics.minSize == null) spacing else max(1f, size * sizeAt(p) * tip.spacing)
+
+    private fun stamp(x: Float, y: Float, p: Float = 1f, tilt: Float = 0f, azimuth: Float = 0f) {
+        val k = sizeAt(p)
+        val drawn = size * k
+        // Tilt stretches the dab along the way the pen leans (not for tips that turn at random)
+        val stretch = if (dynamics.tilt && !tip.randomRotation) StrokeDynamics.tiltStretch(tilt) else 1f
+        val half = if (k >= 0.999f && stretch == 1f) dab.width / 2f else max(0.5f, drawn / 2f)
         val rotate = tip.randomRotation
-        val reach = if (rotate) half * 1.42f else half
+        val reach = when {
+            rotate -> half * 1.42f
+            stretch > 1f -> half * stretch * (if (tip == BrushTip.ROUND) 1f else 1.42f)
+            else -> half
+        }
         val r = RectF(x - reach, y - reach, x + reach, y + reach)
         // One angle per dab, the same in every tile it touches
-        val angle = if (rotate) rng.nextFloat() * 360f else 0f
-        for (k in buffer.keysIn(r)) {
-            val tile = buffer.getOrCreate(k)
-            val c = canvases.getOrPut(k) { Canvas(tile) }
-            val ox = (TileGrid.tx(k) * TileGrid.SIZE).toFloat()
-            val oy = (TileGrid.ty(k) * TileGrid.SIZE).toFloat()
+        val angle = when {
+            rotate -> rng.nextFloat() * 360f
+            stretch > 1f -> Math.toDegrees(azimuth.toDouble()).toFloat() - 90f
+            else -> 0f
+        }
+        // Pressure on opacity: overlapping dabs build up to the pressure's strength, not past it
+        val alpha = if (dynamics.opacity && p < 0.999f) {
+            val overlap = max(1f, drawn / spacingAt(p))
+            (1f - Math.pow((1f - p).toDouble(), 1.0 / overlap).toFloat()).coerceIn(0f, 1f)
+        } else 1f
+        if (alpha <= 0.002f) return
+        dabPaint.alpha = (alpha * 255f).roundToInt().coerceIn(1, 255)
+        // A smaller dab comes from a picture about its size (each level is half the last)
+        var level = 0
+        if (k < 0.999f) while (level < 10 && (dabSize shr (level + 1)) >= max(2f, drawn)) level++
+        val img = if (level == 0) dab else Dabs.level(tip, dabSize, softness, level)
+        val plain = k >= 0.999f && stretch == 1f
+        for (key in buffer.keysIn(r)) {
+            val tile = buffer.getOrCreate(key)
+            val c = canvases.getOrPut(key) { Canvas(tile) }
+            val ox = (TileGrid.tx(key) * TileGrid.SIZE).toFloat()
+            val oy = (TileGrid.ty(key) * TileGrid.SIZE).toFloat()
             c.save()
             c.translate(-ox, -oy)
-            if (rotate) c.rotate(angle, x, y)
-            c.drawBitmap(dab, x - half, y - half, dabPaint)
+            if (plain) {
+                if (rotate) c.rotate(angle, x, y)
+                c.drawBitmap(img, x - half, y - half, dabPaint)
+            } else {
+                c.translate(x, y)
+                if (angle != 0f) c.rotate(angle)
+                if (stretch != 1f) c.scale(stretch, 1f)
+                c.drawBitmap(img, null, RectF(-half, -half, half, half), dabPaint)
+            }
             c.restore()
         }
         dirty.union(r.left + layer.x, r.top + layer.y, r.right + layer.x, r.bottom + layer.y)

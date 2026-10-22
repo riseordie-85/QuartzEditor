@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.outlined.Gesture
+import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.AutoFixNormal
 import androidx.compose.material.icons.outlined.CenterFocusStrong
@@ -323,10 +324,13 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
     }
     val retouch = forTool == Tool.RETOUCH
     val preview: (Boolean) -> Unit = { vm.brushPreview = it }
+    // Once a pen's been used: switches for what its pressure changes
+    val pen = vm.penSeen
     BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
         val tipsH = if (retouch) 0.dp else (if (compact) 40.dp else 46.dp) * 4 + 24.dp
-        val sliderH = ((maxHeight - tipsH - 150.dp) / 3).coerceIn(56.dp, 220.dp)
-        val tight = maxHeight < tipsH + 150.dp + 56.dp * 3
+        val extra = 150.dp + (if (pen) (if (retouch) 28.dp else 56.dp) else 0.dp)
+        val sliderH = ((maxHeight - tipsH - extra) / 3).coerceIn(56.dp, 220.dp)
+        val tight = maxHeight < tipsH + extra + 56.dp * 3
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -370,6 +374,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 onActive = preview,
             )
             ToolLabel("${b.size.roundToInt()}px")
+            if (pen && !retouch) PressureToggle(b.pressureSize, "Pen pressure changes the size") { on -> vm.updateBrush(forTool) { it.copy(pressureSize = on) } }
             Spacer(Modifier.height(6.dp))
             SliderCaption(if (retouch) "Strength" else "Opacity")
             VerticalSlider(
@@ -380,7 +385,31 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 onActive = preview,
             )
             ToolLabel("${(b.opacity * 100).roundToInt()}%")
+            if (pen) PressureToggle(b.pressureOpacity, if (retouch) "Pen pressure changes the strength" else "Pen pressure changes the opacity") { on ->
+                vm.updateBrush(forTool) { it.copy(pressureOpacity = on) }
+            }
         }
+    }
+}
+
+/** A small switch under a brush slider: the pen's pressure changes that setting. */
+@Composable
+private fun PressureToggle(on: Boolean, description: String, onChange: (Boolean) -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .padding(top = 4.dp)
+            .size(width = 40.dp, height = 24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (on) Q.accent else Q.text.copy(alpha = 0.10f))
+            .clickable(onClickLabel = if (on) "Turn off" else "Turn on") { onChange(!on) },
+    ) {
+        Icon(
+            Icons.Outlined.Draw,
+            contentDescription = "$description: ${if (on) "on" else "off"}",
+            tint = if (on) Color.White else Q.textDim,
+            modifier = Modifier.size(15.dp),
+        )
     }
 }
 

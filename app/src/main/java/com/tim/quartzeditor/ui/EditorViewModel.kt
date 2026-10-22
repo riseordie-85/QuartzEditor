@@ -90,6 +90,10 @@ data class BrushSettings(
     val softness: Float = 0.2f,
     /** 0..1 */
     val opacity: Float = 1f,
+    /** A pen's pressure changes the size. */
+    val pressureSize: Boolean = true,
+    /** A pen's pressure changes the opacity (the strength, for the retouch brushes). */
+    val pressureOpacity: Boolean = false,
 )
 
 /**
@@ -369,8 +373,35 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var eraser by mutableStateOf(loadBrush("eraser", BrushSettings(size = 60f, softness = 0.1f)))
         private set
     /** Size, softness and strength (as opacity) of the retouch brushes. */
-    var retouchBrush by mutableStateOf(loadBrush("retouch", BrushSettings(size = 50f, softness = 0.5f, opacity = 0.5f)))
+    var retouchBrush by mutableStateOf(loadBrush("retouch", BrushSettings(size = 50f, softness = 0.5f, opacity = 0.5f, pressureSize = false, pressureOpacity = true)))
         private set
+
+    // ---------------------------------------------------------------- pen (stylus)
+    /** What the pen is doing right now (fed by every touch on the canvas). */
+    val pen = PenTracker().also { t ->
+        // The side button pressed while the pen hovers: undo, when that's what it does
+        t.onButtonPress = { if (penButton == PenButton.UNDO && !stroking) undo() }
+    }
+    /** A pen has been used here: the pen settings show, and fingers can move the view instead of painting. */
+    var penSeen by mutableStateOf(prefs.getBoolean("penSeen", false))
+        internal set
+    /** Once a pen's been used, one finger moves the view and two zoom, instead of painting. */
+    var penFingersNavigate by mutableStateOf(prefs.getBoolean("penFingers", true))
+    /** How pressure feels: light, normal or firm hand. */
+    var penCurve by mutableStateOf(PenCurve.entries.getOrElse(prefs.getInt("penCurve", 1)) { PenCurve.NORMAL })
+    /** The smallest a pressure-sized brush gets (fraction of its size), at the lightest touch. */
+    var penMinSize by mutableStateOf(prefs.getFloat("penMinSize", 0.15f))
+    /** Tilting the pen stretches the brush, like the side of a pencil. */
+    var penTilt by mutableStateOf(prefs.getBoolean("penTilt", true))
+    /** Flipping the pen to its eraser end erases. */
+    var penEraserEnd by mutableStateOf(prefs.getBoolean("penEraserEnd", true))
+    /** What the pen's side button does. */
+    var penButton by mutableStateOf(PenButton.byName(prefs.getString("penButton", null)))
+    /** The brush's outline follows the pen while it hovers over the screen. */
+    var penHover by mutableStateOf(prefs.getBoolean("penHover", true))
+    /** During a pen stroke: the tool the pen paints with instead of the one picked (its eraser end, or the side button). */
+    var penOverride by mutableStateOf<Tool?>(null)
+        internal set
 
     // ---------------------------------------------------------------- retouch brushes
     var retouchKind by mutableStateOf(com.tim.quartzeditor.engine.RetouchKind.byName(prefs.getString("retouchKind", null)))
@@ -748,8 +779,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** The tool a stroke paints with: the one picked, unless the pen's eraser end or button says otherwise. */
+    val paintTool: Tool get() = penOverride ?: tool
+
     /** Brush settings for the tool in use (eraser or brush). */
-    val currentBrush: BrushSettings get() = when (tool) {
+    val currentBrush: BrushSettings get() = when (paintTool) {
         Tool.ERASER -> eraser
         Tool.RETOUCH -> retouchBrush
         else -> brush
@@ -870,6 +904,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         size = prefs.getFloat("$key.size", def.size),
         softness = prefs.getFloat("$key.soft", def.softness),
         opacity = prefs.getFloat("$key.opacity", def.opacity),
+        pressureSize = prefs.getBoolean("$key.pSize", def.pressureSize),
+        pressureOpacity = prefs.getBoolean("$key.pOpacity", def.pressureOpacity),
     )
 
     private fun saveBrush(key: String, b: BrushSettings) {
@@ -878,6 +914,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("$key.size", b.size)
             .putFloat("$key.soft", b.softness)
             .putFloat("$key.opacity", b.opacity)
+            .putBoolean("$key.pSize", b.pressureSize)
+            .putBoolean("$key.pOpacity", b.pressureOpacity)
             .apply()
     }
 
