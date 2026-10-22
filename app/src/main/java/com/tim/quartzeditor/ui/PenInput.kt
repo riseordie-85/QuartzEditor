@@ -109,8 +109,18 @@ class PenTracker {
         return true
     }
 
-    /** The pen is on the screen or close above it (or was a moment ago): fingers are probably a resting hand. */
-    fun near(now: Long): Boolean = touching || hovering || now - lastSeen < 500
+    /**
+     * The pen is on the screen or close above it (or was a moment ago): fingers are probably a resting
+     * hand. A hovering pen keeps sending events, so going quiet means it's gone (even when its leaving
+     * was told to another part of the screen); one held still on the screen may be quiet a while.
+     */
+    fun near(now: Long): Boolean = (touching && now - lastSeen < 3000) || now - lastSeen < 500
+
+    /** The pen left the canvas, or its touch was taken back. */
+    fun left() {
+        touching = false
+        hovering = false
+    }
 
     /**
      * Which of the latest samples goes with point [k] of [m] (the change's historical points, then
@@ -156,6 +166,7 @@ internal fun EditorViewModel.notePenSeen() {
     if (penSeen) return
     penSeen = true
     prefs.edit().putBoolean("penSeen", true).apply()
+    if (penFingersNavigate) toast("Pen found: it paints, and fingers move the view. Settings → Pen to change")
 }
 
 /** Fingers move the view instead of painting. */

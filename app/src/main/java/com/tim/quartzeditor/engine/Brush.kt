@@ -303,8 +303,9 @@ class StrokeSession(
             stretch > 1f -> Math.toDegrees(azimuth.toDouble()).toFloat() - 90f
             else -> 0f
         }
-        // Pressure on opacity: overlapping dabs build up to the pressure's strength, not past it
-        val alpha = if (dynamics.opacity && p < 0.999f) {
+        // Pressure on opacity: overlapping dabs build up to the pressure's strength, not past it (the
+        // first dab on its own is the full strength, so a tap or a short stroke isn't faint)
+        val alpha = if (dynamics.opacity && p < 0.999f && dabCount == 0) p else if (dynamics.opacity && p < 0.999f) {
             val overlap = max(1f, drawn / spacingAt(p))
             (1f - Math.pow((1f - p).toDouble(), 1.0 / overlap).toFloat()).coerceIn(0f, 1f)
         } else 1f

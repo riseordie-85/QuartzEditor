@@ -380,7 +380,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** What the pen is doing right now (fed by every touch on the canvas). */
     val pen = PenTracker().also { t ->
         // The side button pressed while the pen hovers: undo, when that's what it does
-        t.onButtonPress = { if (penButton == PenButton.UNDO && !stroking) undo() }
+        t.onButtonPress = { if (penButton == PenButton.UNDO && !stroking && !penGesture) undo() }
     }
     /** A pen has been used here: the pen settings show, and fingers can move the view instead of painting. */
     var penSeen by mutableStateOf(prefs.getBoolean("penSeen", false))
@@ -399,6 +399,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var penButton by mutableStateOf(PenButton.byName(prefs.getString("penButton", null)))
     /** The brush's outline follows the pen while it hovers over the screen. */
     var penHover by mutableStateOf(prefs.getBoolean("penHover", true))
+    /** A finger or pen gesture is under way on the canvas (the pen's undo button waits). */
+    internal var penGesture = false
     /** During a pen stroke: the tool the pen paints with instead of the one picked (its eraser end, or the side button). */
     var penOverride by mutableStateOf<Tool?>(null)
         internal set
