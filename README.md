@@ -644,8 +644,9 @@ off, a model is missing) the chip says what ComfyUI said.
 - **Upscales**: "A bigger result makes the image bigger" (for workflows that send a picture; on at first
   for ones named "upscale") enlarges the whole image to the result's size when it comes back bigger, so
   the new layer keeps every pixel (Image Size, one more undo step). Only when the whole picture was sent
-  (not one small layer or a selection), and not while you're in the middle of a crop, transform or text
-  (it then says the size to use in Image → Image size). Off, it's fitted to the canvas (the
+  (not one small layer or a selection). It waits for anything still working; with the Crop or Transform
+  tool just open (nothing changed) it goes ahead and opens them again after; if you're really in the
+  middle of something (a crop you set, an adjustment being tried, text) it asks first. Off, it's fitted to the canvas (the
   full size stays inside the smart layer). Saved per workflow, in presets and bar buttons.
 - The window's settings sit on a card; the whole width scrolls, not just the middle.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has

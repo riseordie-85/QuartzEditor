@@ -38,6 +38,20 @@ fun FileDialogs(vm: EditorViewModel) {
             },
         )
     }
+    vm.comfyGrowAsk?.let { g ->
+        AlertDialog(
+            onDismissRequest = { vm.comfyGrowAsk = null },
+            title = { Text("Enlarge the image to ${g.w} × ${g.h}?") },
+            text = { Text("${g.name} came back bigger. You're in the middle of something (a crop, transform, adjustment or text): it's applied first, then the image is enlarged to match.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.comfyGrowAsk = null
+                    vm.growImage(g, ask = false)
+                }) { Text("Enlarge") }
+            },
+            dismissButton = { TextButton(onClick = { vm.comfyGrowAsk = null }) { Text("Not now") } },
+        )
+    }
     vm.draftAsk?.let { draft ->
         val at = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(draft.modified))
         AlertDialog(

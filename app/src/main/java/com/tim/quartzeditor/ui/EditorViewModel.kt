@@ -144,6 +144,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var closeAsk by mutableStateOf<com.tim.quartzeditor.engine.Doc?>(null)
     /** Opening a project that has unsaved changes in Drafts: which to open is being asked. */
     var draftAsk by mutableStateOf<com.tim.quartzeditor.engine.ProjectInfo?>(null)
+    /** A ComfyUI upscale came back while something was half done: enlarging the image is being asked. */
+    var comfyGrowAsk by mutableStateOf<ComfyGrow?>(null)
 
     // ------------------------------------------------------------ tools and colors
 

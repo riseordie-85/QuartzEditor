@@ -372,12 +372,12 @@ internal fun EditorViewModel.canvasTransform(
  * guide) to [w]×[h] canvas pixels, as one undo step. [scaleStyles]: stroke widths, shadows and glows
  * scale with it, so the picture looks the same.
  */
-fun EditorViewModel.resizeImage(w: Int, h: Int, scaleStyles: Boolean) {
+fun EditorViewModel.resizeImage(w: Int, h: Int, scaleStyles: Boolean, onDone: (() -> Unit)? = null) {
     val d = doc ?: return
     val nw = w.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
     val nh = h.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
     if (nw == d.width && nh == d.height) return
     val sx = nw.toFloat() / d.width
     val sy = nh.toFloat() / d.height
-    canvasTransform("Image size", nw, nh, styleScale = if (scaleStyles) kotlin.math.sqrt(sx * sy) else 1f) { m -> m.postScale(sx, sy) }
+    canvasTransform("Image size", nw, nh, onDone = onDone, styleScale = if (scaleStyles) kotlin.math.sqrt(sx * sy) else 1f) { m -> m.postScale(sx, sy) }
 }

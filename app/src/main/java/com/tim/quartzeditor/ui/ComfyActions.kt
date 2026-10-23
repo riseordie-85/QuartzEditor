@@ -83,6 +83,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -478,18 +479,8 @@ fun EditorViewModel.runComfy(
             // An upscale: the image grows to the result's size (the new smart layer keeps every pixel it came with)
             if (placed > 0 && growBy > 1.05f && doc === d && d.width == input.docW && d.height == input.docH) {
                 val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.MAX_SIDE.toFloat() / max(d.width, d.height))
-                val nw = (d.width * k).roundToInt()
-                val nh = (d.height * k).roundToInt()
-                // Not in the middle of something (a crop, a transform, text being typed…): that would be applied first
-                val free = busy == null && textEdit == null && cropBox == null && cropQuad == null && pendingFx == null && transform == null && warp == null && enhance == null
-                when {
-                    k <= 1.05f -> toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px), so the result is fitted to it")
-                    !free -> toast("${w.name}: came back ${(growBy * 100).roundToInt()}% bigger. Use Image → Image size to enlarge the image to $nw × $nh when you're done")
-                    else -> {
-                        resizeImage(nw, nh, scaleStyles = true)
-                        toast("${w.name}: the image is now $nw × $nh to match" + if (k < growBy - 0.01f) " (as big as it can be)" else "")
-                    }
-                }
+                if (k <= 1.05f) toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px), so the result is fitted to it")
+                else growImage(ComfyGrow(d, w.name, d.width, d.height, (d.width * k).roundToInt(), (d.height * k).roundToInt(), capped = k < growBy - 0.01f))
             }
         } catch (e: CancellationException) {
             socket?.close()
@@ -806,6 +797,51 @@ private fun resultImage(outputs: JSONObject, saveNodes: Set<String>): Triple<Str
     for (n in keys) from(n, true)?.let { return it }
     for (n in keys) from(n, false)?.let { return it }
     return null
+}
+
+/** An upscale's result came back bigger: the image is to grow from [fromW]×[fromH] to [w]×[h]. */
+class ComfyGrow(val doc: Doc, val name: String, val fromW: Int, val fromH: Int, val w: Int, val h: Int, val capped: Boolean)
+
+/**
+ * Enlarges the image for an upscale. It waits for anything still working; a crop or transform only
+ * opened by its tool (nothing changed yet) is put aside and opened again after. Anything really
+ * half done (a crop you set, an adjustment being tried, text being typed…) is asked about first.
+ */
+internal fun EditorViewModel.growImage(g: ComfyGrow, ask: Boolean = true) {
+    viewModelScope.launch {
+        androidx.compose.runtime.snapshotFlow { busy }.first { it == null }
+        val d = g.doc
+        if (doc !== d || d.width != g.fromW || d.height != g.fromH) {
+            toast("${g.name}: the picture changed meanwhile. Use Image → Image size for ${g.w} × ${g.h}")
+            return@launch
+        }
+        val box = cropBox
+        val reCrop = box != null && cropQuad == null && box.left <= 0.5f && box.top <= 0.5f && box.right >= d.width - 0.5f && box.bottom >= d.height - 0.5f
+        if (reCrop) cropBox = null
+        val t = transform
+        val reTransform = t != null && t.state == t.start
+        if (reTransform) {
+            transform = null
+            preview = null
+            d.invalidate()
+        }
+        val halfDone = textEdit != null || cropBox != null || cropQuad != null || pendingFx != null || transform != null || warp != null || enhance != null
+        if (halfDone && ask) {
+            comfyGrowAsk = g
+            return@launch
+        }
+        // (Asked and answered: what's half done is applied first, unless that changes the size)
+        if (pendingFirst { growImage(g, ask = false) }) return@launch
+        if (d.width != g.fromW || d.height != g.fromH) {
+            toast("${g.name}: the canvas changed size. Use Image → Image size to enlarge it")
+            return@launch
+        }
+        resizeImage(g.w, g.h, scaleStyles = true) {
+            if (reCrop && tool == Tool.CROP) beginCrop()
+            if (reTransform && tool == Tool.TRANSFORM) beginTransform()
+            toast("${g.name}: the image is now ${g.w} × ${g.h} to match" + if (g.capped) " (as big as it can be)" else "")
+        }
+    }
 }
 
 /** The result as a new smart layer above the active one (shaped by the selection when one was used). */
