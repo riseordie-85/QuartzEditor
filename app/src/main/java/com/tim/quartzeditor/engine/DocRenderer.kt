@@ -943,15 +943,39 @@ object DocRenderer {
     }
 
     /** The color you see at one canvas pixel (all visible layers), or null where it's see-through. */
-    fun sample(doc: Doc, x: Int, y: Int, effects: ((Layer) -> BuiltEffects?)? = null): Int? {
+    fun sample(doc: Doc, x: Int, y: Int, effects: ((Layer) -> BuiltEffects?)? = null, radius: Int = 0): Int? {
         if (x !in 0 until doc.width || y !in 0 until doc.height) return null
-        val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        // The square around the point (the part on the canvas), averaged
+        val l = (x - radius).coerceAtLeast(0)
+        val t = (y - radius).coerceAtLeast(0)
+        val r = (x + radius + 1).coerceAtMost(doc.width)
+        val b = (y + radius + 1).coerceAtMost(doc.height)
+        val bmp = Bitmap.createBitmap(r - l, b - t, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        c.translate(-x.toFloat(), -y.toFloat())
-        draw(c, doc, RectF(x.toFloat(), y.toFloat(), x + 1f, y + 1f), smooth = false, effects = effects)
-        val px = bmp.getPixel(0, 0)
+        c.translate(-l.toFloat(), -t.toFloat())
+        draw(c, doc, RectF(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat()), smooth = false, effects = effects)
+        val px = IntArray(bmp.width * bmp.height)
+        bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
         bmp.recycle()
-        return if (Color.alpha(px) < 8) null else px or 0xFF000000.toInt()
+        return averageColor(px)
+    }
+
+    /** The average of [px] (ARGB), each counted by how solid it is; null when they're (nearly) all see-through. */
+    fun averageColor(px: IntArray): Int? {
+        var a = 0.0
+        var rs = 0.0
+        var gs = 0.0
+        var bs = 0.0
+        for (p in px) {
+            val al = (p ushr 24) and 0xFF
+            if (al == 0) continue
+            a += al
+            rs += ((p shr 16) and 0xFF) * al.toDouble()
+            gs += ((p shr 8) and 0xFF) * al.toDouble()
+            bs += (p and 0xFF) * al.toDouble()
+        }
+        if (a / px.size.coerceAtLeast(1) < 8.0) return null
+        return Color.rgb((rs / a).roundToInt(), (gs / a).roundToInt(), (bs / a).roundToInt())
     }
 
     /** True when the layer has a visible pixel at canvas point ([x], [y]). */

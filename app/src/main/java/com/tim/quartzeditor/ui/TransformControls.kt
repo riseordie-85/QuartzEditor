@@ -69,6 +69,19 @@ fun TransformBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         }
+        // Bending instead: the transform so far is applied, then the warp starts
+        listOf(com.tim.quartzeditor.engine.WarpKind.WARP, com.tim.quartzeditor.engine.WarpKind.PUPPET).forEach { k ->
+            Text(
+                k.label,
+                color = Q.text,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Q.field)
+                    .clickable { vm.chooseWarp(k) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
         Spacer(Modifier.width(4.dp))
         Box(
             contentAlignment = Alignment.Center,

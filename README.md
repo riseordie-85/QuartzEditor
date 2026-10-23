@@ -79,10 +79,22 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   and shapes, mask, pattern, crop), **Filter** (the adjustments and filters on the layer, Enhance, ComfyUI),
   **View** (fit, 100 %, zoom, canvas turning, fingers, snap, grid, rulers and guides) and **Window** (show
   or hide the panels and each section, keep sections open). The image's name and undo/redo are at the right.
-- **Options bar** under it: the tool in use and its settings. Brushes: tip, size, opacity (strength),
-  softness, smoothing, taper in/out, and the pen's pressure switches. Other tools show their bar here
-  (selection modes, transform, crop, warp, pen, text) instead of over the picture.
-- **Toolbar**: as before, with only tall **size and opacity** sliders beside it for the brushes.
+  A menu's pages open **beside it** (tap, or hover with the pen); long menus scroll.
+- **Options bar** under it: the tool in use and its settings.
+  - Brushes: tip, size, opacity (strength), softness, smoothing, taper in/out, the pen's pressure
+    switches, and **Side sliders** (turns the tall sliders beside the tools on or off; also in View).
+  - Select: its bar (modes, select all, deselect, invert, ⋮), with **Subject**, **Background**, **Sky** and
+    **Color range** always at the right.
+  - Transform: flips, turns, Free / Skew / Perspective / Distort, then **Warp** and **Puppet Warp** (the
+    transform so far is applied, then the warp starts).
+  - Shape: **fill** (color, on/off), **stroke** (color, on/off, width in px, solid / dashed / dotted) and a
+    rectangle's **corner radius** (all corners), for the shape layer you're on or new shapes.
+  - Text: **font**, **weight** (a downloaded font's own weights and italic; other fonts get bold and
+    italic), **size**, **left / center / right**, **color**, and a text layer's **warp**.
+  - Eyedropper: **sample size** (point, 3×3, 5×5, 11×11, 31×31, 51×51, 101×101, averaged) and **All
+    layers** (off: just the colors on the layer you're on). Also in Properties.
+  - Crop, warp and pen show their bars here; the text field stays over the picture.
+- **Toolbar**: as before, with tall **size and opacity** sliders beside it for the brushes (can be turned off).
 - **Panels**: drag their left edge to make them wider or narrower (remembered). **History** is a panel
   section of its own (on phones too): tap a step to go back to it.
 - **Status bar** at the bottom: zoom (tap for Fit and 25–400 %), how far the canvas is turned (tap to
@@ -91,7 +103,7 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   (or a mouse's right button) on a layer opens its menu, like a long press.
 
 ### Toolbar
-Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape (hold for Custom shapes), Text, Brush/Eraser,
+Top to bottom: ☰ Menu, Move, Select, Transform (and the warps), Crop (and Perspective crop), Healing, Fill, Toning, Pen, Shape (hold for Custom shapes), Text, Brush/Eraser,
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
@@ -114,9 +126,16 @@ the list; the button shows the one you used last.
   device: a first look at the whole picture, a second, closer look at the area around the subject, then
   the edge is snapped to the picture's own edges (hair and fine outlines follow what's really there). Remove
   background uses the same. The bar on the picture: New / Add / Subtract / Intersect, Select all, Deselect, Invert, and ⋮ with
-  pages for Modify edge (Feather, Expand / Shrink), Select (subject, background), New layer (Copy or Cut, or
+  pages for Modify edge (Feather, Expand / Shrink), Select (subject, background, sky, color range, the
+  layer's pixels), New layer (Copy or Cut, or
   **Shape from selection**), Fill and remove (Fill, Delete selected pixels, AI Remove selected), then Mask
   from selection, Define pattern and Crop to selection.
+  - **Select sky** finds the sky with the on-device depth model (like Replace sky), soft at its edges.
+  - **Color range…** (like Photoshop's): a sampled color (the foreground color, or "Pick on the picture"
+    and touch it) with **Fuzziness**, or Reds / Yellows / Greens / Cyans / Blues / Magentas, Highlights /
+    Midtones / Shadows, or Skin tones; every layer or just this one; Invert. A black-and-white preview
+    shows what it picks out (white is selected), softly at the edges; it combines by the selection mode.
+  - **Layer's pixels** selects what's on the layer you're on (like Ctrl-clicking its thumbnail).
   - **Shape from selection** traces the selection's edge (where it's at least half selected; any kind of
     selection, Select subject and the magic wand too) into a shape layer filled with the foreground color.
     Straight runs stay straight, sharp turns stay corners, the rest become smooth curves. One outline makes

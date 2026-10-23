@@ -418,6 +418,7 @@ fun Workspace(vm: EditorViewModel) {
     }, onDismiss = { comfyOpen = false })
 
     RasterizeDialog(vm)
+    ColorRangeDialog(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
     if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
     // After opening a Photoshop file: what didn't come across exactly

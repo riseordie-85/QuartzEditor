@@ -117,10 +117,19 @@ fun EditorViewModel.selectLayerAt(x: Float, y: Float) {
     if (hit != null && hit.id != d.activeId) selectLayer(hit.id)
 }
 
-/** Eyedropper: sets the color in the slot being edited from the image. */
+/**
+ * Eyedropper: sets the color in the slot being edited from the image (the average of the square
+ * the sample size says), from everything you see or just the layer you're on.
+ */
 fun EditorViewModel.sampleAt(x: Float, y: Float, commit: Boolean): Int? {
     val d = doc ?: return null
-    val c = (if (d.layers.any { it.isAdjustment && d.effectivelyVisible(it) }) sampleFromPicture(d, x.toInt(), y.toInt()) else DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup)) ?: return null
+    val r = ((eyedropSize - 1) / 2).coerceIn(0, 50)
+    val layer = d.active?.takeIf { !eyedropAllLayers && it.hasContent && !it.isGroup && !it.isAdjustment }
+    val c = when {
+        layer != null -> sampleLayer(layer, x.toInt(), y.toInt(), r)
+        d.layers.any { it.isAdjustment && d.effectivelyVisible(it) } -> sampleFromPicture(d, x.toInt(), y.toInt(), r)
+        else -> DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup, r)
+    } ?: return null
     if (commit) {
         setColor(colorSlot, c)
         rememberColor(c)
@@ -128,7 +137,21 @@ fun EditorViewModel.sampleAt(x: Float, y: Float, commit: Boolean): Int? {
     return c
 }
 
-internal fun EditorViewModel.sampleFromPicture(d: Doc, x: Int, y: Int): Int? {
+/** The color of [layer]'s own pixels around canvas point ([x], [y]) ([r] each way, averaged). */
+private fun sampleLayer(layer: com.tim.quartzeditor.engine.Layer, x: Int, y: Int, r: Int): Int? {
+    val n = 2 * r + 1
+    val px = IntArray(n * n)
+    var i = 0
+    for (yy in y - r..y + r) for (xx in x - r..x + r) {
+        val lx = xx - layer.x
+        val ly = yy - layer.y
+        val tile = layer.tiles[com.tim.quartzeditor.engine.TileGrid.key(Math.floorDiv(lx, com.tim.quartzeditor.engine.TileGrid.SIZE), Math.floorDiv(ly, com.tim.quartzeditor.engine.TileGrid.SIZE))]
+        px[i++] = tile?.getPixel(Math.floorMod(lx, com.tim.quartzeditor.engine.TileGrid.SIZE), Math.floorMod(ly, com.tim.quartzeditor.engine.TileGrid.SIZE)) ?: 0
+    }
+    return DocRenderer.averageColor(px)
+}
+
+internal fun EditorViewModel.sampleFromPicture(d: Doc, x: Int, y: Int, r: Int = 0): Int? {
     if (x !in 0 until d.width || y !in 0 until d.height) return null
     val v = d.renderVersion
     if (samplePictureVersion != v && sampleJob?.isActive != true) {
@@ -148,6 +171,12 @@ internal fun EditorViewModel.sampleFromPicture(d: Doc, x: Int, y: Int): Int? {
         }
     }
     val pic = samplePicture?.takeIf { it.width == d.width && it.height == d.height } ?: return null
-    val px = pic.getPixel(x, y)
-    return if (Color.alpha(px) < 8) null else px or 0xFF000000.toInt()
+    val l = (x - r).coerceAtLeast(0)
+    val t = (y - r).coerceAtLeast(0)
+    val w = (x + r + 1).coerceAtMost(d.width) - l
+    val h = (y + r + 1).coerceAtMost(d.height) - t
+    if (w <= 0 || h <= 0) return null
+    val px = IntArray(w * h)
+    pic.getPixels(px, 0, w, l, t, w, h)
+    return DocRenderer.averageColor(px)
 }

@@ -211,6 +211,22 @@ fun ToolOptions(vm: EditorViewModel) {
                 color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
             Spacer(Modifier.height(10.dp))
         }
+        Tool.EYEDROPPER -> {
+            Title("Eyedropper")
+            Text("Sample size", color = Q.textDim, fontSize = 12.sp)
+            Spacer(Modifier.height(4.dp))
+            val sizes = listOf(1, 3, 5, 11, 31, 51, 101)
+            ChipRow(sizes.map { if (it == 1) "Point" else "$it×$it" }, sizes.indexOf(vm.eyedropSize).coerceAtLeast(0)) { i ->
+                vm.eyedropSize = sizes[i]
+                vm.prefs.edit().putInt("eyedropSize", sizes[i]).apply()
+            }
+            Spacer(Modifier.height(6.dp))
+            ToggleRow("Sample all layers (off: just this one)", vm.eyedropAllLayers) {
+                vm.eyedropAllLayers = it
+                vm.prefs.edit().putBoolean("eyedropAll", it).apply()
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         else -> Unit
     }
 }
@@ -342,6 +358,9 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 Page("Select") {
                     Item("Select subject", Icons.Outlined.PersonOutline) { vm.selectSubject(background = false) }
                     Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
+                    Item("Select sky") { vm.selectSky() }
+                    Item("Color range…") { vm.openColorRange() }
+                    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id) } }
                 }
                 Divider()
                 Page("New layer") {

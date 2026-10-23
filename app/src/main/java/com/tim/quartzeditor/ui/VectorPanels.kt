@@ -69,6 +69,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -980,5 +982,234 @@ private fun ShapeFillKind(vm: EditorViewModel, spec: com.tim.quartzeditor.engine
         }
         PanelSlider("Pattern size", p.scale, 0.1f..4f, "${(p.scale * 100).roundToInt()}%",
             onChange = { v -> set("Pattern size", true) { it.copy(fillPattern = it.fillPattern?.copy(scale = v)) } }, onDone = { done("Pattern size") })
+    }
+}
+
+// ===================================================================== the options bar (menu bar layout)
+
+/** A label for the options bar. */
+@Composable
+private fun BarLabel(text: String) {
+    Text(text, color = Q.textDim, fontSize = 12.sp)
+}
+
+/** A small drop-down for the options bar: [current] shown, [items] listed. */
+@Composable
+private fun BarDropdown(current: String, items: List<String>, width: androidx.compose.ui.unit.Dp = 110.dp, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .width(width)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Q.field)
+                .clickable { open = true }
+                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        ) {
+            Text(current, color = Q.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = Q.textDim, modifier = Modifier.size(18.dp))
+        }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            items.forEachIndexed { i, label ->
+                androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, onClick = {
+                    open = false
+                    onPick(i)
+                })
+            }
+        }
+    }
+}
+
+/**
+ * Shape options for the options bar: fill, outline (color, width, solid/dashed/dotted) and a
+ * rectangle's corner radius. Like [ShapeOptions], they change the selected shape layer and are what
+ * new shapes are drawn with.
+ */
+@Composable
+fun ShapeBarOptions(vm: EditorViewModel, modifier: Modifier = Modifier) {
+    val layer = vm.doc?.active?.takeIf { it.isShape }
+    val spec = layer?.props?.shape ?: vm.shapeStyle.copy(kind = vm.shapeKind)
+    var picking by remember { mutableStateOf<String?>(null) }
+    fun set(label: String, live: Boolean = false, change: (ShapeSpec) -> ShapeSpec) {
+        vm.shapeStyle = change(vm.shapeStyle)
+        if (layer != null) {
+            if (live) vm.editVectorLive(layer.id) { p -> p.copy(shape = p.shape?.let(change)) }
+            else vm.editVector(layer.id, label) { p -> p.copy(shape = p.shape?.let(change)) }
+            vm.resetShapeSwitches()
+        } else if (!live) {
+            vm.saveVectorPrefs()
+        }
+    }
+    fun done(label: String) {
+        if (layer != null) vm.commitVector(label)
+        vm.saveVectorPrefs()
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+    ) {
+        val canFill = spec.kind != ShapeKind.PATH || spec.closed
+        if (canFill) {
+            BarLabel("Fill")
+            if (spec.fill != null) ColorChip(spec.fill) { picking = "fill" }
+            BarChip(if (spec.fill != null) "On" else "Off", spec.fill != null) {
+                val on = spec.fill == null
+                if (!on) vm.lastShapeFill = spec.fill
+                val c = vm.lastShapeFill ?: vm.foreground
+                set(if (on) "Fill on" else "Fill off") { it.copy(fill = if (on) c else null) }
+            }
+            Spacer(Modifier.width(6.dp))
+        }
+        BarLabel("Stroke")
+        if (spec.stroke != null) ColorChip(spec.stroke) { picking = "stroke" }
+        BarChip(if (spec.stroke != null) "On" else "Off", spec.stroke != null) {
+            val on = spec.stroke == null
+            if (!on) vm.lastShapeStroke = spec.stroke
+            val c = vm.lastShapeStroke ?: AColor.BLACK
+            set(if (on) "Outline on" else "Outline off") { it.copy(stroke = if (on) c else null) }
+        }
+        if (spec.hasStroke) {
+            PanelField(
+                formatPx(spec.strokeWidth),
+                onCommit = { s -> s.toFloatOrNull()?.let { v -> set("Outline width") { it.copy(strokeWidth = v.coerceIn(0.5f, 300f)) } } },
+                numeric = true,
+                modifier = Modifier.width(56.dp),
+            )
+            BarLabel("px")
+            val dashes = listOf<List<Float>?>(null, listOf(3f, 2f), listOf(0f, 2f))
+            val which = dashes.indexOfFirst { it == spec.dash }.let { if (it < 0) 1 else it }
+            val styles = listOf("Solid", "Dashed", "Dotted")
+            BarDropdown(styles[which], styles, width = 96.dp) { i -> set("Outline style") { it.copy(dash = dashes[i]) } }
+        }
+        if (spec.kind == ShapeKind.RECT) {
+            Spacer(Modifier.width(6.dp))
+            BarLabel("Corners")
+            PanelField(
+                spec.radius.roundToInt().toString(),
+                onCommit = { s -> s.toFloatOrNull()?.let { v -> set("Corner radius") { it.copy(radius = v.coerceIn(0f, 5000f)) } } },
+                numeric = true,
+                modifier = Modifier.width(56.dp),
+            )
+            BarLabel("px")
+        }
+    }
+    picking?.let { which ->
+        val start = (if (which == "fill") spec.fill else spec.stroke) ?: vm.foreground
+        ColorPickDialog(
+            vm, start, title = if (which == "fill") "Fill color" else "Outline color",
+            onLive = { c -> set("Color", live = true) { if (which == "fill") it.copy(fill = c) else it.copy(stroke = c) } },
+            onDone = {
+                picking = null
+                done(if (which == "fill") "Fill color" else "Outline color")
+            },
+        )
+    }
+}
+
+private val WEIGHTS = listOf(100 to "Thin", 200 to "Extra light", 300 to "Light", 400 to "Regular", 500 to "Medium", 600 to "Semibold", 700 to "Bold", 800 to "Extra bold", 900 to "Black")
+
+/**
+ * Text options for the options bar: font, weight, size, alignment, color and (for a text layer)
+ * its warp. Like [TextOptions], they change the selected text layer and are what new text starts with.
+ */
+@Composable
+fun TextBarOptions(vm: EditorViewModel, modifier: Modifier = Modifier) {
+    val layer = vm.doc?.active?.takeIf { it.isText }
+    val spec = layer?.props?.text ?: vm.textStyle
+    var picking by remember { mutableStateOf(false) }
+    var fonts by remember { mutableStateOf(false) }
+    fun set(label: String, live: Boolean = false, change: (TextSpec) -> TextSpec) {
+        vm.textStyle = change(vm.textStyle)
+        if (layer != null) {
+            if (live) vm.editVectorLive(layer.id) { p -> p.copy(text = p.text?.let(change)) }
+            else vm.editVector(layer.id, label) { p -> p.copy(text = p.text?.let(change)) }
+        }
+        if (!live) vm.saveVectorPrefs()
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+    ) {
+        // Font
+        val fontVersion by Fonts.version.collectAsState()
+        val tf = if (fontVersion >= 0) Fonts.cached(spec.fontKey) else null
+        val google = spec.fontKey.startsWith("g:")
+        val family = if (google) spec.fontKey.removePrefix("g:").substringBefore('@') else null
+        Text(
+            if (family != null) family else Fonts.label(spec.fontKey),
+            color = Q.text,
+            fontSize = 14.sp,
+            fontFamily = tf?.let { FontFamily(ComposeTypeface(it)) },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .width(150.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Q.field)
+                .clickable { fonts = true }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        // Weight: a downloaded font's own weights; any other font can be made bold
+        if (family != null) {
+            val style = spec.fontKey.substringAfter('@', "")
+            val weight = style.trimEnd('i').toIntOrNull() ?: 400
+            val italic = style.endsWith('i')
+            fun key(w: Int, it: Boolean) = "g:$family" + if (w == 400 && !it) "" else "@$w" + (if (it) "i" else "")
+            BarDropdown(WEIGHTS.firstOrNull { it.first == weight }?.second ?: "$weight", WEIGHTS.map { it.second }, width = 110.dp) { i ->
+                set("Font weight") { it.copy(fontKey = key(WEIGHTS[i].first, italic)) }
+            }
+            IconToggle(Icons.Outlined.FormatItalic, "Italic", italic) { set("Italic") { it.copy(fontKey = key(weight, !italic)) } }
+        } else {
+            IconToggle(Icons.Outlined.FormatBold, "Bold", spec.fauxBold) { set("Bold") { it.copy(fauxBold = !it.fauxBold) } }
+            IconToggle(Icons.Outlined.FormatItalic, "Italic", spec.fauxItalic) { set("Italic") { it.copy(fauxItalic = !it.fauxItalic) } }
+        }
+        // Size
+        PanelField(
+            if (spec.size > 0f) spec.size.roundToInt().toString() else "Auto",
+            onCommit = { s -> s.toFloatOrNull()?.let { v -> set("Text size") { it.copy(size = v.coerceIn(1f, 4000f)) } } },
+            numeric = true,
+            modifier = Modifier.width(60.dp),
+        )
+        BarLabel("px")
+        // Alignment
+        val aligns = listOf(Icons.Outlined.FormatAlignLeft, Icons.Outlined.FormatAlignCenter, Icons.Outlined.FormatAlignRight)
+        TextAlignOption.entries.forEachIndexed { i, a ->
+            IconToggle(aligns[i], "Align ${a.label.lowercase()}", spec.align == a) { set("Align text") { it.copy(align = a) } }
+        }
+        // Color
+        ColorChip(spec.color) { picking = true }
+        // Warp (a text layer's own; new text starts straight)
+        if (layer != null) {
+            BarLabel("Warp")
+            val w = spec.warp
+            val styles = listOf("None") + com.tim.quartzeditor.engine.WarpStyle.entries.map { it.label }
+            BarDropdown(w?.style?.label ?: "None", styles, width = 120.dp) { i ->
+                vm.editVector(layer.id, "Warp text") { p ->
+                    p.copy(text = p.text?.let { t ->
+                        t.copy(warp = if (i == 0) null else com.tim.quartzeditor.engine.WarpStyle.entries[i - 1].let { st -> t.warp?.copy(style = st) ?: com.tim.quartzeditor.engine.TextWarp(st) })
+                    })
+                }
+            }
+        }
+    }
+    if (picking) {
+        ColorPickDialog(
+            vm, spec.color, title = "Text color",
+            onLive = { c -> set("Text color", live = true) { it.copy(color = c) } },
+            onDone = {
+                picking = false
+                if (layer != null) vm.commitVector("Text color")
+                vm.saveVectorPrefs()
+            },
+        )
+    }
+    if (fonts) {
+        FontPickDialog(spec.fontKey, onDismiss = { fonts = false }) { key ->
+            fonts = false
+            set("Font") { it.copy(fontKey = key) }
+        }
     }
 }

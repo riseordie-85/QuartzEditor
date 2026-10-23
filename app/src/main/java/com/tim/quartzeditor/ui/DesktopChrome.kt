@@ -25,6 +25,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
@@ -141,7 +145,8 @@ private fun MenuTitle(label: String, bold: Boolean = false, content: @Composable
                 .clickable { open = true }
                 .padding(horizontal = 11.dp, vertical = 7.dp),
         )
-        PagedDropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 620.dp)) { content() }
+        // Its pages open beside it; long menus scroll instead of running down the screen
+        PagedDropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 520.dp), cascade = true) { content() }
     }
 }
 
@@ -201,6 +206,9 @@ fun ToolOptionsBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Box(Modifier.padding(horizontal = 12.dp).width(1.dp).height(24.dp).background(Q.divider))
         when (vm.tool) {
             Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> BrushOptions(vm, Modifier.weight(1f))
+            Tool.SHAPE -> ShapeBarOptions(vm, Modifier.weight(1f))
+            Tool.TEXT -> TextBarOptions(vm, Modifier.weight(1f))
+            Tool.EYEDROPPER -> EyedropperOptions(vm, Modifier.weight(1f))
             else -> Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 // At most one of these is showing (each knows when it's needed; the text field stays over the picture)
                 TransformBar(vm)
@@ -208,11 +216,41 @@ fun ToolOptionsBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 CropBar(vm)
                 WarpBar(vm)
                 PenBar(vm)
-                if (vm.tool == Tool.MOVE || vm.tool == Tool.PAN || vm.tool == Tool.EYEDROPPER || vm.tool == Tool.BUCKET || vm.tool == Tool.GRADIENT || vm.tool == Tool.SHAPE) {
+                if (vm.tool == Tool.MOVE || vm.tool == Tool.PAN || vm.tool == Tool.BUCKET || vm.tool == Tool.GRADIENT) {
                     Text("More settings in Properties", color = Q.textDim, fontSize = 12.sp)
                 }
             }
         }
+        // Selecting: the AI selections, always at hand
+        if (vm.tool == Tool.SELECT) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(start = 8.dp)) {
+                OptionChip("Subject", false, Icons.Outlined.PersonOutline) { vm.selectSubject(background = false) }
+                OptionChip("Background", false, Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
+                OptionChip("Sky", false, Icons.Outlined.Cloud) { vm.selectSky() }
+                OptionChip("Color range", false, Icons.Outlined.Palette) { vm.openColorRange() }
+            }
+        }
+    }
+}
+
+/** Eyedropper: how much it averages, and whether it sees every layer or just the one you're on. */
+@Composable
+private fun EyedropperOptions(vm: EditorViewModel, modifier: Modifier) {
+    val sizes = listOf(1, 3, 5, 11, 31, 51, 101)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.horizontalScroll(rememberScrollState())) {
+        Text("Sample size", color = Q.textDim, fontSize = 12.sp)
+        sizes.forEach { n ->
+            OptionChip(if (n == 1) "Point" else "$n×$n", vm.eyedropSize == n) {
+                vm.eyedropSize = n
+                vm.prefs.edit().putInt("eyedropSize", n).apply()
+            }
+        }
+        Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(24.dp).background(Q.divider))
+        OptionChip("All layers", vm.eyedropAllLayers) {
+            vm.eyedropAllLayers = !vm.eyedropAllLayers
+            vm.prefs.edit().putBoolean("eyedropAll", vm.eyedropAllLayers).apply()
+        }
+        Text(if (vm.eyedropAllLayers) "Everything you see" else "Just the layer you're on", color = Q.textDim, fontSize = 12.sp)
     }
 }
 
@@ -262,6 +300,7 @@ private fun BrushOptions(vm: EditorViewModel, modifier: Modifier) {
             OptionSlider("Taper in", b.taperStart, "${(b.taperStart * 100).roundToInt()}%") { v -> vm.updateBrush(forTool) { it.copy(taperStart = v) } }
             OptionSlider("Taper out", b.taperEnd, "${(b.taperEnd * 100).roundToInt()}%") { v -> vm.updateBrush(forTool) { it.copy(taperEnd = v) } }
         }
+        OptionChip("Side sliders", vm.sideSliders) { vm.toggleSideSliders() }
         if (vm.penSeen) {
             Text("Pressure", color = Q.textDim, fontSize = 12.sp)
             if (!retouch) OptionChip("Size", b.pressureSize, Icons.Outlined.Draw) { vm.updateBrush(forTool) { it.copy(pressureSize = !b.pressureSize) } }

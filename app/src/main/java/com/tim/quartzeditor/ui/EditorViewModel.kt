@@ -150,6 +150,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var wandTolerance by mutableFloatStateOf(prefs.getFloat("wandTol", 0.12f))
     var wandContiguous by mutableStateOf(prefs.getBoolean("wandContig", true))
     var wandAllLayers by mutableStateOf(prefs.getBoolean("wandAll", false))
+    /** Color Range being set up (null = closed), and whether its color is being picked from the picture. */
+    var colorRange by mutableStateOf<ColorRangeParams?>(null)
+    var pickingForRange by mutableStateOf(false)
+    /** Eyedropper: how many pixels across it averages (1 = just the one), and whether it sees every layer. */
+    var eyedropSize by mutableIntStateOf(prefs.getInt("eyedropSize", 1))
+    var eyedropAllLayers by mutableStateOf(prefs.getBoolean("eyedropAll", true))
 
     var bucketTolerance by mutableFloatStateOf(prefs.getFloat("bucketTol", 0.12f))
     var bucketContiguous by mutableStateOf(prefs.getBoolean("bucketContig", true))
@@ -534,6 +540,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseLayout(l: UiLayout) {
         uiLayout = l
         prefs.edit().putString("uiLayout", l.name).apply()
+    }
+
+    /** Menu bar layout: the tall size and opacity sliders beside the tools (the options bar has them too). */
+    var sideSliders by mutableStateOf(prefs.getBoolean("sideSliders", true))
+        private set
+
+    fun toggleSideSliders() {
+        sideSliders = !sideSliders
+        prefs.edit().putBoolean("sideSliders", sideSliders).apply()
     }
 
     /** How wide the panels are in the menu bar layout (dp). */

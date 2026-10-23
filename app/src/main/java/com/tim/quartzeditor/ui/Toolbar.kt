@@ -54,6 +54,8 @@ import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Details
 import androidx.compose.material.icons.outlined.BlurOn
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.LightMode
@@ -117,7 +119,8 @@ import kotlin.math.sin
 fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier, slim: Boolean = false, menu: @Composable (Dp) -> Unit = {}) {
     val buttonSize = if (compact) 40.dp else 46.dp
     val liquify = vm.tool == Tool.WARP && vm.warp?.kind == com.tim.quartzeditor.engine.WarpKind.LIQUIFY
-    val showBrush = ((vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden) || liquify
+    // (Menu bar layout: the brushes' sliders beside the tools can be turned off; Liquify's always show)
+    val showBrush = ((vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden && (!slim || vm.sideSliders)) || liquify
     Row(
         modifier
             .fillMaxHeight()
@@ -139,7 +142,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
     BoxWithConstraints(Modifier.width(if (compact || Q.compact) 52.dp else 62.dp).fillMaxHeight()) {
         // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space, 2dp when compact) and the two
         // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
-        val fitted = (maxHeight - Q.gap(124.dp, 64.dp)) / 13.8f
+        val fitted = (maxHeight - Q.gap(130.dp, 66.dp)) / 14.8f
         val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
         val swatchSize = buttonSize * 0.9f
         val tight = fitted < MIN_TOOL_BUTTON
@@ -169,37 +172,33 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                     listOf(
                         ToolOption(Icons.Outlined.PersonOutline, "Select subject", false, divider = true) { vm.selectSubject(background = false) },
                         ToolOption(Icons.Outlined.Landscape, "Select background", false) { vm.selectSubject(background = true) },
+                        ToolOption(Icons.Outlined.Cloud, "Select sky", false) { vm.selectSky() },
+                        ToolOption(Icons.Outlined.Palette, "Color range…", false) { vm.openColorRange() },
                         ToolOption(Icons.Outlined.InvertColors, "Invert selection", false) { vm.invertSelection() },
                     ),
             ) { vm.onToolButton(Tool.SELECT) }
-            // 4. Transform, the warps, Crop
+            // 4. Transform and the warps
             ToolButton(
-                when (t) {
-                    Tool.WARP -> warpIcon(vm.warpKind)
-                    Tool.CROP -> if (vm.cropPerspective) QIcons.PerspectiveCrop else Icons.Outlined.Crop
-                    else -> QIcons.Transform
-                },
-                when (t) {
-                    Tool.WARP -> "${vm.warpKind.label} (hold for Transform, Crop and the others)"
-                    Tool.CROP -> "${if (vm.cropPerspective) "Perspective crop" else "Crop"} (hold for Transform and the others)"
-                    else -> "Transform (hold for Warp, Puppet Warp, Liquify, Crop)"
-                },
-                t == Tool.TRANSFORM || t == Tool.WARP || t == Tool.CROP, buttonSize,
+                if (t == Tool.WARP) warpIcon(vm.warpKind) else QIcons.Transform,
+                if (t == Tool.WARP) "${vm.warpKind.label} (hold for Transform and the others)" else "Transform (hold for Warp, Puppet Warp, Liquify)",
+                t == Tool.TRANSFORM || t == Tool.WARP, buttonSize,
                 options = listOf(ToolOption(QIcons.Transform, "Transform", t == Tool.TRANSFORM) { vm.onToolButton(Tool.TRANSFORM) }) +
                     com.tim.quartzeditor.engine.WarpKind.entries.map { k ->
                         ToolOption(warpIcon(k), k.label, t == Tool.WARP && vm.warpKind == k) { vm.chooseWarp(k) }
-                    } +
-                    listOf(
-                        ToolOption(Icons.Outlined.Crop, "Crop", t == Tool.CROP && !vm.cropPerspective, divider = true) { vm.chooseCrop(perspective = false) },
-                        ToolOption(QIcons.PerspectiveCrop, "Perspective crop", t == Tool.CROP && vm.cropPerspective) { vm.chooseCrop(perspective = true) },
-                    ),
+                    },
             ) {
-                when (t) {
-                    Tool.WARP -> vm.beginWarp()
-                    Tool.CROP -> Unit
-                    else -> vm.onToolButton(Tool.TRANSFORM)
-                }
+                if (t == Tool.WARP) vm.beginWarp() else vm.onToolButton(Tool.TRANSFORM)
             }
+            // 5. Crop and Perspective crop
+            ToolButton(
+                if (vm.cropPerspective) QIcons.PerspectiveCrop else Icons.Outlined.Crop,
+                if (vm.cropPerspective) "Perspective crop (hold for Crop)" else "Crop (hold for Perspective crop)",
+                t == Tool.CROP, buttonSize,
+                options = listOf(
+                    ToolOption(Icons.Outlined.Crop, "Crop", t == Tool.CROP && !vm.cropPerspective) { vm.chooseCrop(perspective = false) },
+                    ToolOption(QIcons.PerspectiveCrop, "Perspective crop", t == Tool.CROP && vm.cropPerspective) { vm.chooseCrop(perspective = true) },
+                ),
+            ) { if (t != Tool.CROP) vm.chooseCrop(perspective = vm.cropPerspective) }
             // 5. Healing: Spot healing, AI Remove, Clone stamp
             val healing = t == Tool.RETOUCH && vm.retouchKind.heals
             val healShown = if (healing) vm.retouchKind else com.tim.quartzeditor.engine.RetouchKind.byName(vm.prefs.getString("lastHeal", null)).takeIf { it.heals } ?: com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL

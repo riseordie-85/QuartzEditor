@@ -363,6 +363,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             vm.tempPan -> Tool.PAN
                             penErases -> Tool.ERASER
                             penPicks -> Tool.EYEDROPPER
+                            // Color Range's color, picked from the picture
+                            vm.pickingForRange -> Tool.EYEDROPPER
                             else -> vm.tool
                         }
                         val downPen = vm.penSample(down, 0, 1, down.uptimeMillis)
@@ -966,7 +968,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.MOVE -> vm.endMove()
                             GestureMode.EYEDROP -> {
                                 val (cx, cy) = vm.screenToCanvas(lastPos.x, lastPos.y)
-                                vm.sampleAt(cx, cy, commit = true)
+                                if (vm.pickingForRange) vm.rangeColorPicked(vm.sampleAt(cx, cy, commit = false))
+                                else vm.sampleAt(cx, cy, commit = true)
                                 loupe = null
                             }
                             GestureMode.PENDING -> if (!longPressDone) {

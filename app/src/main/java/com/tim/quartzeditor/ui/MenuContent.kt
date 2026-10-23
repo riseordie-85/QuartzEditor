@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Landscape
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
@@ -172,6 +173,9 @@ fun PagedMenuScope.SelectMenuItems(vm: EditorViewModel) {
     Divider()
     Item("Select subject", Icons.Outlined.PersonOutline) { vm.selectSubject(background = false) }
     Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
+    Item("Select sky", Icons.Outlined.Cloud) { vm.selectSky() }
+    Item("Color range…", Icons.Outlined.Palette) { vm.openColorRange() }
+    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id) } }
     Page("Modify edge") {
         Label("Feather (soft edge)")
         Custom {
@@ -242,6 +246,7 @@ fun PagedMenuScope.ViewMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Zoom out") { vm.zoomTo(vm.scale / 1.5f) }
     Divider()
     Item("Lock canvas turning", checked = vm.rotationLocked) { vm.toggleRotationLock() }
+    if (vm.uiLayout != UiLayout.CLASSIC) Item("Brush sliders beside the tools (menu bar layout)", checked = vm.sideSliders) { vm.toggleSideSliders() }
     if (vm.normalizedRotation() != 0f) Item("Straighten canvas") { vm.straightenView() }
     if (vm.penSeen) Item("Fingers paint (not just the pen)", checked = !vm.penFingersNavigate) { vm.toggleFingerPainting() }
     Divider()
