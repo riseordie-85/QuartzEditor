@@ -72,7 +72,7 @@ fun PagedMenuScope.FileMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Open file…", Icons.Outlined.FolderOpen) { a.openFile() }
     Item("Open image…", Icons.Outlined.Image) { a.openImage() }
     Divider()
-    Item("Save project", Icons.Outlined.Save, enabled = vm.hasUnsavedChanges) { vm.saveToProjects(quiet = false) }
+    Item("Save project", Icons.Outlined.Save, enabled = vm.canSaveProject) { vm.saveToProjects(quiet = false) }
     Item("Export image…", Icons.Outlined.IosShare) { a.export() }
     BigItem("Quick export (.png)", Icons.Outlined.Bolt) { vm.quickExport() }
     Divider()

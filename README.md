@@ -539,7 +539,7 @@ in between. With a selection, the mask button makes a mask that shows only what'
   files, go Home or switch apps. A project you opened is **never changed by the autosave** — only by
   Save project.
 - **Closing** (× on its tab, File → Close project) with unsaved changes asks: **Save** (into the
-  project; its draft goes), **Don't save** (the draft is thrown away; the project stays as it was last
+  project; it closes once the save is done, and stays open if saving fails), **Don't save** (the draft is thrown away; the project stays as it was last
   saved) or **Cancel**.
 - If the app closes first (you swipe it away, it crashes, the tablet restarts), the changes wait in
   **Drafts** on the start screen. Opening a project that has a draft asks: **Open the changes** or
@@ -643,7 +643,9 @@ preview, and **Cancel** (which stops it on the server too). If something goes wr
 off, a model is missing) the chip says what ComfyUI said.
 - **Upscales**: "A bigger result makes the image bigger" (for workflows that send a picture; on at first
   for ones named "upscale") enlarges the whole image to the result's size when it comes back bigger, so
-  the new layer keeps every pixel (Image Size, one more undo step). Off, it's fitted to the canvas (the
+  the new layer keeps every pixel (Image Size, one more undo step). Only when the whole picture was sent
+  (not one small layer or a selection), and not while you're in the middle of a crop, transform or text
+  (it then says the size to use in Image → Image size). Off, it's fitted to the canvas (the
   full size stays inside the smart layer). Saved per workflow, in presets and bar buttons.
 - The window's settings sit on a card; the whole width scrolls, not just the middle.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has

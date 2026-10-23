@@ -73,7 +73,18 @@ fun EditorViewModel.openProject(id: String, skipDraft: Boolean = false) {
     // Unsaved changes of it in Drafts (the app closed before you saved or discarded them): which to open?
     if (!skipDraft) {
         viewModelScope.launch {
-            val draft = withContext(Dispatchers.IO) { ProjectIO.draftInfo(ctx, id) }
+            // (After any save or delete still being written)
+            val draft = saveLock.withLock {
+                withContext(Dispatchers.IO) {
+                    ProjectIO.draftInfo(ctx, id)?.let { dr ->
+                        // Older than the project as saved: left over, not changes to it
+                        if (dr.modified < ProjectIO.projectModified(ctx, id)) {
+                            ProjectIO.deleteDraft(ctx, id)
+                            null
+                        } else dr
+                    }
+                }
+            }
             if (draft != null) draftAsk = draft else openProject(id, skipDraft = true)
         }
         return
@@ -248,12 +259,13 @@ fun EditorViewModel.requestClose(i: Int = fileIndex) {
         toast("Just a moment: ${busy?.trimEnd('…', '.')} is still working")
         return
     }
-    if (i != fileIndex && i in files.indices) {
+    if (i !in files.indices) return
+    if (i != fileIndex) {
         switchFile(i)
         if (fileIndex != i) return
     }
     if (pendingFirst { requestClose(fileIndex) }) return
-    if (hasUnsavedChanges) closeAsk = true else closeDocument(save = false)
+    if (hasUnsavedChanges) closeAsk = rootDoc else closeDocument(save = false)
 }
 
 /** Lets go of draft [id] (once any autosave still being written is done). */
@@ -297,9 +309,25 @@ fun EditorViewModel.closeDocument(save: Boolean = true) {
         return
     }
     if (pendingFirst { closeDocument(save) }) return
-    closeAsk = false
-    // The picture is what's saved (with what's being edited in smart layers' tabs)
-    if (save && hasUnsavedChanges) saveToProjects(quiet = false) else dropDraft(rootDoc?.draftId)
+    closeAsk = null
+    // The picture is what's saved (with what's being edited in smart layers' tabs): it closes once
+    // that's safely done (if saving fails, it stays open with its changes)
+    if (save && hasUnsavedChanges) {
+        val job = projectSave(quiet = true) ?: return
+        val d = rootDoc
+        runBusy("Saving…") {
+            job()
+            toast("Saved \"${d?.name ?: "it"}\" to Projects")
+            if (rootDoc === d) finishClose()
+        }
+        return
+    }
+    dropDraft(rootDoc?.draftId)
+    finishClose()
+}
+
+/** Puts the file shown away (its saving or throwing away already seen to). */
+private fun EditorViewModel.finishClose() {
     tabs.firstOrNull()?.let { root ->
         if (doc !== root.doc) {
             doc = root.doc
@@ -362,14 +390,14 @@ fun EditorViewModel.saveDraft() {
     val sc = saveCopy() ?: return
     val copy = sc.doc
     val color = canvasColor
-    val edits = h.editsSinceDraft
+    val at = h.editCount
     viewModelScope.launch {
         try {
             saveLock.withLock {
                 withContext(Dispatchers.Default) { sc.finish() }
                 withContext(Dispatchers.IO) { ProjectIO.saveDraft(ctx, copy, color) }
             }
-            h.markDrafted(edits)
+            h.markDrafted(at)
             for ((t, v) in undrafted) t.draftedVersion = v
             projectsVersion++
         } catch (e: Throwable) {
@@ -378,51 +406,77 @@ fun EditorViewModel.saveDraft() {
     }
 }
 
-/** Saves the project (File → Save project, Ctrl+S, or Save when closing), in the background. */
+/** The file shown can be saved as a project: it has changes, or it was never saved. */
+val EditorViewModel.canSaveProject: Boolean get() = hasUnsavedChanges || (rootDoc != null && rootDoc?.projectId == null)
+
+/**
+ * Saves the project (File → Save project, Ctrl+S), in the background; a picture opened but never
+ * saved is added to Projects as it is.
+ */
 fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
-    if (doc == null) return
-    // The picture itself is what's saved, with what's being edited in smart layers' tabs
-    val d = rootDoc ?: return
-    val h = tabs.firstOrNull()?.history ?: history
-    val unsaved = tabsUnsaved.map { it to it.history.version }
-    if (h.editsSinceSave == 0 && unsaved.isEmpty()) {
-        if (!quiet) toast("Nothing new to save")
-        return
-    }
-    // (A picture never saved takes its draft's id, so the two stay together)
-    if (d.projectId == null) d.projectId = d.draftId ?: ProjectIO.newId()
-    d.draftId = d.projectId
-    val sc = saveCopy() ?: return
-    val copy = sc.doc
-    val color = canvasColor
-    val edits = h.editsSinceSave
+    val job = projectSave(quiet) ?: return
     viewModelScope.launch {
         try {
-            // One save at a time, so two saves of the same project can't mix
-            saveLock.withLock {
-                withContext(Dispatchers.Default) { sc.finish() }
-                withContext(Dispatchers.IO) { ProjectIO.saveToProjects(ctx, copy, color) }
-            }
-            h.markSaved(edits)
-            for ((t, v) in unsaved) {
-                t.savedVersion = v
-                t.draftedVersion = v
-            }
-            // The project has it all now: its draft goes (unless more was done while saving)
-            if (h.editsSinceSave == 0) withContext(Dispatchers.IO) { saveLock.withLock { ProjectIO.deleteDraft(ctx, copy.projectId!!) } }
+            job()
             if (!quiet) toast("Saved to Projects")
-            projectsVersion++
         } catch (e: Throwable) {
             toast("Couldn't save the project (${e.message})")
         }
     }
 }
 
+/**
+ * Takes the copy to save now (null when there's nothing to save) and returns the work of writing it:
+ * the project, then its draft goes in the same step (anything done since is autosaved again).
+ */
+private fun EditorViewModel.projectSave(quiet: Boolean): (suspend () -> Unit)? {
+    if (doc == null) return null
+    // The picture itself is what's saved, with what's being edited in smart layers' tabs
+    val d = rootDoc ?: return null
+    val h = tabs.firstOrNull()?.history ?: history
+    val unsaved = tabsUnsaved.map { it to it.history.version }
+    if (h.editsSinceSave == 0 && unsaved.isEmpty() && d.projectId != null) {
+        if (!quiet) toast("Nothing new to save")
+        return null
+    }
+    // (A picture never saved takes its draft's id, so the two stay together)
+    if (d.projectId == null) d.projectId = d.draftId ?: ProjectIO.newId()
+    d.draftId = d.projectId
+    val sc = saveCopy() ?: return null
+    val copy = sc.doc
+    val color = canvasColor
+    val at = h.editCount
+    return {
+        // One save at a time, so two saves of the same project can't mix; the draft it replaces
+        // goes in the same step (a newer autosave waits its turn and is written after)
+        saveLock.withLock {
+            withContext(Dispatchers.Default) { sc.finish() }
+            withContext(Dispatchers.IO) {
+                ProjectIO.saveToProjects(ctx, copy, color)
+                ProjectIO.deleteDraft(ctx, copy.projectId!!)
+            }
+        }
+        h.markSaved(at)
+        for ((t, v) in unsaved) {
+            t.savedVersion = v
+            t.draftedVersion = v
+        }
+        projectsVersion++
+    }
+}
+
 fun EditorViewModel.deleteProject(id: String) {
     projectDeleted(id)
-    ProjectIO.delete(ctx, id)
-    dropDraft(id)
-    projectsVersion++
+    // (After any save of it still being written, so that can't bring it back)
+    viewModelScope.launch {
+        saveLock.withLock {
+            withContext(Dispatchers.IO) {
+                ProjectIO.delete(ctx, id)
+                ProjectIO.deleteDraft(ctx, id)
+            }
+        }
+        projectsVersion++
+    }
 }
 
 /** Writes the project to a file the user chose. */

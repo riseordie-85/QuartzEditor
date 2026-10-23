@@ -253,7 +253,7 @@ fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
 
 /** The prompt last used with [w] (or the one it was saved with). */
 /** Whether [w]'s bigger results make the image bigger (on at first for workflows named for upscaling). */
-fun EditorViewModel.comfyGrow(w: ComfyWorkflow): Boolean =
+fun EditorViewModel.comfyGrow(w: ComfyWorkflow): Boolean = w.kind != ComfyKind.GENERATE &&
     prefs.getBoolean("comfyGrow:" + w.fileName, w.name.contains("upscal", ignoreCase = true) || w.fileName.contains("upscal", ignoreCase = true))
 
 fun EditorViewModel.comfyPrompt(w: ComfyWorkflow): String = prefs.getString("comfyPrompt:" + w.fileName, null) ?: w.savedPrompt
@@ -465,7 +465,9 @@ fun EditorViewModel.runComfy(
                 }
                 // Each picture as its own layer, as soon as it's back
                 for (bmp in results) {
-                    if (placed == 0 && grow) growBy = minOf(bmp.width.toFloat() / input.region.width(), bmp.height.toFloat() / input.region.height())
+                    // (Only for a picture sent whole: an upscale of one small layer or a selection doesn't enlarge everything)
+                    val whole = input.region.width() >= input.docW * 0.9f && input.region.height() >= input.docH * 0.9f
+                    if (placed == 0 && grow && w.kind != ComfyKind.GENERATE && whole) growBy = minOf(bmp.width.toFloat() / input.region.width(), bmp.height.toFloat() / input.region.height())
                     if (placeComfyResult(d, w, prompt, input, upload?.alpha, bmp, number = if (runs > 1 || results.size > 1) placed + 1 else 0)) placed++
                 }
             }
@@ -476,9 +478,17 @@ fun EditorViewModel.runComfy(
             // An upscale: the image grows to the result's size (the new smart layer keeps every pixel it came with)
             if (placed > 0 && growBy > 1.05f && doc === d && d.width == input.docW && d.height == input.docH) {
                 val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.MAX_SIDE.toFloat() / max(d.width, d.height))
-                if (k > 1.05f) {
-                    resizeImage((d.width * k).roundToInt(), (d.height * k).roundToInt(), scaleStyles = true)
-                    toast("${w.name}: the image is now ${(d.width * k).roundToInt()} × ${(d.height * k).roundToInt()} to match")
+                val nw = (d.width * k).roundToInt()
+                val nh = (d.height * k).roundToInt()
+                // Not in the middle of something (a crop, a transform, text being typed…): that would be applied first
+                val free = busy == null && textEdit == null && cropBox == null && cropQuad == null && pendingFx == null && transform == null && warp == null && enhance == null
+                when {
+                    k <= 1.05f -> toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px), so the result is fitted to it")
+                    !free -> toast("${w.name}: came back ${(growBy * 100).roundToInt()}% bigger. Use Image → Image size to enlarge the image to $nw × $nh when you're done")
+                    else -> {
+                        resizeImage(nw, nh, scaleStyles = true)
+                        toast("${w.name}: the image is now $nw × $nh to match" + if (k < growBy - 0.01f) " (as big as it can be)" else "")
+                    }
                 }
             }
         } catch (e: CancellationException) {

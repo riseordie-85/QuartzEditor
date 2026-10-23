@@ -528,22 +528,6 @@ fun Workspace(vm: EditorViewModel) {
         guideOpen = true
     })
 
-    if (discardOpen) {
-        val saved = vm.doc?.projectId != null
-        AlertDialog(
-            onDismissRequest = { discardOpen = false },
-            title = { Text("Close without saving?") },
-            text = {
-                Text(
-                    if (saved) "Changes since this project was last saved to Projects will be lost (it's also saved when you go to another file or the start screen). The saved version stays in Projects."
-                    else "This image hasn't been saved. Everything you did will be lost."
-                )
-            },
-            confirmButton = { TextButton(onClick = { discardOpen = false; vm.discardDocument() }) { Text("Close without saving") } },
-            dismissButton = { TextButton(onClick = { discardOpen = false }) { Text("Keep editing") } },
-        )
-    }
-
     if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
     if (renameLayerOpen) {
         val l = vm.doc?.active

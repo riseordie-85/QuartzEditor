@@ -1,12 +1,9 @@
 package com.tim.quartzeditor.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.unit.dp
 
 // Asked when a file closes with unsaved changes, and when a project opens that has unsaved changes
 // in Drafts (the app closed before they were saved or thrown away). Shown over the editor and the
@@ -14,12 +11,17 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun FileDialogs(vm: EditorViewModel) {
-    if (vm.closeAsk) {
-        val d = vm.rootDoc
-        val name = d?.name ?: "this image"
-        val saved = d?.projectId != null
+    vm.closeAsk?.let { target ->
+        // (Another file came up meanwhile, from a share say: the question was about that one)
+        if (vm.rootDoc !== target) {
+            androidx.compose.runtime.LaunchedEffect(target) { vm.closeAsk = null }
+            return@let
+        }
+        val d = target
+        val name = d.name
+        val saved = d.projectId != null
         AlertDialog(
-            onDismissRequest = { vm.closeAsk = false },
+            onDismissRequest = { vm.closeAsk = null },
             title = { Text("Save changes to \"$name\"?") },
             text = {
                 Text(
@@ -27,14 +29,10 @@ fun FileDialogs(vm: EditorViewModel) {
                     else "It hasn't been saved as a project yet. Save keeps it in Projects; Don't save throws it away."
                 )
             },
-            confirmButton = {
-                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                    TextButton(onClick = { vm.closeDocument(save = true) }) { Text("Save") }
-                }
-            },
+            confirmButton = { TextButton(onClick = { vm.closeDocument(save = true) }) { Text("Save") } },
             dismissButton = {
                 androidx.compose.foundation.layout.Row {
-                    TextButton(onClick = { vm.closeAsk = false }) { Text("Cancel") }
+                    TextButton(onClick = { vm.closeAsk = null }) { Text("Cancel") }
                     TextButton(onClick = { vm.closeDocument(save = false) }) { Text("Don't save") }
                 }
             },

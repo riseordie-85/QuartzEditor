@@ -141,7 +141,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var showHome by mutableStateOf(false)
 
     /** Closing a file with unsaved changes: Save, Don't save or Cancel is being asked. */
-    var closeAsk by mutableStateOf(false)
+    var closeAsk by mutableStateOf<com.tim.quartzeditor.engine.Doc?>(null)
     /** Opening a project that has unsaved changes in Drafts: which to open is being asked. */
     var draftAsk by mutableStateOf<com.tim.quartzeditor.engine.ProjectInfo?>(null)
 
@@ -675,8 +675,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             // Too many open: the one left longest ago closes (it was saved when it was left)
             if (files.size >= MAX_OPEN_FILES) {
                 val drop = if (fileIndex == 0) 1 else 0
-                val unsaved = (files[drop].tabs.firstOrNull()?.history?.editsSinceSave ?: 0) > 0
-                toast("\"${fileRoot(files[drop])?.name ?: "A file"}\" was closed to make room (${if (unsaved) "its changes are in Drafts" else "it's in Projects"})")
+                val f = files[drop]
+                val unsaved = (f.tabs.firstOrNull()?.history?.editsSinceSave ?: 0) > 0 || f.tabs.any { it.hasNewEdits && it.history.version != it.savedVersion }
+                val inProjects = fileRoot(f)?.projectId != null
+                toast("\"${fileRoot(f)?.name ?: "A file"}\" was closed to make room" + when {
+                    unsaved -> " (its changes are in Drafts)"
+                    inProjects -> " (it's in Projects)"
+                    else -> ""
+                })
                 files = files.filterIndexed { j, _ -> j != drop }
                 if (drop < fileIndex) fileIndex--
             }

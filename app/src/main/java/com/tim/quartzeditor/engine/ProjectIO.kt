@@ -79,6 +79,9 @@ object ProjectIO {
         File(d, "$id.json").delete()
     }
 
+    /** When project [id] was last saved (0: it isn't there). */
+    fun projectModified(context: Context, id: String): Long = projectFile(context, id).lastModified()
+
     fun hasDraft(context: Context, id: String): Boolean = File(draftDir(context), "$id.$EXTENSION").exists()
 
     fun draftInfo(context: Context, id: String): ProjectInfo? = listDrafts(context).firstOrNull { it.id == id }

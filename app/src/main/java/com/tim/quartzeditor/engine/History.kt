@@ -74,13 +74,20 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
     var version by mutableIntStateOf(0)
         private set
 
-    /** Number of edits since the document was last saved (0 = nothing new). */
-    var editsSinceSave = 0
+    /**
+     * Every edit, undo and redo counts one more (it never goes down): a save or autosave remembers
+     * where the count was when its copy was taken, so edits made while it's written aren't marked done.
+     */
+    var editCount = 0
         private set
+    private var savedAt = 0
+    private var draftedAt = 0
 
-    /** Number of edits since its draft (the autosave) was last written. */
-    var editsSinceDraft = 0
-        private set
+    /** Number of edits since the document was last saved (0 = nothing new). */
+    val editsSinceSave: Int get() = editCount - savedAt
+
+    /** Number of edits in neither the project nor its draft (the autosave). */
+    val editsSinceDraft: Int get() = editCount - maxOf(savedAt, draftedAt)
 
     val canUndo: Boolean get() = version >= 0 && undoStack.isNotEmpty()
     val canRedo: Boolean get() = version >= 0 && redoStack.isNotEmpty()
@@ -105,8 +112,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         undoStack.addLast(c)
         redoStack.clear()
         trim()
-        editsSinceSave++
-        editsSinceDraft++
+        editCount++
         version++
     }
 
@@ -114,8 +120,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         val c = undoStack.removeLastOrNull() ?: return null
         c.undo(doc)
         redoStack.addLast(c)
-        editsSinceSave++
-        editsSinceDraft++
+        editCount++
         version++
         return c.label
     }
@@ -124,36 +129,33 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         val c = redoStack.removeLastOrNull() ?: return null
         c.redo(doc)
         undoStack.addLast(c)
-        editsSinceSave++
-        editsSinceDraft++
+        editCount++
         version++
         return c.label
     }
 
-    /** [count] edits were saved (more may have happened since the save started). */
-    fun markSaved(count: Int = editsSinceSave) {
-        editsSinceSave = (editsSinceSave - count).coerceAtLeast(0)
-        // (The project now has them: its draft is let go, so only what's newer is undrafted)
-        editsSinceDraft = minOf(editsSinceDraft, editsSinceSave)
+    /** The project was saved with everything up to [at] (the [editCount] when its copy was taken). */
+    fun markSaved(at: Int = editCount) {
+        savedAt = maxOf(savedAt, at)
     }
 
-    /** [count] edits went into the draft. */
-    fun markDrafted(count: Int = editsSinceDraft) {
-        editsSinceDraft = (editsSinceDraft - count).coerceAtLeast(0)
+    /** The draft was written with everything up to [at]. */
+    fun markDrafted(at: Int = editCount) {
+        draftedAt = maxOf(draftedAt, at)
     }
 
     /** Opened from a draft: it has changes the project doesn't (closing asks), all already in the draft. */
     fun markRestored() {
-        editsSinceSave = maxOf(editsSinceSave, 1)
-        editsSinceDraft = 0
+        editCount++
+        draftedAt = editCount
     }
 
     fun clear() {
         undoStack.clear()
         redoStack.clear()
         trimmed = false
-        editsSinceSave = 0
-        editsSinceDraft = 0
+        savedAt = editCount
+        draftedAt = editCount
         version++
     }
 
