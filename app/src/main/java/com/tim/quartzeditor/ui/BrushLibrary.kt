@@ -187,7 +187,8 @@ fun renderBrushStroke(b: BrushSettings, w: Int, h: Int, color: Int): Bitmap {
         taperEnd = taperLength(b.taperEnd, size) * 0.5f,
     )
     val layer = Layer(1L, LayerProps("Preview"), TileGrid(alphaOnly = false))
-    val s = StrokeSession(layer, StrokeTarget.PIXELS, false, color, 0, b.opacity, b.tip, size, b.softness, null, dyn, b.style)
+    // (The same every time, and its own dab pictures, so the brush in use keeps its)
+    val s = StrokeSession(layer, StrokeTarget.PIXELS, false, color, 0, b.opacity, b.tip, size, b.softness, null, dyn, b.style, seed = 7L, sharedDabs = false)
     val n = 90
     for (i in 0..n) {
         val t = i / n.toFloat()
@@ -201,16 +202,28 @@ fun renderBrushStroke(b: BrushSettings, w: Int, h: Int, color: Int): Bitmap {
     return out
 }
 
-/** [b]'s sample stroke, worked out in the background and kept. */
+/**
+ * [b]'s sample stroke, worked out in the background ([cache]: kept for next time; off for Brush
+ * Studio's, which changes with every slider move).
+ */
 @Composable
-fun BrushStrokeImage(vm: EditorViewModel, b: BrushSettings, modifier: Modifier = Modifier, w: Int = 420, h: Int = 96) {
+fun BrushStrokeImage(vm: EditorViewModel, b: BrushSettings, modifier: Modifier = Modifier, w: Int = 420, h: Int = 96, cache: Boolean = true) {
     val color = Q.text.toArgb()
     val key = b.copy(presetId = null).toJson().toString() + "|$w|$h|$color"
-    val img by produceState<ImageBitmap?>(vm.brushPreviews.get(key), key) {
-        if (value == null) {
-            value = withContext(Dispatchers.Default) {
-                runCatching { renderBrushStroke(b, w, h, color).asImageBitmap() }.getOrNull()
-            }?.also { vm.brushPreviews.put(key, it) }
+    // The last picture stays up while the next is made
+    val img by produceState<ImageBitmap?>(if (cache) vm.brushPreviews.get(key) else null, key) {
+        val have = if (cache) vm.brushPreviews.get(key) else null
+        if (have != null) {
+            value = have
+            return@produceState
+        }
+        // (A slider moving on quickly cancels this before any work starts)
+        kotlinx.coroutines.delay(if (cache) 0L else 60L)
+        withContext(Dispatchers.Default) {
+            runCatching { renderBrushStroke(b, w, h, color).asImageBitmap() }.getOrNull()
+        }?.let {
+            if (cache) vm.brushPreviews.put(key, it)
+            value = it
         }
     }
     Box(modifier) {
@@ -233,7 +246,7 @@ fun BrushLibraryList(vm: EditorViewModel, forTool: Tool, onPicked: () -> Unit = 
     Column(Modifier.fillMaxWidth()) {
         vm.allBrushes.groupBy { it.group }.forEach { (group, list) ->
             Text(group, color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp, top = 8.dp, bottom = 2.dp))
-            list.forEach { p ->
+            list.forEach { p -> androidx.compose.runtime.key(p.id) {
                 var menu by remember { mutableStateOf(false) }
                 Box {
                     Column(
@@ -258,6 +271,7 @@ fun BrushLibraryList(vm: EditorViewModel, forTool: Tool, onPicked: () -> Unit = 
                             menu = false
                             vm.chooseBrushPreset(forTool, p)
                             vm.brushStudioFor = forTool
+                            onPicked()
                         })
                         DropdownMenuItem(text = { Text("Duplicate") }, onClick = {
                             menu = false
@@ -275,7 +289,7 @@ fun BrushLibraryList(vm: EditorViewModel, forTool: Tool, onPicked: () -> Unit = 
                         }
                     }
                 }
-            }
+            } }
         }
     }
     renaming?.let { p ->

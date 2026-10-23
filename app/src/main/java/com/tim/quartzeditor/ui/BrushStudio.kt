@@ -94,7 +94,7 @@ fun BrushStudio(vm: EditorViewModel) {
                 Spacer(Modifier.height(8.dp))
                 // The sample stroke, as the brush is now
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Q.panelDark).padding(8.dp)) {
-                    BrushStrokeImage(vm, b, Modifier.fillMaxWidth(), w = 900, h = 200)
+                    BrushStrokeImage(vm, b, Modifier.fillMaxWidth(), w = 900, h = 200, cache = false)
                 }
                 Spacer(Modifier.height(10.dp))
                 ChipRow(StudioPage.entries.map { it.label }, page) { page = it }

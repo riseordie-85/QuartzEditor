@@ -406,7 +406,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Brush Studio open for this tool's brush (null = closed). */
     var brushStudioFor by mutableStateOf<Tool?>(null)
     /** Stroke pictures of brushes, by their settings. */
-    internal val brushPreviews = android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(60)
+    internal val brushPreviews = object : android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(8 * 1024 * 1024) {
+        // Kept by how much memory they take (about 8 MB in all)
+        override fun sizeOf(key: String, value: androidx.compose.ui.graphics.ImageBitmap): Int = value.width * value.height * 4
+    }
 
     // ---------------------------------------------------------------- pen (stylus)
     /** What the pen is doing right now (fed by every touch on the canvas). */

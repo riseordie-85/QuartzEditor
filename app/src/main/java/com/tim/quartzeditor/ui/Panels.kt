@@ -647,7 +647,7 @@ private fun PropertiesPanel(vm: EditorViewModel) {
         Text(if (tool == Tool.ERASER) "Eraser" else "Brush", color = Q.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            BrushTip.entries.forEach { t ->
+            BrushTip.BASIC.forEach { t ->
                 val sel = t == b.tip
                 Text(
                     t.label,

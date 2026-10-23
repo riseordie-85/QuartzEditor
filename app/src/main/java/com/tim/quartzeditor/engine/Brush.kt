@@ -118,20 +118,19 @@ object Dabs {
                 }
             }
             BrushTip.SPATTER -> {
-                // Drops of different sizes scattered over the dab (the same every time)
-                val drops = 16
+                // Drops of different sizes scattered over the dab (the same every time); each drop
+                // only touches the pixels around it
                 val w = max(1f, softness * r * 0.3f)
-                for (y in 0 until d) for (x in 0 until d) {
-                    var a = 0f
-                    for (k in 0 until drops) {
-                        val ang = hash(k, 7) * 6.2832f
-                        val rad = sqrt(hash(k, 11)) * 0.8f * r
-                        val dr = (0.05f + hash(k, 13) * 0.16f) * r
-                        val dist = hypot(x - (c + kotlin.math.cos(ang) * rad), y - (c + kotlin.math.sin(ang) * rad))
-                        a = max(a, edge((dr - dist) / w))
-                    }
-                    out[y * d + x] = (a * 255f).roundToInt().toByte()
+                val cov = FloatArray(d * d)
+                for (k in 0 until 16) {
+                    val ang = hash(k, 7) * 6.2832f
+                    val rad = sqrt(hash(k, 11)) * 0.8f * r
+                    val dr = (0.05f + hash(k, 13) * 0.16f) * r
+                    val cx = c + kotlin.math.cos(ang) * rad
+                    val cy = c + kotlin.math.sin(ang) * rad
+                    fillDisc(cov, d, cx, cy, dr, w, 1f)
                 }
+                for (i in cov.indices) out[i] = (cov[i] * 255f).roundToInt().toByte()
             }
             BrushTip.BLADE -> {
                 // Pointing up: wide (a seventh of the dab) at the bottom, to a point at the top
@@ -148,16 +147,13 @@ object Dabs {
                 val hairs = 9
                 val hr = r * 0.075f
                 val w = max(1f, softness * hr + 0.6f)
-                for (y in 0 until d) for (x in 0 until d) {
-                    var a = 0f
-                    for (k in 0 until hairs) {
-                        val hx = c - r * 0.85f + k * (1.7f * r / (hairs - 1)) + (hash(k, 3) - 0.5f) * hr
-                        val hy = c + (hash(k, 5) - 0.5f) * r * 0.25f
-                        val dist = hypot(x - hx, y - hy)
-                        a = max(a, edge((hr - dist) / w) * (0.45f + 0.55f * hash(k, 9)))
-                    }
-                    out[y * d + x] = (a * 255f).roundToInt().toByte()
+                val cov = FloatArray(d * d)
+                for (k in 0 until hairs) {
+                    val hx = c - r * 0.85f + k * (1.7f * r / (hairs - 1)) + (hash(k, 3) - 0.5f) * hr
+                    val hy = c + (hash(k, 5) - 0.5f) * r * 0.25f
+                    fillDisc(cov, d, hx, hy, hr, w, 0.45f + 0.55f * hash(k, 9))
                 }
+                for (i in cov.indices) out[i] = (cov[i] * 255f).roundToInt().toByte()
             }
             BrushTip.TRIANGLE -> {
                 // Equilateral, pointing up, corners on the dab's circle
@@ -178,6 +174,19 @@ object Dabs {
         val bmp = Bitmap.createBitmap(d, d, Bitmap.Config.ALPHA_8)
         bmp.copyPixelsFromBuffer(ByteBuffer.wrap(out))
         return bmp
+    }
+
+    /** Draws a soft disc into [cov] (the most of what's there and it), only over the pixels it covers. */
+    private fun fillDisc(cov: FloatArray, d: Int, cx: Float, cy: Float, radius: Float, w: Float, strength: Float) {
+        val x0 = floor(cx - radius - 1f).toInt().coerceAtLeast(0)
+        val x1 = kotlin.math.ceil(cx + radius + 1f).toInt().coerceAtMost(d - 1)
+        val y0 = floor(cy - radius - 1f).toInt().coerceAtLeast(0)
+        val y1 = kotlin.math.ceil(cy + radius + 1f).toInt().coerceAtMost(d - 1)
+        for (y in y0..y1) for (x in x0..x1) {
+            val a = edge((radius - hypot(x - cx, y - cy)) / w) * strength
+            val i = y * d + x
+            if (a > cov[i]) cov[i] = a
+        }
     }
 
     /** 0 outside, 1 inside, smooth between. */
@@ -271,12 +280,18 @@ class StrokeSession(
     val dynamics: StrokeDynamics = StrokeDynamics.NONE,
     /** Spacing, flow, jitter, angle, grain and the rest of the brush's own character. */
     val style: BrushStyle = BrushStyle.PLAIN,
+    /** What the random variation starts from (null: different every stroke; a number for the same every time). */
+    seed: Long? = null,
+    /** Shares the app's dab pictures (off for sample strokes drawn in the background, so they don't push out the brush in use). */
+    private val sharedDabs: Boolean = true,
 ) {
     private val tipSpacing = (style.spacing ?: tip.spacing).coerceIn(0.02f, 3f)
     val buffer = TileGrid(alphaOnly = true)
     private val canvases = HashMap<Long, Canvas>()
     private val dabSize = size.roundToInt().coerceAtLeast(1)
-    private val dab = Dabs.get(tip, dabSize, softness)
+    private val dab = if (sharedDabs) Dabs.get(tip, dabSize, softness) else Dabs.make(tip, dabSize, softness)
+    /** Smaller dab pictures, for strokes that don't share the app's. */
+    private val ownLevels = HashMap<Int, Bitmap>()
     private val dabPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var lastX = Float.NaN
     private var lastY = Float.NaN
@@ -289,7 +304,12 @@ class StrokeSession(
     private val spacing = max(1f, size * tipSpacing)
     /** Which way the stroke is going (degrees), for tips that follow it. */
     private var direction = 0f
-    private val rng = java.util.Random(size.toLong() * 31 + tip.ordinal)
+    private val rng = java.util.Random(seed ?: System.nanoTime())
+    /** Brushes that turn with the stroke wait for its direction before their first dab. */
+    private var firstWaiting = false
+    /** The first dab's angle and size jitter (a tap is drawn again with them). */
+    private var firstAngle = 0f
+    private var firstJitter = 1f
     /** How far the stroke has gone (layer pixels along the path). */
     private var travelled = 0f
 
@@ -327,7 +347,7 @@ class StrokeSession(
         val y = cy - layer.y
         val p = pressure.coerceIn(0f, 1f)
         if (lastX.isNaN()) {
-            place(x, y, p, tilt, azimuth, 0f)
+            if (style.followStroke) firstWaiting = true else place(x, y, p, tilt, azimuth, 0f)
             lastX = x
             lastY = y
             lastP = p
@@ -348,7 +368,12 @@ class StrokeSession(
         // The lean direction takes the short way round between the two points
         var dAz = azimuth - lastAz
         if (dAz > Math.PI) dAz -= (2 * Math.PI).toFloat() else if (dAz < -Math.PI) dAz += (2 * Math.PI).toFloat()
-        direction = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        // (Tiny moves don't say much about the direction)
+        if (len > 0.75f || firstWaiting) direction = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        if (firstWaiting) {
+            firstWaiting = false
+            place(lastX, lastY, lastP, lastTilt, lastAz, 0f)
+        }
         var t = carry
         while (t <= len) {
             val f = t / len
@@ -370,9 +395,14 @@ class StrokeSession(
      * thinner toward the end). Called once, before [commit].
      */
     fun finish() {
+        // A tap with a brush that waits for the stroke's direction: its dab, as it is
+        if (firstWaiting && !lastX.isNaN()) {
+            firstWaiting = false
+            place(lastX, lastY, lastP, lastTilt, lastAz, 0f)
+        }
         // A tap with a start taper: a dot at full size, not the taper's thin start
         if (dynamics.taperStart > 0f && travelled < max(1f, size * 0.25f) && !lastX.isNaN()) {
-            stamp(buffer, canvases, lastX, lastY, lastP, lastTilt, lastAz, tailDabs.lastOrNull()?.angle ?: 0f, 1f, 1f)
+            stamp(buffer, canvases, lastX, lastY, lastP, lastTilt, lastAz, firstAngle, 1f, firstJitter)
             return
         }
         val b = base ?: return
@@ -390,7 +420,9 @@ class StrokeSession(
         val dabs = tailDabs.toList()
         for ((i, d) in dabs.withIndex()) {
             stamp(buffer, canvases, d.x, d.y, d.p, d.tilt, d.az, d.angle, factorAt(d.along), d.jitter)
-            // As the dabs get smaller they need to be closer: more go in between (so the tip isn't beaded)
+            // As the dabs get smaller they need to be closer: more go in between (so the tip isn't
+            // beaded; not for scattered dabs, which would join up)
+            if (style.scatter > 0f) continue
             val n = dabs.getOrNull(i + 1) ?: break
             val gap = n.along - d.along
             if (gap <= 0f) continue
@@ -444,6 +476,10 @@ class StrokeSession(
             y += kotlin.math.sin(a) * d
         }
         val k = taperFactor(along)
+        if (dabCount == 0) {
+            firstAngle = angle
+            firstJitter = jitter
+        }
         stamp(buffer, canvases, x, y, p, tilt, az, angle, k, jitter)
         val b = base ?: return
         tailDabs.addLast(DabAt(x, y, p, tilt, az, along, angle, jitter))
@@ -480,29 +516,38 @@ class StrokeSession(
         val half = if (simple) dab.width / 2f else max(0.5f, drawn / 2f)
         val turned = baseAngle != 0f || tip.randomRotation
         val reach = when {
-            stretch > 1f -> half * stretch * (if (tip == BrushTip.ROUND) 1f else 1.42f)
+            stretch > 1f -> half * stretch * (if (tip == BrushTip.ROUND && !turned && squash >= 0.999f) 1f else 1.42f)
             turned -> half * 1.42f
             else -> half
         }
         val r = RectF(x - reach, y - reach, x + reach, y + reach)
-        val angle = if (stretch > 1f) Math.toDegrees(azimuth.toDouble()).toFloat() - 90f else baseAngle
+        // Tilt stretches along the lean; the brush's own angle (and turning with the stroke) still applies
+        val leanAngle = Math.toDegrees(azimuth.toDouble()).toFloat() - 90f
+        val angle = baseAngle
         // Pressure on opacity: overlapping dabs build up to the pressure's strength, not past it (the
         // first dab on its own is the full strength, so a tap or a short stroke isn't faint)
         val first = (if (counts) dabCount else baseDabs) == 0
         val pressed = if (dynamics.opacity && p < 0.999f && first) p else if (dynamics.opacity && p < 0.999f) {
-            val overlap = max(1f, drawn / max(1f, size * k * tipSpacing))
+            // How many dabs overlap: this one's size over how far apart they're placed
+            val overlap = max(1f, drawn / max(1f, size * pressureFactor(p) * taper * tipSpacing))
             (1f - Math.pow((1f - p).toDouble(), 1.0 / overlap).toFloat()).coerceIn(0f, 1f)
         } else 1f
         // Flow: how much each dab adds (and the pen's pressure, when it sets the flow); shading lightens
         // (A finger's pressure is always full, so pressure on flow only changes a pen's strokes)
-        val alpha = pressed * style.flow.coerceIn(0.01f, 1f) * (if (style.pressureFlow) p.coerceAtLeast(0.02f) else 1f) * (1f - 0.65f * lean)
+        // (Pressure counts once: on the opacity when that's on, otherwise on the flow)
+        val alpha = pressed * style.flow.coerceIn(0.01f, 1f) * (if (style.pressureFlow && !dynamics.opacity) p.coerceAtLeast(0.02f) else 1f) * (1f - 0.65f * lean)
         if (alpha <= 0.002f) return
         val paint = dabPaint
-        paint.alpha = (alpha * 255f).roundToInt().coerceIn(1, 255)
+        // (At least a little per dab, so low flow still builds up to full in an 8-bit buffer)
+        paint.alpha = (alpha * 255f).roundToInt().coerceIn(3, 255)
         // A smaller dab comes from a picture about its size (each level is half the last)
         var level = 0
         if (k < 0.999f) while (level < 10 && (dabSize shr (level + 1)) >= max(2f, drawn)) level++
-        val img = if (level == 0) dab else Dabs.level(tip, dabSize, softness, level)
+        val img = when {
+            level == 0 -> dab
+            sharedDabs -> Dabs.level(tip, dabSize, softness, level)
+            else -> ownLevels.getOrPut(level) { Dabs.make(tip, max(1, dabSize shr level), softness) }
+        }
         val plain = simple
         for (key in grid.keysIn(r)) {
             val tile = grid.getOrCreate(key)
@@ -515,8 +560,15 @@ class StrokeSession(
                 c.drawBitmap(img, x - half, y - half, paint)
             } else {
                 c.translate(x, y)
-                if (angle != 0f) c.rotate(angle)
-                if (stretch != 1f || squash < 0.999f) c.scale(stretch, squash)
+                if (stretch > 1f) {
+                    // Stretched along the lean, then turned to the brush's own angle within it
+                    c.rotate(leanAngle)
+                    c.scale(stretch, 1f)
+                    c.rotate(angle - leanAngle)
+                } else if (angle != 0f) {
+                    c.rotate(angle)
+                }
+                if (squash < 0.999f) c.scale(1f, squash)
                 c.drawBitmap(img, null, RectF(-half, -half, half, half), paint)
             }
             c.restore()
