@@ -76,10 +76,12 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   cut/copy/paste, fill, free transform), **Image** (size, crop, rotate, flip, Enhance, flatten), **Layer**
   (new, folders, adjustment layers, duplicate, delete, rename, merge, clip, layer style, mask, fill/clear,
   convert, place, flatten), **Select** (all, deselect, invert, subject, background, modify edge, to layers
-  and shapes, mask, pattern, crop), **Filter** (the adjustments and filters on the layer, Enhance, ComfyUI),
+  and shapes, mask, pattern, sky, color range, the layer's pixels, crop), **Filter** (ComfyUI first in the
+  online app, then the adjustments and filters on the layer, Enhance),
   **View** (fit, 100 %, zoom, canvas turning, fingers, snap, grid, rulers and guides) and **Window** (show
   or hide the panels and each section, keep sections open). The image's name and undo/redo are at the right.
-  A menu's pages open **beside it** (tap, or hover with the pen); long menus scroll.
+  A menu's pages open as **columns beside it** in the same menu (tap, or hover with the pen): nothing
+  covers the menu you came from, and menus are as tall as the screen allows.
 - **Options bar** under it: the tool in use and its settings.
   - Brushes: tip, size, opacity (strength), softness, smoothing, taper in/out, the pen's pressure
     switches, and **Side sliders** (turns the tall sliders beside the tools on or off; also in View).
@@ -285,6 +287,11 @@ the list; the button shows the one you used last.
   (Fur, Grass, Spatter, Grunge), then **Your brushes**. Picking one gives the brush (or the eraser) all its
   settings; "•" by the name means you've changed it since. Hold a brush (or use the pen's side button)
   to edit it in Brush Studio, duplicate it, or rename / delete one of yours.
+- **Import Photoshop brushes (.abr)**: File → Import brushes (.abr)…, or Import .abr… in the brush
+  picker and the Brushes panel. Each sampled tip in the file becomes a brush of yours (in a group named
+  after the file, under "Imported"), with its own tip picture, its size (up to 300 px) and its spacing;
+  edit them in Brush Studio like any other. (Older v1/v2 files and the usual v6+ files; brushes that are
+  only computed shapes, with no picture, are skipped.)
 - **Brush Studio**: every setting of the brush in use, with a sample stroke that follows, on pages:
   **Basics** (tip: Round, Square, Triangle, Grunge, Chalk, Spatter, Blade, Bristles; size, opacity,
   **flow**, softness), **Stroke** (spacing, smoothing, tapers), **Shape** (angle, roundness for chisel
@@ -306,7 +313,18 @@ the list; the button shows the one you used last.
   default; it can erase or undo instead. Hovering shows the brush's outline. Once a pen's been used,
   one finger moves the view and two zoom, instead of painting, and **holding a finger on the picture picks
   its color**. The hand button under the brush sliders (or View → Fingers paint) lets fingers paint again. Touches are ignored while the pen is near
-  the screen, so your hand can rest on it, and a pen stroke can't be turned into a pinch. All in Settings → Pen.
+  the screen, so your hand can rest on it, and a pen stroke can't be turned into a pinch. All in Settings →
+  Pen and drawing, including the **pressure curve**.
+- **Draw and hold (QuickShape)**: draw a line, a few straight lines, an ellipse, a rectangle or a triangle
+  and keep the pen (or finger) still at the end for a moment: the stroke snaps to that shape, drawn again
+  with the same brush at its usual pressure. Keep holding and move to size and turn it (a line's end follows
+  the pen). **Shift**, the Modifier button or **a finger on the screen** makes it perfect: a circle, a square,
+  an even triangle, lines in 45° steps (shapes then turn in 15° steps). Lift to keep it; undo takes it away.
+  Settings → Pen and drawing turns it off and sets how long to hold.
+- **ColorDrop**: drag the foreground (or background) color sideways off its swatch onto the picture and let
+  go: the area there fills with it, like the paint bucket (on the layer you're on). A bar at the top then
+  shows the **tolerance**: slide it and the fill is done again taking in more or fewer colors; Done (or doing
+  anything else) puts it away.
 - **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it
   for **Shift** (the button fills with your accent color), slide out past its edge for **Alt** (the emblem turns the accent color), double-tap to keep Shift on. A keyboard's Shift and
   Alt do the same. Brushes: straight lines at 0°/45°/90° (tap: a line from the last stroke). Shapes and
@@ -586,6 +604,10 @@ The Photoshop file writer follows ag-psd (MIT, by Agamnentzar) for how Photoshop
 descriptors, text engine data and smart objects.
 
 ## ComfyUI (Quartz Online)
+**The ComfyUI bar** floats at the bottom middle of the picture: pick a workflow, type its prompt and
+**Run** (with the settings last used in the ComfyUI window); its last button opens the full window. View →
+ComfyUI bar shows or hides it. ComfyUI is also first in the Filter menu.
+
 Menu → **ComfyUI…** opens a full-screen page that runs one of your ComfyUI workflows on your own
 computer (over Tailscale, say) and brings back what it made as a new **smart layer** above the active
 one, while you keep editing. A chip
@@ -677,7 +699,10 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
   `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
   `ShapeLibraryActions`, `EnhanceActions`, `ComfyActions` (ComfyUI runs, its window and status chip),
-  `PenInput` (the pen's pressure, tilt, eraser end and button, read from each touch event),
+  `PenInput` (the pen's pressure, tilt, eraser end and button, read from each touch event, and the
+  pressure curve), `PressureCurveEditor`, `QuickShape` (draw and hold; the shape fitting is
+  `engine/ShapeFit`), `ColorDrop`, `ComfyBar`, `BrushLibrary` and `BrushStudio` (with `.abr` import:
+  `engine/Abr`),
   `MenuContent` (what each menu holds, shared by the menu bar and the ☰ menu), `DesktopChrome` (the menu
   bar, options bar, status bar, History list, hover tips and the pen's right click).
 - `app/src/offline/` and `app/src/online/` — what's different in the two apps: the offline one removes
@@ -695,8 +720,10 @@ Menu → Settings (or the gear on the home screen).
   panels and windows are (lower lets the picture show through). **Compact interface** (under Panels, off
   by default) trims margins and padding: a narrower toolbar with tighter spacing, slimmer workspace edges,
   tighter panel sections, buttons and fields, and shorter layer rows — more room for the picture.
-- **Pen**: whether fingers move the view once a pen's been used, the pressure feel (light hand, normal,
-  firm hand), the smallest size at the lightest touch, tilt on or off, the eraser end on or off, what the
+- **Pen and drawing**: whether fingers move the view once a pen's been used, the **pressure curve** (drag
+  its two handles, or pick Light hand, Normal, Firm hand or Soft start; press the strip under it with the
+  pen to see where your touch lands), **draw and hold** (QuickShape) on or off and how long to hold, the
+  smallest size at the lightest touch, tilt on or off, the eraser end on or off, what the
   side button does (eyedropper, eraser, undo or nothing), and the brush outline while hovering.
 - **Your library**: your patterns (hold to delete, + to add), gradients (hold to edit or delete, + for a
   new one), layer style presets (delete) and imported fonts (delete, import).

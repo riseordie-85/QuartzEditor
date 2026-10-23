@@ -87,6 +87,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -698,7 +699,7 @@ fun VerticalSlider(value: Float, onChange: (Float) -> Unit, height: Dp, descript
 
 /**
  * Foreground (top) and background colors. Tap one to edit it in the Color panel; swipe up or
- * down on either to swap them.
+ * down on either to swap them; drag one sideways onto the picture to fill there (ColorDrop).
  */
 @Composable
 private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit) {
@@ -718,26 +719,49 @@ private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit)
             popupOffset = androidx.compose.ui.unit.IntOffset(gap, 0),
         )
     }
+    // Where the swatches are on the screen (for dragging a color out onto the picture)
+    val coords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .padding(top = 8.dp, bottom = 4.dp)
+            .onGloballyPositioned { coords[0] = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     var swapped = false
+                    // ColorDrop: dragged sideways, the color comes along to be let go of on the picture
+                    var dragColor: Int? = null
+                    var released = false
                     while (true) {
                         val e = awaitPointerEvent()
                         val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!c.pressed) break
-                        if (!swapped && abs(c.position.y - down.position.y) > swipePx) {
+                        if (!c.pressed) {
+                            released = true
+                            break
+                        }
+                        val dx = c.position.x - down.position.x
+                        val dy = c.position.y - down.position.y
+                        if (!swapped && dragColor == null && abs(dx) > swipePx && abs(dx) > abs(dy)) {
+                            dragColor = if (down.position.y < this.size.height / 2f) vm.foreground else vm.background
+                        }
+                        if (!swapped && dragColor == null && abs(dy) > swipePx) {
                             vm.swapColors()
                             swapped = true
                         }
+                        dragColor?.let { col ->
+                            coords[0]?.takeIf { it.isAttached }?.let { vm.colorDrag = ColorDrag(col, it.localToWindow(c.position)) }
+                        }
                         c.consume()
                     }
-                    if (!swapped) {
+                    if (dragColor != null) {
+                        val drag = vm.colorDrag
+                        vm.colorDrag = null
+                        if (released && drag != null) vm.colorDropAt(drag.window, drag.color)
+                        return@awaitEachGesture
+                    }
+                    if (!swapped && released) {
                         val half = this.size.height / 2f
                         vm.colorSlot = if (down.position.y < half) ColorSlot.FOREGROUND else ColorSlot.BACKGROUND
                         picking = vm.colorSlot

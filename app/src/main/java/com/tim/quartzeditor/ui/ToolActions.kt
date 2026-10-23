@@ -187,17 +187,25 @@ fun EditorViewModel.cancelGradient() {
 // ===================================================================== paint bucket
 
 /** Fills the area around canvas point ([x], [y]) that matches its color (within the tolerance), with the foreground color or the pattern. */
-fun EditorViewModel.bucketFill(x: Float, y: Float) {
+fun EditorViewModel.bucketFill(
+    x: Float, y: Float,
+    /** Fill with this color (never the pattern); null: the foreground color or the pattern, as the bucket's set. */
+    color: Int? = null,
+    /** How alike colors are filled (0..1); null: the bucket's own. */
+    tolerance: Float? = null,
+    /** Told the fill as it went into the history. */
+    onFilled: ((com.tim.quartzeditor.engine.Change) -> Unit)? = null,
+) {
     val d = doc ?: return
-    if (pendingFirst { bucketFill(x, y) }) return
+    if (pendingFirst { bucketFill(x, y, color, tolerance, onFilled) }) return
     val l = d.active ?: return
-    if (blockPaint(l) { bucketFill(x, y) }) return
+    if (blockPaint(l) { bucketFill(x, y, color, tolerance, onFilled) }) return
     val px = x.toInt()
     val py = y.toInt()
     if (px !in 0 until d.width || py !in 0 until d.height) return
     val toMask = d.paintsMask(l)
     val allLayers = bucketAllLayers || !l.hasContent
-    val tol = (bucketTolerance * 255).roundToInt()
+    val tol = ((tolerance ?: bucketTolerance) * 255).roundToInt()
     val contiguous = bucketContiguous
     val sel = d.selection
     val copy = if (allLayers) d.shallowCopy() else null
@@ -206,7 +214,8 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
     val ly = l.y
     val w = d.width
     val h = d.height
-    val loadPattern = if (bucketPattern) patternLoader() else null
+    val loadPattern = if (bucketPattern && color == null) patternLoader() else null
+    val paint = color ?: foreground
     val scale = patternScale
     runBusy("Filling…") {
         val coverage = withContext(Dispatchers.Default) {
@@ -250,13 +259,14 @@ fun EditorViewModel.bucketFill(x: Float, y: Float) {
         }
         // Applied like a brush stroke at full strength, so locks and masks behave the same
         val s = StrokeSession(
-            l, if (toMask) StrokeTarget.MASK else StrokeTarget.PIXELS, false, foreground, background, 1f,
+            l, if (toMask) StrokeTarget.MASK else StrokeTarget.PIXELS, false, paint, background, 1f,
             BrushTip.ROUND, 1f, 0f, null,
         )
         s.buffer.tiles.putAll(coverage.tiles)
         s.commit()?.let {
             history.record(it)
             d.touched(l)
+            onFilled?.invoke(it)
         }
     }
 }

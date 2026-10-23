@@ -55,7 +55,7 @@ import kotlin.math.roundToInt
 // App settings: how the app looks (theme, accent color, see-through panels), how a pen works, and
 // the things you've made or added (patterns, gradients, layer style presets, fonts) to tidy up.
 
-private enum class SettingsTab(val label: String) { APPEARANCE("Appearance"), PEN("Pen"), LIBRARY("Your library") }
+private enum class SettingsTab(val label: String) { APPEARANCE("Appearance"), PEN("Pen and drawing"), LIBRARY("Your library") }
 
 @Composable
 fun SettingsScreen(vm: EditorViewModel, onDismiss: () -> Unit) {
@@ -198,11 +198,11 @@ private fun PenSettings(vm: EditorViewModel) {
     Text("Twist to turn it (it snaps straight near 0°, 90°, 180°); a quick pinch in fits it on the screen, straight.", color = Q.textDim, fontSize = 12.sp)
     Spacer(Modifier.height(18.dp))
     Heading("Pressure")
-    ChipRow(PenCurve.entries.map { it.label }, vm.penCurve.ordinal) {
-        vm.penCurve = PenCurve.entries[it]
-        vm.savePenPrefs()
-    }
-    Text("Light hand: a gentle touch does more. Firm hand: you press harder for the same.", color = Q.textDim, fontSize = 12.sp)
+    PressureCurveEditor(vm)
+    Text(
+        "Across: how hard you press. Up: how much it does. Drag the two handles to shape it: above the dotted line, a gentle touch does more; below, you press harder for the same.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
     Spacer(Modifier.height(10.dp))
     PanelSlider(
         "Smallest size at the lightest touch", vm.penMinSize, 0.01f..1f, "${(vm.penMinSize * 100).roundToInt()}%",
@@ -213,6 +213,25 @@ private fun PenSettings(vm: EditorViewModel) {
         "For brushes with pressure on size. Each brush has its own switches for size and opacity (strength for the retouch brushes), under its sliders.",
         color = Q.textDim, fontSize = 12.sp,
     )
+    Spacer(Modifier.height(18.dp))
+    Heading("Draw and hold (QuickShape)")
+    ToggleRow("Hold at the end of a stroke to make it a shape", vm.quickShapeOn) {
+        vm.quickShapeOn = it
+        vm.prefs.edit().putBoolean("quickShape", it).apply()
+    }
+    Text(
+        "Draw a line, an ellipse, a rectangle or a triangle, and keep the pen (or finger) still at the end: it snaps clean. " +
+            "Keep holding and move to size and turn it. Shift, the Modifier button or a finger on the screen makes it perfect: a circle, a square, a line at 45°.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    if (vm.quickShapeOn) {
+        Spacer(Modifier.height(6.dp))
+        PanelSlider(
+            "How long to hold", vm.quickShapeDelay.toFloat(), 250f..1500f, "${"%.2f".format(vm.quickShapeDelay / 1000f)} s",
+            onChange = { vm.quickShapeDelay = (it / 50f).roundToInt() * 50 },
+            onDone = { vm.prefs.edit().putInt("quickShapeDelay", vm.quickShapeDelay).apply() },
+        )
+    }
     Spacer(Modifier.height(18.dp))
     Heading("Tilt")
     ToggleRow("Tilting the pen stretches the brush", vm.penTilt) {

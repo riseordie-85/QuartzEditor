@@ -430,8 +430,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         internal set
     /** Once a pen's been used, one finger moves the view and two zoom, instead of painting. */
     var penFingersNavigate by mutableStateOf(prefs.getBoolean("penFingers", true))
-    /** How pressure feels: light, normal or firm hand. */
-    var penCurve by mutableStateOf(PenCurve.entries.getOrElse(prefs.getInt("penCurve", 1)) { PenCurve.NORMAL })
+    /** How pressure feels: the curve's two handles (x1, y1, x2, y2), from no pressure (0, 0) to full (1, 1). */
+    var penCurve by mutableStateOf(PressureCurve.load(prefs))
     /** The smallest a pressure-sized brush gets (fraction of its size), at the lightest touch. */
     var penMinSize by mutableStateOf(prefs.getFloat("penMinSize", 0.15f))
     /** Tilting the pen stretches the brush, like the side of a pencil. */
@@ -469,6 +469,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The stroke under way, smoothed: where its brush trails behind the pen (null = not smoothed). */
     internal var smoother: StrokeSmoother? = null
 
+    /** Draw and hold to make a shape: a stroke snaps to the line, ellipse, rectangle or triangle it looks like. */
+    var quickShapeOn by mutableStateOf(prefs.getBoolean("quickShape", true))
+    /** How long to hold still at the end of a stroke before it snaps (ms). */
+    var quickShapeDelay by mutableStateOf(prefs.getInt("quickShapeDelay", 550))
+    /** The stroke under way's points as painted (x, y, pressure, tilt, lean), for QuickShape. */
+    internal val strokePoints = ArrayList<FloatArray>()
+    /** Makes the stroke under way again from its start (QuickShape redraws it as the shape). */
+    internal var strokeRemake: ((closed: Boolean) -> StrokeSession)? = null
+    /** The stroke under way snapped to a shape, still being held (moving the pen sizes and turns it). */
+    var quickShape by mutableStateOf<QuickShapeHold?>(null)
+        internal set
+
     /** A brush, eraser or retouch stroke is under way. */
     val stroking: Boolean get() = stroke != null || retouch != null
     /** The stroke under way paints where to heal or remove (not real paint). */
@@ -484,6 +496,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The swatch the Color panel edits. */
     var colorSlot by mutableStateOf(ColorSlot.FOREGROUND)
+
+    /** ColorDrop: a color being dragged from its swatch to the picture. */
+    var colorDrag by mutableStateOf<ColorDrag?>(null)
+    /** The last ColorDrop, while its tolerance bar shows. */
+    var colorDropFill by mutableStateOf<ColorDropFill?>(null)
+    /** How alike the colors a ColorDrop fills are (0..1). */
+    var colorDropTolerance by mutableFloatStateOf(prefs.getFloat("dropTol", 0.12f))
+    /** Window pixels to the canvas view's own (turned) pixels, while the canvas is showing. */
+    internal var canvasViewFromWindow: ((androidx.compose.ui.geometry.Offset) -> androidx.compose.ui.geometry.Offset?)? = null
 
     /** Workspace color around the canvas. */
     var canvasColor by mutableIntStateOf(prefs.getInt("canvasColor", ProjectIO.DEFAULT_CANVAS_COLOR))

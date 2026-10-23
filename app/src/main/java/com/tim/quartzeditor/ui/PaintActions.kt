@@ -69,8 +69,20 @@ fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boo
     val b = if (erase) eraser else brush
     // Folders and adjustment layers have no pixels of their own: brushes paint their mask
     val target = if ((d.editMask || layer.isGroup || layer.isAdjustment) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
-    val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection, strokeDynamics(b, pen != null), b.style, customTip = b.customTip)
+    val fg = foreground
+    val bg = background
+    val sel = d.selection
+    val dyn = strokeDynamics(b, pen != null)
+    val remake = { closed: Boolean ->
+        // (A closed shape has no ends to taper)
+        StrokeSession(layer, target, erase, fg, bg, b.opacity, b.tip, b.size, b.softness, sel, if (closed) dyn.copy(taperStart = 0f, taperEnd = 0f) else dyn, b.style, customTip = b.customTip)
+    }
+    val s = remake(false)
     s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
+    strokeRemake = remake
+    quickShape = null
+    strokePoints.clear()
+    strokePoints.add(floatArrayOf(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f))
     stroke = s
     d.invalidate()
     return true
@@ -120,12 +132,22 @@ private fun EditorViewModel.addStrokePoint(x: Float, y: Float, pen: PenSample?) 
         return
     }
     val s = stroke ?: return
+    // (A snapped shape is redrawn as the pen moves, not added to)
+    if (quickShape != null) return
     s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
+    if (strokePoints.size < 20000) strokePoints.add(floatArrayOf(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)) else strokeRemake = null
     if (strokeHeals == com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL) checkHealReach(x, y)
     doc?.invalidate()
 }
 
 fun EditorViewModel.endStroke() {
+    // A snapped shape is done as it is
+    if (quickShape != null) {
+        quickShape = null
+        smoother = null
+    }
+    strokePoints.clear()
+    strokeRemake = null
     // Smoothing: the line catches up to where the pen lifted
     smoother?.let { sm ->
         smoother = null
@@ -161,6 +183,9 @@ fun EditorViewModel.endStroke() {
 /** Drops a stroke that turned out to be the start of a two-finger gesture. */
 fun EditorViewModel.cancelStroke() {
     smoother = null
+    quickShape = null
+    strokePoints.clear()
+    strokeRemake = null
     cancelRetouch()
     strokeHeals = null
     stroke = null

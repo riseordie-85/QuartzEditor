@@ -4,16 +4,75 @@ import android.view.MotionEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import com.tim.quartzeditor.engine.StrokeDynamics
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 // A pen (stylus) on the canvas: its pressure, tilt, eraser end and side button. Compose passes on
 // where the pen is but not how it's held, so every touch event is also read here as it comes in
 // (EditorCanvas spies on them) and the canvas asks for the pen's state point by point.
 
-/** How pressure feels: the curve from how hard you press to how much it does. */
-enum class PenCurve(val label: String, val power: Float) {
-    LIGHT("Light hand", 0.6f), NORMAL("Normal", 1f), FIRM("Firm hand", 1.7f)
+/** Ready-made pressure curves: their two handles (x1, y1, x2, y2). */
+enum class PenCurve(val label: String, val handles: List<Float>) {
+    LIGHT("Light hand", listOf(0.15f, 0.45f, 0.5f, 0.95f)),
+    NORMAL("Normal", listOf(0.33f, 0.33f, 0.67f, 0.67f)),
+    FIRM("Firm hand", listOf(0.5f, 0.05f, 0.85f, 0.55f)),
+    SOFT_START("Soft start", listOf(0.45f, 0f, 0.35f, 1f)),
+}
+
+/**
+ * How pressure feels: a curve from no pressure (0, 0) to full (1, 1), shaped by two handles (a
+ * cubic Bézier, like Procreate's and Photoshop's), read through a table so it's quick per point.
+ */
+class PressureCurve(val handles: List<Float>) {
+    private val table = FloatArray(257)
+
+    init {
+        // Walk the curve finely; for each pressure keep the output where the curve passes it
+        val (x1, y1, x2, y2) = handles
+        var j = 0
+        var lastX = 0f
+        var lastY = 0f
+        val steps = 2048
+        for (i in 1..steps) {
+            val t = i / steps.toFloat()
+            val u = 1 - t
+            val x = 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t
+            val y = 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t
+            while (j <= 256 && j / 256f <= x) {
+                val f = if (x > lastX) (j / 256f - lastX) / (x - lastX) else 1f
+                table[j] = (lastY + (y - lastY) * f).coerceIn(0f, 1f)
+                j++
+            }
+            lastX = x
+            lastY = y
+        }
+        while (j <= 256) table[j++] = 1f
+    }
+
+    /** The output for raw pressure [p] (0..1). */
+    operator fun invoke(p: Float): Float {
+        val f = p.coerceIn(0f, 1f) * 256f
+        val i = f.toInt().coerceAtMost(255)
+        return table[i] + (table[i + 1] - table[i]) * (f - i)
+    }
+
+    /** Which ready-made curve this is (null: one of your own). */
+    val preset: PenCurve? get() = PenCurve.entries.firstOrNull { p -> p.handles.indices.all { kotlin.math.abs(p.handles[it] - handles[it]) < 0.005f } }
+
+    fun save(prefs: android.content.SharedPreferences) {
+        prefs.edit().putString("penCurveHandles", handles.joinToString(",")).apply()
+    }
+
+    companion object {
+        fun of(p: PenCurve) = PressureCurve(p.handles)
+
+        fun load(prefs: android.content.SharedPreferences): PressureCurve {
+            prefs.getString("penCurveHandles", null)?.split(",")?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 4 }?.let {
+                return PressureCurve(it.map { v -> v.coerceIn(0f, 1f) })
+            }
+            // Before the curve could be drawn: the light / normal / firm setting
+            return of(PenCurve.entries.getOrElse(prefs.getInt("penCurve", 1)) { PenCurve.NORMAL })
+        }
+    }
 }
 
 /** What the pen's side button does. */
@@ -163,7 +222,7 @@ internal val PointerInputChange.isPen: Boolean
     get() = type == PointerType.Stylus || type == PointerType.Eraser
 
 /** Pressure on the pen's curve. */
-internal fun EditorViewModel.penPressure(raw: Float): Float = raw.coerceIn(0f, 1f).pow(penCurve.power)
+internal fun EditorViewModel.penPressure(raw: Float): Float = penCurve(raw)
 
 /** The pen's state at point [k] of [m] of [change] (its historical points, then itself); null for a finger. */
 internal fun EditorViewModel.penSample(change: PointerInputChange, k: Int, m: Int, time: Long): PenSample? {
@@ -209,11 +268,11 @@ internal fun EditorViewModel.toggleFingerPainting() {
 internal fun EditorViewModel.savePenPrefs() {
     prefs.edit()
         .putBoolean("penFingers", penFingersNavigate)
-        .putInt("penCurve", penCurve.ordinal)
         .putFloat("penMinSize", penMinSize)
         .putBoolean("penTilt", penTilt)
         .putBoolean("penEraserEnd", penEraserEnd)
         .putString("penButton", penButton.name)
         .putBoolean("penHover", penHover)
         .apply()
+    penCurve.save(prefs)
 }

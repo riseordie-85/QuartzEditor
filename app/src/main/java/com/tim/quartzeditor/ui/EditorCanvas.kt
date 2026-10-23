@@ -58,6 +58,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -210,11 +211,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val sh = constraints.maxHeight.toFloat()
     val side = kotlin.math.ceil(kotlin.math.hypot(sw, sh)).toInt().coerceAtLeast(1)
     androidx.compose.runtime.SideEffect { vm.setViewSize(vm.viewW, vm.viewH, sw, sh) }
+    // ColorDrop: where a color let go of over the screen lands in the view (turned with it)
+    val viewCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    androidx.compose.runtime.DisposableEffect(vm) {
+        vm.canvasViewFromWindow = { w -> viewCoords[0]?.takeIf { it.isAttached }?.windowToLocal(w) }
+        onDispose { vm.canvasViewFromWindow = null }
+    }
     Box(
         Modifier
             .requiredSize(with(density) { side.toDp() })
             .graphicsLayer { rotationZ = vm.rotation }
             .onSizeChanged { vm.setViewSize(it.width.toFloat(), it.height.toFloat(), sw, sh) }
+            .onGloballyPositioned { viewCoords[0] = it }
     ) {
         // The picture, in a layer of its own that keeps what it drew: when anything else on the
         // screen moves (the layers list scrolling, a panel sliding), it's shown as it is instead of
@@ -492,6 +500,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var strokeOy = startCy
                         // Shift: the straight line's direction, fixed once the finger has moved a little
                         var lineAngle: Double? = null
+                        // QuickShape: where and since when the stroke's been held still (and whether it was tried there)
+                        var holdPos = start
+                        var holdT = t0
+                        var holdTried = false
+                        val holdSlop = 6.dp.toPx()
                         // Clone Stamp: Shift + tap (or Pick source, then a tap) sets where it copies from, and
                         // Alt keeps the stroke straight; every other brush is straight with Shift
                         val cloning = tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE
@@ -528,11 +541,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
                         while (true) {
                             val waitLong = mode == GestureMode.PENDING && !moved && !longPressDone
+                            // A stroke held still long enough snaps to a shape, even when the pen sends nothing
+                            val waitHold = mode == GestureMode.STROKE && !holdTried && vm.quickShapeReady && !straightOn()
                             val ev: PointerEvent? = if (waitLong) {
                                 val left = longPress - (SystemClock.uptimeMillis() - t0)
                                 withTimeoutOrNull(max(1L, left)) { awaitPointerEvent() }
+                            } else if (waitHold) {
+                                val left = holdT + vm.quickShapeDelay - SystemClock.uptimeMillis()
+                                withTimeoutOrNull(max(1L, left)) { awaitPointerEvent() }
                             } else {
                                 awaitPointerEvent()
+                            }
+                            if (ev == null && mode == GestureMode.STROKE) {
+                                holdTried = true
+                                vm.quickShapeSnap(perfect = vm.shiftOn)
+                                continue
                             }
                             if (ev == null) {
                                 // Long press without moving
@@ -672,11 +695,28 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     if (navTravel > slop || abs(totalZoom - 1f) > 0.06f) moved = true
                                 }
                                 GestureMode.STROKE -> {
+                                    // Another finger on the screen (not a resting hand): a snapped shape goes perfect
+                                    val extraFinger = ev.changes.any { it.pressed && it.id != down.id && it.id !in resting && !it.isPen }
+                                    // Held still (pens jiggle a little, so "still" is within a few pixels)
+                                    if (main != null && (main.position - holdPos).getDistance() > holdSlop) {
+                                        holdPos = main.position
+                                        holdT = now
+                                        holdTried = false
+                                    }
                                     // Only the finger that started the stroke paints
                                     if (main == null) {
                                         vm.endStroke()
                                         cursor = null
                                         mode = GestureMode.DONE
+                                    } else if (vm.quickShape != null) {
+                                        // A snapped shape: moving sizes and turns it
+                                        val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)
+                                        vm.quickShapeMove(x, y, perfect = vm.shiftOn || extraFinger)
+                                        cursor = main.position
+                                    } else if (!holdTried && now - holdT >= vm.quickShapeDelay && vm.quickShapeReady && !straightOn()) {
+                                        holdTried = true
+                                        vm.quickShapeSnap(perfect = vm.shiftOn || extraFinger)
+                                        cursor = main.position
                                     } else if (straightOn()) {
                                         // Straight: along 0°, 45° or 90° from where it started
                                         val (x, y) = vm.screenToCanvas(main.position.x, main.position.y)

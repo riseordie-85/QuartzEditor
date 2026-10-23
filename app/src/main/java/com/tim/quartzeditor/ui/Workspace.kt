@@ -322,6 +322,9 @@ fun Workspace(vm: EditorViewModel) {
                     ) { vm.deselect() }
                 }
 
+                // After a ColorDrop: its tolerance, to fill again with more or less
+                ColorDropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = if (desktop) 10.dp else 56.dp, start = 64.dp, end = 64.dp))
+
                 // The ComfyUI bar (the online app): a workflow, its prompt, Run
                 ComfyBar(vm, onOpenWindow = { comfyOpen = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp, start = 64.dp, end = if (desktop) 110.dp else 160.dp))
 
@@ -433,6 +436,7 @@ fun Workspace(vm: EditorViewModel) {
         ComfyStatus(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = if (vm.online && vm.showComfyBar) 136.dp else 76.dp, start = 64.dp, end = 64.dp))
 
         BusyOverlay(vm.busy)
+        ColorDragOverlay(vm)
         TipLayer(tipHost)
     }
     }
