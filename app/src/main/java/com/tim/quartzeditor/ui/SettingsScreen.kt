@@ -144,6 +144,15 @@ private fun AppearanceSettings(vm: EditorViewModel) {
         }
     }
     Spacer(Modifier.height(18.dp))
+    Heading("Layout")
+    ChipRow(UiLayout.entries.map { it.label }, vm.uiLayout.ordinal) { vm.chooseLayout(UiLayout.entries[it]) }
+    Text(
+        "Menu bar: a menu bar at the top (File, Edit, Image, Layer, Select, Filter, View, Window), the tool's settings in a bar under it, " +
+            "slim size and opacity sliders by the tools, resizable panels and a status bar. Classic: the ☰ menu and the brush column. " +
+            "Automatic: the menu bar on big screens like tablets, classic on phones.",
+        color = Q.textDim, fontSize = 12.sp,
+    )
+    Spacer(Modifier.height(18.dp))
     Heading("Panels")
     PanelSlider(
         "How solid the toolbar, panels and windows are", Q.panelAlpha, 0.4f..1f, "${(Q.panelAlpha * 100).roundToInt()}%",

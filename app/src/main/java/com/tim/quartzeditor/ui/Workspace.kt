@@ -82,6 +82,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.motionEventSpy
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -93,6 +95,7 @@ import com.tim.quartzeditor.engine.ProjectIO
 import kotlinx.coroutines.delay
 
 /** The editing screen: tools on the left, the picture in the middle, panels on the right. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun Workspace(vm: EditorViewModel) {
     val context = LocalContext.current
@@ -128,15 +131,35 @@ fun Workspace(vm: EditorViewModel) {
     var upscaleOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var renameLayerOpen by remember { mutableStateOf(false) }
+    val menuActions = MenuActions(
+        rename = { renameOpen = true },
+        export = { exportOpen = true },
+        saveProject = { saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}") },
+        placeImage = requestPlace,
+        discard = { discardOpen = true },
+        imageSize = { imageSizeOpen = true },
+        upscale = { upscaleOpen = true },
+        grid = { gridOpen = true },
+        newGuide = { guideOpen = true },
+        editGuides = { editGuidesOpen = true },
+        settings = { settingsOpen = true },
+        comfy = { comfyOpen = true },
+        renameLayer = { renameLayerOpen = true },
+    )
 
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color(vm.canvasColor))
+            // Every touch, as it comes in: the pen's pressure, tilt, eraser end and button (anywhere on the screen)
+            .motionEventSpy { if (vm.pen.onMotion(it) && vm.pen.touching) vm.notePenSeen() }
             .safeDrawingPadding()
     ) {
-        val wide = maxWidth >= 760.dp
-        val compact = maxWidth < 600.dp || maxHeight < 480.dp
+        // Big screens: a menu bar, the tool's settings in a bar under it, a status bar at the bottom
+        val desktop = vm.desktopFor(maxWidth.value, maxHeight.value)
+        val wide = maxWidth >= 760.dp || desktop
+        val compact = !desktop && (maxWidth < 600.dp || maxHeight < 480.dp)
         var panelsOpen by rememberSaveable { mutableStateOf(wide) }
         val docked = wide && panelsOpen
         // Tab on a keyboard shows or hides the panels
@@ -157,16 +180,27 @@ fun Workspace(vm: EditorViewModel) {
             }
         }
 
-        Row(Modifier.fillMaxSize().padding(if (compact || Q.compact) 4.dp else 12.dp)) {
+        val pad = if (compact || Q.compact || desktop) (if (desktop && !Q.compact) 8.dp else 4.dp) else 12.dp
+        Column(Modifier.fillMaxSize().padding(pad)) {
+        if (desktop) {
+            MenuBar(vm, menuActions, panelsOpen, togglePanels = { panelsOpen = !panelsOpen })
+            Spacer(Modifier.height(pad))
+            ToolOptionsBar(vm)
+            Spacer(Modifier.height(pad))
+        }
+        Row(Modifier.weight(1f).fillMaxWidth()) {
             Toolbar(
                 vm,
                 compact = compact,
+                slim = desktop,
                 onColorTap = {
                     vm.toggleSection(PanelSection.COLOR, open = true)
                     panelsOpen = true
                 },
                 menu = { size ->
                     // The app menu, at the top of the tools: short pages instead of one long list
+                    // (the menu bar has it all on big screens)
+                    if (desktop) return@Toolbar
                     var menu by remember { mutableStateOf(false) }
                     Box {
                         Box(
@@ -184,69 +218,11 @@ fun Workspace(vm: EditorViewModel) {
                             Item("Home (saves to Projects)", Icons.Outlined.Home) { vm.closeDocument() }
                             Item("Quick export (.png)", Icons.Outlined.Image) { vm.quickExport() }
                             Divider()
-                            Page("File", Icons.Outlined.Description) {
-                                Item("Rename image…") { renameOpen = true }
-                                Item("Export image…") { exportOpen = true }
-                                Item("Save project file…") { saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}") }
-                                Item("Place image as layer…") { requestPlace() }
-                                Divider()
-                                Item("Close without saving…") { discardOpen = true }
-                            }
-                            Page("Image", Icons.Outlined.Image) {
-                                Label("${vm.doc?.width ?: 0} × ${vm.doc?.height ?: 0} px")
-                                Item("Image size…") { imageSizeOpen = true }
-                                Divider()
-                                Item("Rotate 90° right") { vm.rotateImage(clockwise = true) }
-                                Item("Rotate 90° left") { vm.rotateImage(clockwise = false) }
-                                Item("Flip horizontally") { vm.flipImage(horizontal = true) }
-                                Item("Flip vertically") { vm.flipImage(horizontal = false) }
-                                Divider()
-                                Item("Flatten image") { vm.flattenImage() }
-                            }
-                            Page("Enhance", Icons.Outlined.AutoFixHigh) {
-                                Item("Auto enhance") { vm.autoEnhance() }
-                                Item("Upscale…") { upscaleOpen = true }
-                                Divider()
-                                Item("Denoise…") { vm.startEnhance(EnhanceKind.DENOISE) }
-                                Item("Sharpen…") { vm.startEnhance(EnhanceKind.SHARPEN) }
-                                Divider()
-                                Label("From depth (on-device AI)")
-                                Item("Depth blur…") { vm.startEnhance(EnhanceKind.DEPTH_BLUR) }
-                                Item("Depth fog…") { vm.startEnhance(EnhanceKind.FOG) }
-                                Item("Relight…") { vm.startEnhance(EnhanceKind.RELIGHT) }
-                                Item("Replace sky…") { vm.startEnhance(EnhanceKind.SKY) }
-                            }
+                            Page("File", Icons.Outlined.Description) { FileMenuItems(vm, menuActions) }
+                            Page("Image", Icons.Outlined.Image) { ImageMenuItems(vm, menuActions) }
+                            Page("Enhance", Icons.Outlined.AutoFixHigh) { EnhanceMenuItems(vm, menuActions) }
                             if (vm.online) Item("ComfyUI…", Icons.Outlined.Cloud) { comfyOpen = true }
-                            Page("View", Icons.Outlined.Visibility) {
-                                Item("Lock canvas turning", checked = vm.rotationLocked) { vm.toggleRotationLock() }
-                                if (vm.normalizedRotation() != 0f) Item("Straighten canvas") { vm.straightenView() }
-                                if (vm.penSeen) Item("Fingers paint (not just the pen)", checked = !vm.penFingersNavigate) { vm.toggleFingerPainting() }
-                                Item("Snap to center, edges and guides", checked = vm.snapOn) { vm.toggleSnap() }
-                                Item("Checkerboard for see-through", checked = vm.showChecker) { vm.toggleChecker() }
-                                Item("Modifier button (Shift / Alt)", checked = vm.showModifier) {
-                                    vm.showModifier = !vm.showModifier
-                                    vm.prefs.edit().putBoolean("showModifier", vm.showModifier).apply()
-                                    if (!vm.showModifier) {
-                                        vm.modShift = false
-                                        vm.modAlt = false
-                                        vm.modLocked = false
-                                    }
-                                }
-                                Divider()
-                                Page("Grid") {
-                                    Item("Show grid", checked = vm.showGrid) { vm.toggleGrid() }
-                                    Item("Grid settings…") { gridOpen = true }
-                                }
-                                Page("Rulers and guides") {
-                                    Item("Rulers", checked = vm.showRulers) { vm.toggleRulers() }
-                                    Item("Show guides", checked = vm.showGuides) { vm.toggleGuides() }
-                                    Item("Lock guides", checked = vm.guidesLocked) { vm.toggleGuidesLocked() }
-                                    Divider()
-                                    Item("New guide…") { guideOpen = true }
-                                    Item("Edit guides…") { editGuidesOpen = true }
-                                    Item("Clear guides") { vm.clearGuides() }
-                                }
-                            }
+                            Page("View", Icons.Outlined.Visibility) { ViewMenuItems(vm, menuActions) }
                             Divider()
                             Item("Settings…", Icons.Outlined.Settings) { settingsOpen = true }
                         }
@@ -257,8 +233,8 @@ fun Workspace(vm: EditorViewModel) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 EditorCanvas(vm, Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)))
 
-                // Undo / redo / fit
-                Row(
+                // Undo / redo / fit (on big screens: the menu bar and status bar)
+                if (!desktop) Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).padding(top = if (vm.showRulers) RULER else 0.dp),
                 ) {
@@ -270,21 +246,23 @@ fun Workspace(vm: EditorViewModel) {
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen, straight (or pinch in quickly)") { vm.fit() }
                 }
                 // The canvas is turned: how far (tap to straighten it)
-                RotationChip(vm, Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 6.dp))
+                if (!desktop) RotationChip(vm, Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 6.dp))
 
                 // Rulers (under the buttons)
                 Rulers(vm)
 
-                // Transforming: cancel / flip / rotate / distort / apply
-                TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                SelectBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
+                // Transforming: cancel / flip / rotate / distort / apply (big screens: in the options bar)
+                if (!desktop) {
+                    TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    SelectBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+                    TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 
-                // Cut, copy, paste
-                EditButton(vm, Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp))
+                    // Cut, copy, paste (big screens: the Edit menu)
+                    EditButton(vm, Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp))
+                }
 
                 // The on-screen Shift / Alt
                 ModifierButton(vm)
@@ -306,16 +284,16 @@ fun Workspace(vm: EditorViewModel) {
                 if (vm.doc?.selection?.isEmpty == false) {
                     RoundButton(
                         Icons.Outlined.Delete, "Delete selected pixels",
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = 52.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = if (desktop) 0.dp else 52.dp),
                     ) { vm.clearSelected() }
                     RoundButton(
                         Icons.Outlined.Deselect, "Deselect",
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = 104.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).padding(end = if (desktop) 52.dp else 104.dp),
                     ) { vm.deselect() }
                 }
 
-                // Show / hide panels
-                RoundButton(
+                // Show / hide panels (big screens: the status bar)
+                if (!desktop) RoundButton(
                     if (panelsOpen) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                     if (panelsOpen) "Hide panels" else "Show panels",
                     modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp),
@@ -328,10 +306,10 @@ fun Workspace(vm: EditorViewModel) {
                 exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
             ) {
               Row {
-                Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
+                if (desktop) DockHandle(vm, pad) else Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
-                Box(Modifier.width(310.dp).fillMaxHeight()) {
+                Box(Modifier.width(if (desktop) vm.dockWidth.dp else 310.dp).fillMaxHeight()) {
                     // The panels stay underneath (hidden), so they're as you left them when the window closes
                     PanelColumn(vm, requestPlace, Modifier.fillMaxSize().alpha(if (vm.popup != null) 0f else 1f))
                     if (vm.popup != null) {
@@ -347,6 +325,11 @@ fun Workspace(vm: EditorViewModel) {
                 }
               }
             }
+        }
+        if (desktop) {
+            Spacer(Modifier.height(pad))
+            StatusBar(vm, panelsOpen, togglePanels = { panelsOpen = !panelsOpen })
+        }
         }
 
         // Phones and narrow windows: panels slide over the picture
@@ -502,6 +485,14 @@ fun Workspace(vm: EditorViewModel) {
     }
 
     if (settingsOpen) SettingsScreen(vm) { settingsOpen = false }
+    if (renameLayerOpen) {
+        val l = vm.doc?.active
+        if (l == null) renameLayerOpen = false
+        else RenameDialog(l.props.name, onDismiss = { renameLayerOpen = false }) { name ->
+            vm.setProps(l.id, "Rename layer") { it.copy(name = name) }
+            renameLayerOpen = false
+        }
+    }
     if (renameOpen) {
         RenameDialog(vm.rootDoc?.name ?: "", title = "Rename image", onDismiss = { renameOpen = false }) {
             vm.renameDocument(it)
@@ -580,6 +571,26 @@ private fun EditButton(vm: EditorViewModel, modifier: Modifier) {
     }
 }
 
+/** The panels' edge on big screens: drag it to make them wider or narrower. */
+@Composable
+private fun DockHandle(vm: EditorViewModel, width: androidx.compose.ui.unit.Dp) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .width(width.coerceAtLeast(8.dp))
+            .fillMaxHeight()
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(onDragEnd = { vm.saveDockWidth() }) { change, dx ->
+                    change.consume()
+                    vm.dockWidth = (vm.dockWidth - dx / density.density).coerceIn(260f, 560f)
+                }
+            },
+    ) {
+        Box(Modifier.width(3.dp).height(36.dp).clip(RoundedCornerShape(2.dp)).background(Q.text.copy(alpha = 0.25f)))
+    }
+}
+
 /** How far the canvas is turned (only while it is); a tap straightens it. Its own scope, so turning doesn't redraw the workspace. */
 @Composable
 private fun RotationChip(vm: EditorViewModel, modifier: Modifier) {
@@ -608,9 +619,14 @@ private fun RotationChip(vm: EditorViewModel, modifier: Modifier) {
 
 @Composable
 private fun RoundButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(modifier) { HoverTip(label) { RoundButtonFace(icon, label, enabled, onClick) } }
+}
+
+@Composable
+private fun RoundButtonFace(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier
+        modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
             .background(Q.toolbar.copy(alpha = 0.9f))

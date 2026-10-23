@@ -114,7 +114,7 @@ import kotlin.math.sin
  * [onColorTap] opens the Color panel for the swatch you tapped.
  */
 @Composable
-fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier, menu: @Composable (Dp) -> Unit = {}) {
+fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modifier: Modifier = Modifier, slim: Boolean = false, menu: @Composable (Dp) -> Unit = {}) {
     val buttonSize = if (compact) 40.dp else 46.dp
     val liquify = vm.tool == Tool.WARP && vm.warp?.kind == com.tim.quartzeditor.engine.WarpKind.LIQUIFY
     val showBrush = ((vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH) && !vm.brushColumnHidden) || liquify
@@ -128,7 +128,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
         AnimatedVisibility(showBrush, enter = expandHorizontally(), exit = shrinkHorizontally()) {
             Row {
                 Box(Modifier.width(1.dp).fillMaxHeight().padding(vertical = 18.dp).background(Q.text.copy(alpha = 0.12f)))
-                BrushColumn(vm, compact)
+                BrushColumn(vm, compact, slim)
             }
         }
     }
@@ -312,7 +312,7 @@ internal fun warpIcon(k: com.tim.quartzeditor.engine.WarpKind) = when (k) {
 
 /** Brush tips and the three sliders, for whichever of brush or eraser is in use. */
 @Composable
-private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
+private fun BrushColumn(vm: EditorViewModel, compact: Boolean, slim: Boolean = false) {
     if (vm.tool == Tool.WARP) {
         LiquifyColumn(vm, compact)
         return
@@ -327,11 +327,14 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
     val preview: (Boolean) -> Unit = { vm.brushPreview = it }
     // Once a pen's been used: switches for what its pressure changes
     val pen = vm.penSeen
-    BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
-        val tipsH = if (retouch) 0.dp else (if (compact) 40.dp else 46.dp) * 4 + 24.dp
-        val extra = 150.dp + 40.dp + (if (pen) (if (retouch) 28.dp else 56.dp) + 34.dp else 0.dp)
-        val sliderH = ((maxHeight - tipsH - extra) / 3).coerceIn(56.dp, 220.dp)
-        val tight = maxHeight < tipsH + extra + 56.dp * 3
+    // Slim (the menu bar layout, where the options bar has the rest): just size and opacity, tall
+    BoxWithConstraints(Modifier.width(if (compact || slim) 56.dp else 66.dp).fillMaxHeight()) {
+        val tipsH = if (retouch || slim) 0.dp else (if (compact) 40.dp else 46.dp) * 4 + 24.dp
+        val extra = if (slim) 100.dp + (if (pen) (if (retouch) 28.dp else 56.dp) + 34.dp else 0.dp)
+        else 150.dp + 40.dp + (if (pen) (if (retouch) 28.dp else 56.dp) + 34.dp else 0.dp)
+        val sliders = if (slim) 2 else 3
+        val sliderH = ((maxHeight - tipsH - extra) / sliders).coerceIn(56.dp, if (slim) 360.dp else 220.dp)
+        val tight = maxHeight < tipsH + extra + 56.dp * sliders
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -340,7 +343,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 .padding(vertical = 10.dp),
         ) {
             // The retouch brushes are always round
-            if (!retouch) BrushTip.entries.forEach { tip ->
+            if (!retouch && !slim) BrushTip.entries.forEach { tip ->
                 val img = remember(tip) { tipIcon(tip) }
                 val sel = tip == b.tip
                 Box(
@@ -355,17 +358,19 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                     Image(img, contentDescription = tip.label, modifier = Modifier.size(if (compact) 28.dp else 32.dp))
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            SliderCaption("Soft")
-            VerticalSlider(
-                value = b.softness,
-                onChange = { v -> vm.updateBrush(forTool) { it.copy(softness = v) } },
-                height = sliderH,
-                description = "Softness",
-                onActive = preview,
-            )
-            ToolLabel("${(b.softness * 100).roundToInt()}%")
-            Spacer(Modifier.height(6.dp))
+            if (!slim) {
+                Spacer(Modifier.height(8.dp))
+                SliderCaption("Soft")
+                VerticalSlider(
+                    value = b.softness,
+                    onChange = { v -> vm.updateBrush(forTool) { it.copy(softness = v) } },
+                    height = sliderH,
+                    description = "Softness",
+                    onActive = preview,
+                )
+                ToolLabel("${(b.softness * 100).roundToInt()}%")
+                Spacer(Modifier.height(6.dp))
+            }
             SliderCaption("Size")
             VerticalSlider(
                 value = BrushSizeScale.toT(b.size),
@@ -390,8 +395,8 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
                 vm.updateBrush(forTool) { it.copy(pressureOpacity = on) }
             }
             Spacer(Modifier.height(8.dp))
-            // Smoothing and tapers
-            BrushMoreButton(vm, forTool, b, retouch)
+            // Smoothing and tapers (slim: they're in the options bar)
+            if (!slim) BrushMoreButton(vm, forTool, b, retouch)
             // Fingers: move the view (the pen paints) or paint too
             if (pen) FingerToggle(vm)
         }
@@ -529,7 +534,7 @@ private fun LiquifyColumn(vm: EditorViewModel, compact: Boolean) {
 }
 
 /** A single dab of the tip, for its button. */
-private fun tipIcon(tip: BrushTip): ImageBitmap {
+internal fun tipIcon(tip: BrushTip): ImageBitmap {
     val size = 64
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val dab = Dabs.make(tip, 52, if (tip == BrushTip.GRUNGE) 0.35f else 0.08f)
@@ -560,6 +565,8 @@ private fun ToolButton(
     onClick: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    // A pen hovering over it shows its name
+    HoverTip(label, beside = true) {
     Box {
         Box(
             contentAlignment = Alignment.Center,
@@ -593,6 +600,7 @@ private fun ToolButton(
                 }
             }
         }
+    }
     }
 }
 

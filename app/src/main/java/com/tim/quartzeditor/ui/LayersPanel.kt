@@ -546,6 +546,8 @@ private fun LayerRow(
                     },
                 )
             }
+            // The pen's side button (or a right click): this layer's quick actions, like a long press
+            .penSecondaryClick(vm) { menu = true }
             .combinedClickable(
                 onClick = { vm.selectLayer(layer.id, mask = false) },
                 onLongClick = { menu = true },
@@ -731,7 +733,7 @@ private fun LayerRow(
 
 private const val LIST_ID = "list"
 
-private val FX_KIND_LABELS = mapOf(
+internal val FX_KIND_LABELS = mapOf(
     FxKind.ADJUST to "Adjustments",
     FxKind.LEVELS to "Levels",
     FxKind.CURVES to "Curves",
@@ -845,14 +847,16 @@ private fun Thumb(img: androidx.compose.ui.graphics.ImageBitmap?, outlined: Bool
 
 @Composable
 private fun BarButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(38.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
-    ) {
-        Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(24.dp))
+    HoverTip(label) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick),
+        ) {
+            Icon(icon, contentDescription = label, tint = Q.text, modifier = Modifier.size(24.dp))
+        }
     }
 }
 

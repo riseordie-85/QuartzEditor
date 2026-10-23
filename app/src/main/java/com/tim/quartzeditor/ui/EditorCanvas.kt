@@ -57,7 +57,6 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
-import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
@@ -286,8 +285,6 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Canvas(
             Modifier
                 .fillMaxSize()
-                // Every touch event, as it comes in: the pen's pressure, tilt, eraser end and button
-                .motionEventSpy { if (vm.pen.onMotion(it) && vm.pen.touching) vm.notePenSeen() }
                 // The pen hovering: the brush outline follows it
                 .pointerInput(Unit) {
                     awaitPointerEventScope {

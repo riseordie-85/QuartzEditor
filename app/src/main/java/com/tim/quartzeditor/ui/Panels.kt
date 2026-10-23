@@ -94,7 +94,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             .clip(RoundedCornerShape(26.dp))
             .background(Q.panel)
     ) {
-        val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES)
+        val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES) || vm.isOpen(PanelSection.HISTORY)
         val layersOpen = vm.isOpen(PanelSection.LAYERS)
         // With Color and Properties folded, the Layers list fills the column. Otherwise Layers is
         // measured first (its settings, two rows and its buttons, which always stay on
@@ -108,6 +108,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             ) {
                 Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
                 Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
+                Section(vm, PanelSection.HISTORY) { HistoryList(vm) }
             }
             LayersPanel(
                 vm, onPlaceImage,

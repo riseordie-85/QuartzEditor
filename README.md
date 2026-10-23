@@ -69,6 +69,27 @@ Tools on the left, the picture in the middle, panels on the right. On phones the
 right (the arrow button at the bottom right); on tablets and the unfolded Fold they sit beside the picture
 and the same button hides them.
 
+### Menu bar layout (big screens)
+On a big screen (a tablet in landscape, 900 dp wide or more) the editor uses a desktop-style layout made
+for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, Classic).
+- **Menu bar** at the top: **Quartz** (Home, Quick export, Settings), **File**, **Edit** (undo/redo,
+  cut/copy/paste, fill, free transform), **Image** (size, crop, rotate, flip, Enhance, flatten), **Layer**
+  (new, folders, adjustment layers, duplicate, delete, rename, merge, clip, layer style, mask, fill/clear,
+  convert, place, flatten), **Select** (all, deselect, invert, subject, background, modify edge, to layers
+  and shapes, mask, pattern, crop), **Filter** (the adjustments and filters on the layer, Enhance, ComfyUI),
+  **View** (fit, 100 %, zoom, canvas turning, fingers, snap, grid, rulers and guides) and **Window** (show
+  or hide the panels and each section, keep sections open). The image's name and undo/redo are at the right.
+- **Options bar** under it: the tool in use and its settings. Brushes: tip, size, opacity (strength),
+  softness, smoothing, taper in/out, and the pen's pressure switches. Other tools show their bar here
+  (selection modes, transform, crop, warp, pen, text) instead of over the picture.
+- **Toolbar**: as before, with only tall **size and opacity** sliders beside it for the brushes.
+- **Panels**: drag their left edge to make them wider or narrower (remembered). **History** is a panel
+  section of its own (on phones too): tap a step to go back to it.
+- **Status bar** at the bottom: zoom (tap for Fit and 25–400 %), how far the canvas is turned (tap to
+  straighten) and the turning lock, the canvas size, the layer, the finger-painting switch, and show/hide panels.
+- **Pen niceties** (everywhere): hover over a button for a moment to see its name; the pen's side button
+  (or a mouse's right button) on a layer opens its menu, like a long press.
+
 ### Toolbar
 Top to bottom: ☰ Menu, Move, Select, Transform/Crop, Healing, Fill, Toning, Pen, Shape (hold for Custom shapes), Text, Brush/Eraser,
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
@@ -609,7 +630,9 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   text), `PatternActions`, `WarpActions`, plus `MultiSelect`, `SelectionTools`, `PenEdit`, `Snap`,
   `Grid`, `Shortcuts`, `ToolPicks`, `StylePresets`, `GradientEditor`, `RetouchActions`, `AiActions`,
   `ShapeLibraryActions`, `EnhanceActions`, `ComfyActions` (ComfyUI runs, its window and status chip),
-  `PenInput` (the pen's pressure, tilt, eraser end and button, read from each touch event).
+  `PenInput` (the pen's pressure, tilt, eraser end and button, read from each touch event),
+  `MenuContent` (what each menu holds, shared by the menu bar and the ☰ menu), `DesktopChrome` (the menu
+  bar, options bar, status bar, History list, hover tips and the pen's right click).
 - `app/src/offline/` and `app/src/online/` — what's different in the two apps: the offline one removes
   internet access; the online one adds it (plain `http://` allowed), its name, and the built-in
   ComfyUI workflows and server address (`assets/comfy/`).
@@ -620,7 +643,8 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
 
 ## Settings
 Menu → Settings (or the gear on the home screen).
-- **Appearance**: theme (Dark, Midnight, Medium gray, Light), accent color, and how solid the toolbar,
+- **Appearance**: theme (Dark, Midnight, Medium gray, Light), accent color, **Layout** (Automatic, Menu
+  bar, Classic; see Menu bar layout), and how solid the toolbar,
   panels and windows are (lower lets the picture show through). **Compact interface** (under Panels, off
   by default) trims margins and padding: a narrower toolbar with tighter spacing, slimmer workspace edges,
   tighter panel sections, buttons and fields, and shorter layer rows — more room for the picture.

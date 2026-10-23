@@ -40,7 +40,7 @@ enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIE
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
-enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), LAYERS("Layers") }
+enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), HISTORY("History"), LAYERS("Layers") }
 
 /** Floating windows opened from the bottom of the Layers panel. */
 enum class PopupKind(val title: String) {
@@ -526,6 +526,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * above is in its own, unturned coordinates.
      */
     var rotation by mutableFloatStateOf(0f)
+    /** Menu bar or classic layout (or picked by the screen's size). */
+    var uiLayout by mutableStateOf(UiLayout.entries.firstOrNull { it.name == prefs.getString("uiLayout", null) } ?: UiLayout.AUTO)
+        private set
+
+    fun chooseLayout(l: UiLayout) {
+        uiLayout = l
+        prefs.edit().putString("uiLayout", l.name).apply()
+    }
+
+    /** How wide the panels are in the menu bar layout (dp). */
+    var dockWidth by mutableFloatStateOf(prefs.getFloat("dockWidth", 330f))
+
+    fun saveDockWidth() = prefs.edit().putFloat("dockWidth", dockWidth).apply()
+
     /** Two fingers don't turn the canvas. */
     var rotationLocked by mutableStateOf(prefs.getBoolean("rotationLocked", false))
     var viewW = 0f
@@ -758,6 +772,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         offsetY += ny - cy
         rotation += deg
         fitted = true
+    }
+
+    /** Zooms to [s] (1 = actual pixels), around the middle of the screen. */
+    fun zoomTo(s: Float) {
+        if (scale <= 0f) return
+        transformView(s / scale, viewW / 2f, viewH / 2f, 0f, 0f)
     }
 
     /** Turns the view back to straight, keeping the middle of the screen where it is. */
