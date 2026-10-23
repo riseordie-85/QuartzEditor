@@ -202,7 +202,7 @@ private fun MenuTitle(label: String, bold: Boolean = false, content: @Composable
                 .padding(horizontal = 11.dp, vertical = 7.dp),
         )
         // Its pages open beside it; long menus scroll instead of running down the screen
-        PagedDropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 520.dp), cascade = true) { content() }
+        PagedDropdownMenu(expanded = open, onDismissRequest = { open = false }, cascade = true) { content() }
     }
 }
 

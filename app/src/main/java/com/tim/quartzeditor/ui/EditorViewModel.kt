@@ -526,6 +526,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var exportReport by mutableStateOf<Triple<String, String, List<String>>?>(null)
     /** The ComfyUI run going on (or that failed, until you've seen why); the online app only (ComfyActions.kt). */
     var comfyJob by mutableStateOf<ComfyJob?>(null)
+    /** Bumped when the ComfyUI bar is shown or hidden. */
+    var comfyBarVersion by mutableIntStateOf(0)
     /** The ComfyUI workflows, once read. */
     var comfyWorkflows by mutableStateOf<List<com.tim.quartzeditor.engine.ComfyWorkflow>?>(null)
     /** Which side [comfyWorkflows] is for (Comfy Cloud's or your server's). */

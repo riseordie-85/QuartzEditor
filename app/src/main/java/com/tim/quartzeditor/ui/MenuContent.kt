@@ -218,6 +218,11 @@ fun PagedMenuScope.SelectMenuItems(vm: EditorViewModel) {
 @Composable
 fun PagedMenuScope.FilterMenuItems(vm: EditorViewModel, a: MenuActions) {
     val active = vm.doc?.active
+    // ComfyUI first (it's the one used most)
+    if (vm.online) {
+        Item("ComfyUI…", Icons.Outlined.Cloud) { a.comfy() }
+        Divider()
+    }
     Label(
         when {
             active?.isSmart == true -> "Added as a smart filter (stays editable)"
@@ -234,10 +239,6 @@ fun PagedMenuScope.FilterMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("${PopupKind.BLUR.title}…") { vm.openPopup(PopupKind.BLUR) }
     Item("${PopupKind.FILTERS.title}…", Icons.Outlined.Tune) { vm.openPopup(PopupKind.FILTERS) }
     Page("Enhance") { EnhanceMenuItems(vm, a) }
-    if (vm.online) {
-        Divider()
-        Item("ComfyUI…", Icons.Outlined.Cloud) { a.comfy() }
-    }
 }
 
 @Composable
@@ -247,6 +248,9 @@ fun PagedMenuScope.ViewMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Zoom in") { vm.zoomTo(vm.scale * 1.5f) }
     Item("Zoom out") { vm.zoomTo(vm.scale / 1.5f) }
     Divider()
+    if (vm.online) {
+        Item("ComfyUI bar", checked = vm.showComfyBar) { vm.showComfyBar = !vm.showComfyBar }
+    }
     Item("Lock canvas turning", checked = vm.rotationLocked) { vm.toggleRotationLock() }
     if (vm.uiLayout != UiLayout.CLASSIC) Item("Brush sliders beside the tools (menu bar layout)", checked = vm.sideSliders) { vm.toggleSideSliders() }
     if (vm.normalizedRotation() != 0f) Item("Straighten canvas") { vm.straightenView() }

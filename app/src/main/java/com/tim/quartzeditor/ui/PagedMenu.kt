@@ -17,8 +17,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -39,8 +40,10 @@ class PagedMenuScope internal constructor(
     internal val within: String? = null,
     /** Pages open beside the menu (the menu bar's way) instead of replacing it. */
     internal val cascade: Boolean = false,
-    /** Cascading: which page on this menu is open beside it. */
-    internal val openSub: androidx.compose.runtime.MutableState<String?>? = null,
+    /** Cascading: the pages open, one column each beside the menu (a page within a page goes further right). */
+    internal val path: androidx.compose.runtime.MutableState<List<String>>? = null,
+    /** Cascading: which column these items are in (0 = the menu itself). */
+    internal val column: Int = 0,
 ) {
     /** These items are on the page being shown. */
     val visible: Boolean get() = within == page
@@ -57,16 +60,31 @@ fun PagedDropdownMenu(
     content: @Composable PagedMenuScope.() -> Unit,
 ) {
     var page by remember { mutableStateOf<String?>(null) }
-    val openSub = remember { mutableStateOf<String?>(null) }
+    val path = remember { mutableStateOf<List<String>>(emptyList()) }
     // Opens on the first page each time
     LaunchedEffect(expanded) {
         if (!expanded) {
             page = null
-            openSub.value = null
+            path.value = emptyList()
         }
     }
     DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, modifier = modifier, offset = offset) {
-        PagedMenuScope(page, { page = it }, onDismissRequest, cascade = cascade, openSub = openSub).content()
+        if (!cascade) {
+            PagedMenuScope(page, { page = it }, onDismissRequest).content()
+            return@DropdownMenu
+        }
+        // The menu, then each open page in a column beside it (all in the one menu, so they never overlap)
+        androidx.compose.foundation.layout.Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Max)) {
+            androidx.compose.foundation.layout.Column(Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max)) {
+                PagedMenuScope(null, {}, onDismissRequest, cascade = true, path = path, column = 0).content()
+            }
+            path.value.forEachIndexed { i, label ->
+                androidx.compose.material3.VerticalDivider(Modifier.fillMaxHeight())
+                androidx.compose.foundation.layout.Column(Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max)) {
+                    PagedMenuScope(label, {}, onDismissRequest, cascade = true, path = path, column = i + 1).content()
+                }
+            }
+        }
     }
 }
 
@@ -113,7 +131,9 @@ fun PagedMenuScope.Custom(content: @Composable () -> Unit) {
 @Composable
 fun PagedMenuScope.Page(label: String, icon: ImageVector? = null, content: @Composable PagedMenuScope.() -> Unit) {
     if (cascade) {
-        CascadePage(label, icon, content)
+        if (visible) CascadeItem(label, icon)
+        // (Built always, so its items show in the column of the page that's open)
+        PagedMenuScope(page, go, dismiss, within = label, cascade = true, path = path, column = column).content()
         return
     }
     if (visible) {
@@ -138,46 +158,29 @@ fun PagedMenuScope.Page(label: String, icon: ImageVector? = null, content: @Comp
 }
 
 
-/** A page that opens beside its menu, at the height of its item (one at a time on each menu). */
+/** A page's item in a cascading menu: opens it in the column to the right (tap, or hover with a pen or mouse). */
 @Composable
-private fun PagedMenuScope.CascadePage(label: String, icon: ImageVector?, content: @Composable PagedMenuScope.() -> Unit) {
-    val holder = openSub ?: return
-    val open = holder.value == label
-    var itemSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val inner = remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(open) { if (!open) inner.value = null }
-    androidx.compose.foundation.layout.Box(
-        Modifier
-            .onSizeChanged { itemSize = it }
-            // A pen or mouse hovering over it opens it
-            .pointerInput(label) {
+private fun PagedMenuScope.CascadeItem(label: String, icon: ImageVector?) {
+    val holder = path ?: return
+    val open = holder.value.getOrNull(column) == label
+    fun openIt() {
+        if (!open) holder.value = holder.value.take(column) + label
+    }
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = if (icon != null) ({ Icon(icon, contentDescription = null) }) else null,
+        trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Q.textDim) },
+        modifier = (if (open) Modifier.background(Q.text.copy(alpha = 0.10f)) else Modifier)
+            .pointerInput(label, column) {
                 awaitPointerEventScope {
                     while (true) {
                         val e = awaitPointerEvent()
                         val c = e.changes.firstOrNull() ?: continue
                         val hoverer = c.type == PointerType.Stylus || c.type == PointerType.Mouse || c.type == PointerType.Eraser
-                        if (hoverer && !c.pressed && (e.type == PointerEventType.Enter || e.type == PointerEventType.Move)) holder.value = label
+                        if (hoverer && !c.pressed && (e.type == PointerEventType.Enter || e.type == PointerEventType.Move)) openIt()
                     }
                 }
             },
-    ) {
-        DropdownMenuItem(
-            text = { Text(label) },
-            leadingIcon = if (icon != null) ({ Icon(icon, contentDescription = null) }) else null,
-            trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Q.textDim) },
-            modifier = if (open) Modifier.background(Q.text.copy(alpha = 0.10f)) else Modifier,
-            onClick = { holder.value = label },
-        )
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { holder.value = null },
-            // Not focusable: touches and hovers still reach the menu it came from (another page, an item)
-            properties = androidx.compose.ui.window.PopupProperties(focusable = false),
-            offset = with(density) { DpOffset(itemSize.width.toDp(), -itemSize.height.toDp()) },
-            modifier = Modifier.heightIn(max = 520.dp),
-        ) {
-            PagedMenuScope(null, go, dismiss, within = null, cascade = true, openSub = inner).content()
-        }
-    }
+        onClick = { openIt() },
+    )
 }

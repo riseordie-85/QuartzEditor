@@ -310,6 +310,9 @@ fun Workspace(vm: EditorViewModel) {
                     ) { vm.deselect() }
                 }
 
+                // The ComfyUI bar (the online app): a workflow, its prompt, Run
+                ComfyBar(vm, onOpenWindow = { comfyOpen = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp, start = 64.dp, end = if (desktop) 110.dp else 160.dp))
+
                 // Show / hide panels (big screens: the status bar)
                 if (!desktop) RoundButton(
                     if (panelsOpen) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -414,8 +417,8 @@ fun Workspace(vm: EditorViewModel) {
             )
         }
 
-        // A ComfyUI run working away (you can keep editing)
-        ComfyStatus(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp, start = 64.dp, end = 64.dp))
+        // A ComfyUI run working away (you can keep editing), above the ComfyUI bar
+        ComfyStatus(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = if (vm.online && vm.showComfyBar) 136.dp else 76.dp, start = 64.dp, end = 64.dp))
 
         BusyOverlay(vm.busy)
         TipLayer(tipHost)
