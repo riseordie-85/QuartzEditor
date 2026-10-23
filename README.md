@@ -144,14 +144,14 @@ the list; the button shows the one you used last.
   While something is selected, two round buttons show at the bottom right of the picture (beside the panels
   button): **delete** deletes the selected pixels on the layer you're on (on a mask, it shows them again),
   and **deselect** (the dotted square) drops the selection, whatever tool you're on.
-- **Crop** (hold the Transform button) — drag the corners, edges or the box; pick a shape (Free, Original,
+- **Crop** (its own button; hold it for Perspective crop) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
 - **Image size** (Menu → Image → Image size…) — shows the picture's size, layer count and memory, and
   scales everything to a new size: width and height (linked or not), 25/50/75% or a long side of
   2048/2560/3000 px. Every layer, mask, shape, text (still editable), smart layer and guide scales; "Scale
   layer styles" keeps stroke widths, shadows and glows looking the same. Shrinking a lot is done in
   halving steps, so it stays smooth. One undo step.
-- **Perspective crop** (hold the Transform button) — drag the four corners onto the corners of something
+- **Perspective crop** (hold the Crop button) — drag the four corners onto the corners of something
   slanted (a sign, a window, a screen, a photo of a flyer); the grid follows. Apply straightens it into a flat,
   square-on picture (its size is the average of opposite sides). Shapes and text stay editable; guides and
   the selection are cleared.

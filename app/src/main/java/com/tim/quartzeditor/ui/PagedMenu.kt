@@ -167,11 +167,13 @@ private fun PagedMenuScope.CascadePage(label: String, icon: ImageVector?, conten
             leadingIcon = if (icon != null) ({ Icon(icon, contentDescription = null) }) else null,
             trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Q.textDim) },
             modifier = if (open) Modifier.background(Q.text.copy(alpha = 0.10f)) else Modifier,
-            onClick = { holder.value = if (open) null else label },
+            onClick = { holder.value = label },
         )
         DropdownMenu(
             expanded = open,
             onDismissRequest = { holder.value = null },
+            // Not focusable: touches and hovers still reach the menu it came from (another page, an item)
+            properties = androidx.compose.ui.window.PopupProperties(focusable = false),
             offset = with(density) { DpOffset(itemSize.width.toDp(), -itemSize.height.toDp()) },
             modifier = Modifier.heightIn(max = 520.dp),
         ) {

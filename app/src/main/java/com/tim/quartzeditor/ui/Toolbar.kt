@@ -140,7 +140,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
 @Composable
 private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onColorTap: () -> Unit, menu: @Composable (Dp) -> Unit) {
     BoxWithConstraints(Modifier.width(if (compact || Q.compact) 52.dp else 62.dp).fillMaxHeight()) {
-        // Buttons shrink to fit the screen's height: 12 tools (each with 6dp of space, 2dp when compact) and the two
+        // Buttons shrink to fit the screen's height: 13 tools (each with 6dp of space, 2dp when compact) and the two
         // color swatches (0.9 of a button each), plus padding. Only a very short screen scrolls.
         val fitted = (maxHeight - Q.gap(130.dp, 66.dp)) / 14.8f
         val buttonSize = fitted.coerceIn(MIN_TOOL_BUTTON, maxButton)
@@ -199,7 +199,7 @@ private fun ToolColumn(vm: EditorViewModel, compact: Boolean, maxButton: Dp, onC
                     ToolOption(QIcons.PerspectiveCrop, "Perspective crop", t == Tool.CROP && vm.cropPerspective) { vm.chooseCrop(perspective = true) },
                 ),
             ) { if (t != Tool.CROP) vm.chooseCrop(perspective = vm.cropPerspective) }
-            // 5. Healing: Spot healing, AI Remove, Clone stamp
+            // 6. Healing: Spot healing, AI Remove, Clone stamp
             val healing = t == Tool.RETOUCH && vm.retouchKind.heals
             val healShown = if (healing) vm.retouchKind else com.tim.quartzeditor.engine.RetouchKind.byName(vm.prefs.getString("lastHeal", null)).takeIf { it.heals } ?: com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL
             ToolButton(

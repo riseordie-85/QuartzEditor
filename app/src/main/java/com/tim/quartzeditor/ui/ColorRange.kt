@@ -72,6 +72,11 @@ fun EditorViewModel.pickRangeColor() {
     toast("Touch the picture to pick the color")
 }
 
+/** Stops picking Color Range's color (the window comes back as it was). */
+fun EditorViewModel.cancelRangePick() {
+    pickingForRange = false
+}
+
 /** The color touched on the picture for Color Range (null: nothing there). */
 fun EditorViewModel.rangeColorPicked(c: Int?) {
     pickingForRange = false
@@ -105,6 +110,8 @@ private fun EditorViewModel.rangeSource(allLayers: Boolean, maxSide: Int?): (() 
 
 /** Makes the selection from Color Range's settings (combined by the selection mode). */
 fun EditorViewModel.applyColorRange(p: ColorRangeParams) {
+    // Anything pending goes in first, so the picture is looked at as it ends up
+    if (pendingFirst { applyColorRange(p) }) return
     colorRange = null
     pickingForRange = false
     val d = doc ?: return
@@ -131,8 +138,6 @@ fun EditorViewModel.applyColorRange(p: ColorRangeParams) {
 @Composable
 fun ColorRangeDialog(vm: EditorViewModel) {
     val p = vm.colorRange ?: return
-    // Hidden while a color is being picked from the picture
-    if (vm.pickingForRange) return
     // The picture small, for the preview (made again when the source changes)
     var small by remember { mutableStateOf<IntArray?>(null) }
     var size by remember { mutableStateOf(0 to 0) }
@@ -167,6 +172,8 @@ fun ColorRangeDialog(vm: EditorViewModel) {
     fun set(change: (ColorRangeParams) -> ColorRangeParams) {
         vm.colorRange = change(p)
     }
+    // Hidden while a color is being picked from the picture (kept, so it comes back as it was)
+    if (vm.pickingForRange) return
     AlertDialog(
         onDismissRequest = { vm.colorRange = null },
         title = { Text("Color range") },

@@ -175,7 +175,7 @@ fun PagedMenuScope.SelectMenuItems(vm: EditorViewModel) {
     Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
     Item("Select sky", Icons.Outlined.Cloud) { vm.selectSky() }
     Item("Color range…", Icons.Outlined.Palette) { vm.openColorRange() }
-    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id) } }
+    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id, vm.selectMode) } }
     Page("Modify edge") {
         Label("Feather (soft edge)")
         Custom {

@@ -255,6 +255,14 @@ fun Workspace(vm: EditorViewModel) {
                 // Rulers (under the buttons)
                 Rulers(vm)
 
+                // Color Range's color being picked from the picture: say so, with a way out
+                if (vm.pickingForRange) {
+                    Bar(Modifier.align(Alignment.TopCenter).padding(top = if (desktop) 8.dp else 56.dp)) {
+                        Text("Touch the picture to pick Color range's color", color = Q.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 10.dp))
+                        BarChip("Cancel", false) { vm.cancelRangePick() }
+                    }
+                }
+
                 // Typing: the text field (it needs more room than the options bar has, so it's here in both layouts)
                 TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = if (desktop) 8.dp else 56.dp, start = 8.dp, end = 8.dp))
 

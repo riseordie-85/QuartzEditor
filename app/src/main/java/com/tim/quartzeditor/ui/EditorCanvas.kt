@@ -354,7 +354,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var endTime = t0
                         if (vm.doc == null) return@awaitEachTouch null
                         // The pen's eraser end (or its button, when set to) erases; its button can pick a color
-                        val penErases = byPen && vm.penCanErase() &&
+                        val penErases = byPen && !vm.pickingForRange && vm.penCanErase() &&
                             ((vm.penEraserEnd && (down.type == PointerType.Eraser || vm.pen.eraserEnd)) || (vm.penButton == PenButton.ERASER && vm.pen.buttonHeld))
                         val penPicks = byPen && !penErases && vm.penButton == PenButton.EYEDROPPER && vm.pen.buttonHeld
                         if (penErases) vm.penOverride = Tool.ERASER
@@ -968,11 +968,14 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.MOVE -> vm.endMove()
                             GestureMode.EYEDROP -> {
                                 val (cx, cy) = vm.screenToCanvas(lastPos.x, lastPos.y)
-                                if (vm.pickingForRange) vm.rangeColorPicked(vm.sampleAt(cx, cy, commit = false))
+                                if (vm.pickingForRange) vm.rangeColorPicked(vm.sampleAt(cx, cy, commit = false, radius = 0, allLayers = vm.colorRange?.allLayers))
                                 else vm.sampleAt(cx, cy, commit = true)
                                 loupe = null
                             }
-                            GestureMode.PENDING -> if (!longPressDone) {
+                            GestureMode.PENDING -> if (vm.pickingForRange) {
+                                // Picking Color Range's color but not on the picture: stop picking
+                                vm.cancelRangePick()
+                            } else if (!longPressDone) {
                                 when (tool) {
                                     Tool.MOVE -> if (vm.isOnCanvas(start.x, start.y)) vm.selectLayerAt(startCx, startCy)
                                     Tool.TRANSFORM -> if (vm.transform == null) vm.beginTransform()

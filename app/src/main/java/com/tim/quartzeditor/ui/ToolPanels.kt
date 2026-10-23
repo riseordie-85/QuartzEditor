@@ -360,7 +360,7 @@ fun SelectBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
                     Item("Select sky") { vm.selectSky() }
                     Item("Color range…") { vm.openColorRange() }
-                    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id) } }
+                    Item("Layer's pixels", enabled = d.active?.let { !it.isAdjustment && !it.isGroup } == true) { d.active?.let { vm.selectLayerPixels(it.id, vm.selectMode) } }
                 }
                 Divider()
                 Page("New layer") {

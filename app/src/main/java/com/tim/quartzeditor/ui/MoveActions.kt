@@ -121,13 +121,15 @@ fun EditorViewModel.selectLayerAt(x: Float, y: Float) {
  * Eyedropper: sets the color in the slot being edited from the image (the average of the square
  * the sample size says), from everything you see or just the layer you're on.
  */
-fun EditorViewModel.sampleAt(x: Float, y: Float, commit: Boolean): Int? {
+fun EditorViewModel.sampleAt(x: Float, y: Float, commit: Boolean, radius: Int? = null, allLayers: Boolean? = null): Int? {
     val d = doc ?: return null
-    val r = ((eyedropSize - 1) / 2).coerceIn(0, 50)
-    val layer = d.active?.takeIf { !eyedropAllLayers && it.hasContent && !it.isGroup && !it.isAdjustment }
+    val r = (radius ?: ((eyedropSize - 1) / 2)).coerceIn(0, 50)
+    val layer = d.active?.takeIf { !(allLayers ?: eyedropAllLayers) && it.hasContent && !it.isGroup && !it.isAdjustment }
     val c = when {
-        layer != null -> sampleLayer(layer, x.toInt(), y.toInt(), r)
-        d.layers.any { it.isAdjustment && d.effectivelyVisible(it) } -> sampleFromPicture(d, x.toInt(), y.toInt(), r)
+        layer != null -> sampleLayer(d, layer, x.toInt(), y.toInt(), r)
+        // A big sample while dragging: from a flat copy of the picture (made once), not drawn again each move
+        d.layers.any { it.isAdjustment && d.effectivelyVisible(it) } || (r > 0 && !commit) -> sampleFromPicture(d, x.toInt(), y.toInt(), r)
+            ?: if (r > 0 && !commit) null else DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup, r)
         else -> DocRenderer.sample(d, x.toInt(), y.toInt(), effectsLookup, r)
     } ?: return null
     if (commit) {
@@ -137,16 +139,54 @@ fun EditorViewModel.sampleAt(x: Float, y: Float, commit: Boolean): Int? {
     return c
 }
 
-/** The color of [layer]'s own pixels around canvas point ([x], [y]) ([r] each way, averaged). */
-private fun sampleLayer(layer: com.tim.quartzeditor.engine.Layer, x: Int, y: Int, r: Int): Int? {
-    val n = 2 * r + 1
-    val px = IntArray(n * n)
-    var i = 0
-    for (yy in y - r..y + r) for (xx in x - r..x + r) {
-        val lx = xx - layer.x
-        val ly = yy - layer.y
-        val tile = layer.tiles[com.tim.quartzeditor.engine.TileGrid.key(Math.floorDiv(lx, com.tim.quartzeditor.engine.TileGrid.SIZE), Math.floorDiv(ly, com.tim.quartzeditor.engine.TileGrid.SIZE))]
-        px[i++] = tile?.getPixel(Math.floorMod(lx, com.tim.quartzeditor.engine.TileGrid.SIZE), Math.floorMod(ly, com.tim.quartzeditor.engine.TileGrid.SIZE)) ?: 0
+/**
+ * The color of [layer]'s own pixels around canvas point ([x], [y]) ([r] each way, averaged): only
+ * what's on the canvas, and only as much as its mask shows.
+ */
+private fun sampleLayer(d: Doc, layer: com.tim.quartzeditor.engine.Layer, x: Int, y: Int, r: Int): Int? {
+    val size = com.tim.quartzeditor.engine.TileGrid.SIZE
+    val l = (x - r).coerceAtLeast(0)
+    val t = (y - r).coerceAtLeast(0)
+    val rr = (x + r + 1).coerceAtMost(d.width)
+    val b = (y + r + 1).coerceAtMost(d.height)
+    if (rr <= l || b <= t) return null
+    val w = rr - l
+    val h = b - t
+    val px = IntArray(w * h)
+    val mask = if (layer.maskActive) layer.mask else null
+    // Tile by tile: each tile's part of the square read in one go
+    var ty = Math.floorDiv(t - layer.y, size)
+    while (ty * size + layer.y < b) {
+        var tx = Math.floorDiv(l - layer.x, size)
+        while (tx * size + layer.x < rr) {
+            val key = com.tim.quartzeditor.engine.TileGrid.key(tx, ty)
+            val tile = layer.tiles[key]
+            if (tile != null) {
+                // This tile's part of the square, in canvas pixels
+                val cl = maxOf(l, tx * size + layer.x)
+                val ct = maxOf(t, ty * size + layer.y)
+                val cr = minOf(rr, (tx + 1) * size + layer.x)
+                val cb = minOf(b, (ty + 1) * size + layer.y)
+                if (cr > cl && cb > ct) {
+                    val tw = cr - cl
+                    val th = cb - ct
+                    val part = IntArray(tw * th)
+                    tile.getPixels(part, 0, tw, cl - layer.x - tx * size, ct - layer.y - ty * size, tw, th)
+                    val hid = mask?.get(key)?.let { m -> IntArray(tw * th).also { m.getPixels(it, 0, tw, cl - layer.x - tx * size, ct - layer.y - ty * size, tw, th) } }
+                    for (j in 0 until th) for (i in 0 until tw) {
+                        var c = part[j * tw + i]
+                        if (hid != null) {
+                            // The mask stores how much is hidden
+                            val shown = 255 - ((hid[j * tw + i] ushr 24) and 0xFF)
+                            c = (((c ushr 24) * shown / 255) shl 24) or (c and 0xFFFFFF)
+                        }
+                        px[(ct - t + j) * w + (cl - l + i)] = c
+                    }
+                }
+            }
+            tx++
+        }
+        ty++
     }
     return DocRenderer.averageColor(px)
 }

@@ -610,6 +610,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     internal fun setDocument(d: Doc, canvas: Int? = null) {
         cancelEnhance()
+        colorRange = null
+        pickingForRange = false
         lastStrokeEnd = null
         cloneSource = null
         cloneOffset = null
@@ -652,6 +654,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Shows another open document (a tab) with its own undo, leaving nothing half done behind. */
     internal fun switchDocument(d: Doc, h: History) {
         cancelEnhance()
+        colorRange = null
+        pickingForRange = false
         lastStrokeEnd = null
         cloneSource = null
         cloneOffset = null
@@ -837,6 +841,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tapping a tool's button. Tapping the move button again switches to panning; brushes show their picker. */
     fun onToolButton(t: Tool) {
+        // Picking Color Range's color: picking a tool stops (the window comes back)
+        if (pickingForRange) pickingForRange = false
         if (t == Tool.TRANSFORM && transform != null) return
         if (t == Tool.WARP && warp != null) return
         if (t == Tool.CROP && cropBox != null) return

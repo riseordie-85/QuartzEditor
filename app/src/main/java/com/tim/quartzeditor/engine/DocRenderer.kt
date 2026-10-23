@@ -974,7 +974,8 @@ object DocRenderer {
             gs += ((p shr 8) and 0xFF) * al.toDouble()
             bs += (p and 0xFF) * al.toDouble()
         }
-        if (a / px.size.coerceAtLeast(1) < 8.0) return null
+        // (Nothing there: see-through, or close to it, even where it's thin)
+        if (a < 8.0) return null
         return Color.rgb((rs / a).roundToInt(), (gs / a).roundToInt(), (bs / a).roundToInt())
     }
 

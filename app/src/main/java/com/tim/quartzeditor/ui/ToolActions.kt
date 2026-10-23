@@ -787,7 +787,7 @@ fun EditorViewModel.selectLayerPixels(id: Long) {
     selectLayerPixels(id, mode)
 }
 
-private fun EditorViewModel.selectLayerPixels(id: Long, mode: com.tim.quartzeditor.engine.SelectMode) {
+internal fun EditorViewModel.selectLayerPixels(id: Long, mode: com.tim.quartzeditor.engine.SelectMode) {
     // What's pending (a transform, say) goes in first, so the layer is selected as it ends up
     if (pendingFirst { selectLayerPixels(id, mode) }) return
     val d = doc ?: return
