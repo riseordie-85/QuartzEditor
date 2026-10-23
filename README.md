@@ -278,6 +278,22 @@ the list; the button shows the one you used last.
   0°/90°/180°/270°; a quick pinch in fits it on the screen, straight). While it's turned, a chip at the top
   right shows the angle (tap: straighten). View → Lock canvas turning (or Settings → Pen) stops two fingers
   turning it. Rulers hide while it's turned. **Two-finger tap: undo. Three-finger tap: redo.**
+- **Brush library** (the brush's name in the options bar, the **Brushes** panel section, or "Brushes and
+  Brush Studio…" in the brush column's sliders button): ready-made brushes, each shown as a sample
+  stroke. Basics (Hard round, Soft round, Airbrush), Sketching (Pencil HB, 6B pencil, Charcoal), Inking
+  (Ink pen, Fineliner, Brush pen, Marker), Painting (Soft paint, Gouache, Chalk, Dry brush) and Texture
+  (Fur, Grass, Spatter, Grunge), then **Your brushes**. Picking one gives the brush (or the eraser) all its
+  settings; "•" by the name means you've changed it since. Hold a brush (or use the pen's side button)
+  to edit it in Brush Studio, duplicate it, or rename / delete one of yours.
+- **Brush Studio**: every setting of the brush in use, with a sample stroke that follows, on pages:
+  **Basics** (tip: Round, Square, Triangle, Grunge, Chalk, Spatter, Blade, Bristles; size, opacity,
+  **flow**, softness), **Stroke** (spacing, smoothing, tapers), **Shape** (angle, roundness for chisel
+  tips, turns with the stroke, size and angle jitter, scatter), **Grain** (Paper, Canvas, Charcoal or
+  Noise, its depth and scale: the texture stays put on the canvas like paper's tooth) and **Pen**
+  (pressure on size / opacity / flow; tilt: nothing, **stretch** like a marker on its side, or **shade**:
+  bigger and lighter like the side of a pencil). Changes apply straight away; **Save as new brush…**
+  puts them in your library, **Update** saves them into your brush, **Back to** undoes them.
+  Flow is how much each dab adds: low flow builds up within a stroke (never past its opacity).
 - **Smoothing and taper** (the sliders button under a brush's sliders, for the brush, eraser and retouch
   brushes each): Smoothing makes the line trail the pen or finger on a "string" so wobbles smooth out (it
   catches up when you lift). Taper at the start / end makes strokes grow from a point and thin out to one,

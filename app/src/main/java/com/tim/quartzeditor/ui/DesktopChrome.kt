@@ -325,8 +325,10 @@ private fun BrushOptions(vm: EditorViewModel, modifier: Modifier) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.horizontalScroll(rememberScrollState()),
     ) {
+        // The brush from the library, and Brush Studio
+        if (!retouch) BrushPresetButton(vm, forTool)
         if (!retouch) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            BrushTip.entries.forEach { tip ->
+            (BrushTip.BASIC + listOfNotNull(b.tip.takeIf { it !in BrushTip.BASIC })).forEach { tip ->
                 val img = remember(tip) { tipIcon(tip) }
                 HoverTip(tip.label) {
                     Box(

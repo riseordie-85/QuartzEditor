@@ -431,6 +431,7 @@ fun Workspace(vm: EditorViewModel) {
 
     RasterizeDialog(vm)
     ColorRangeDialog(vm)
+    BrushStudio(vm)
     if (gridOpen) GridDialog(vm) { gridOpen = false }
     if (guideOpen) NewGuideDialog(vm) { guideOpen = false }
     // After opening a Photoshop file: what didn't come across exactly

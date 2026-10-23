@@ -69,7 +69,7 @@ fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boo
     val b = if (erase) eraser else brush
     // Folders and adjustment layers have no pixels of their own: brushes paint their mask
     val target = if ((d.editMask || layer.isGroup || layer.isAdjustment) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
-    val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection, strokeDynamics(b, pen != null))
+    val s = StrokeSession(layer, target, erase, foreground, background, b.opacity, b.tip, b.size, b.softness, d.selection, strokeDynamics(b, pen != null), b.style)
     s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
     stroke = s
     d.invalidate()

@@ -40,7 +40,7 @@ enum class Tool { MOVE, PAN, SELECT, CROP, TRANSFORM, EYEDROPPER, BUCKET, GRADIE
 
 enum class ColorSlot { FOREGROUND, BACKGROUND }
 
-enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), HISTORY("History"), LAYERS("Layers") }
+enum class PanelSection(val label: String) { COLOR("Color"), PROPERTIES("Properties"), BRUSHES("Brushes"), HISTORY("History"), LAYERS("Layers") }
 
 /** Floating windows opened from the bottom of the Layers panel. */
 enum class PopupKind(val title: String) {
@@ -99,6 +99,10 @@ data class BrushSettings(
     /** 0..1: how long the stroke takes to grow to full size at its start, and to thin out at its end. */
     val taperStart: Float = 0f,
     val taperEnd: Float = 0f,
+    /** Spacing, flow, jitter, angle, grain, tilt (the brush library's brushes set these). */
+    val style: com.tim.quartzeditor.engine.BrushStyle = com.tim.quartzeditor.engine.BrushStyle.PLAIN,
+    /** The library brush these settings came from (null = none). */
+    val presetId: String? = null,
 )
 
 /**
@@ -394,6 +398,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Size, softness and strength (as opacity) of the retouch brushes. */
     var retouchBrush by mutableStateOf(loadBrush("retouch", BrushSettings(size = 50f, softness = 0.5f, opacity = 0.5f, pressureSize = false, pressureOpacity = true)))
         private set
+
+    // ---------------------------------------------------------------- brush library
+    /** Brushes you made (BrushLibrary.kt has the ready-made ones). */
+    var userBrushes by mutableStateOf(loadUserBrushes(prefs))
+        internal set
+    /** Brush Studio open for this tool's brush (null = closed). */
+    var brushStudioFor by mutableStateOf<Tool?>(null)
+    /** Stroke pictures of brushes, by their settings. */
+    internal val brushPreviews = android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(60)
 
     // ---------------------------------------------------------------- pen (stylus)
     /** What the pen is doing right now (fed by every touch on the canvas). */
@@ -1053,6 +1066,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         smoothing = prefs.getFloat("$key.smooth", def.smoothing),
         taperStart = prefs.getFloat("$key.taperIn", def.taperStart),
         taperEnd = prefs.getFloat("$key.taperOut", def.taperEnd),
+        style = prefs.getString("$key.style", null)?.let { runCatching { com.tim.quartzeditor.engine.BrushStyle.fromJson(org.json.JSONObject(it)) }.getOrNull() } ?: def.style,
+        presetId = prefs.getString("$key.preset", def.presetId),
     )
 
     private fun saveBrush(key: String, b: BrushSettings) {
@@ -1066,6 +1081,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("$key.smooth", b.smoothing)
             .putFloat("$key.taperIn", b.taperStart)
             .putFloat("$key.taperOut", b.taperEnd)
+            .putString("$key.style", b.style.toJson().toString())
+            .putString("$key.preset", b.presetId)
             .apply()
     }
 

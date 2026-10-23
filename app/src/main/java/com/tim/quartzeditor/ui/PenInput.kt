@@ -181,7 +181,7 @@ internal fun taperLength(t: Float, size: Float): Float = if (t <= 0f) 0f else t 
 internal fun EditorViewModel.strokeDynamics(b: BrushSettings, byPen: Boolean): StrokeDynamics {
     val taper = StrokeDynamics(taperStart = taperLength(b.taperStart, b.size), taperEnd = taperLength(b.taperEnd, b.size))
     return if (!byPen) taper
-    else taper.copy(minSize = if (b.pressureSize) penMinSize.coerceIn(0.01f, 1f) else null, opacity = b.pressureOpacity, tilt = penTilt)
+    else taper.copy(minSize = if (b.pressureSize) penMinSize.coerceIn(0.01f, 1f) else null, opacity = b.pressureOpacity, tilt = penTilt && b.style.tiltMode != com.tim.quartzeditor.engine.TiltMode.NONE)
 }
 
 /** The retouch strength the pen's pressure gives (full when pressure doesn't set it). */

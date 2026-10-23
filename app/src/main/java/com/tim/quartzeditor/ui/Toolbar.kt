@@ -342,7 +342,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean, slim: Boolean = f
                 .padding(vertical = 10.dp),
         ) {
             // The retouch brushes are always round
-            if (!retouch && !slim) BrushTip.entries.forEach { tip ->
+            if (!retouch && !slim) BrushTip.BASIC.forEach { tip ->
                 val img = remember(tip) { tipIcon(tip) }
                 val sel = tip == b.tip
                 Box(
@@ -419,6 +419,13 @@ private fun BrushMoreButton(vm: EditorViewModel, forTool: Tool, b: BrushSettings
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Column(Modifier.width(280.dp).padding(horizontal = 14.dp, vertical = 6.dp)) {
+                if (!retouch) {
+                    SmallButton("Brushes and Brush Studio…") {
+                        open = false
+                        vm.brushStudioFor = forTool
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text(
                     when (forTool) {
                         Tool.ERASER -> "Eraser"
