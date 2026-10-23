@@ -1026,6 +1026,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     )
         private set
 
+    /** The panel dock: which sections are where, stacked as tabs, and the heights you dragged them to. */
+    var dock by mutableStateOf(DockStore.load(prefs))
+        internal set
+
     /** Sections opened for the moment (they fold away again when you pick another tool). */
     var openedSections by mutableStateOf(setOf<PanelSection>())
         private set

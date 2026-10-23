@@ -299,4 +299,6 @@ fun PagedMenuScope.WindowMenuItems(vm: EditorViewModel, panelsOpen: Boolean, tog
     PanelSection.entries.filter { it != PanelSection.LAYERS }.forEach { s ->
         Item("Keep ${s.label} open", checked = s in vm.pinnedSections) { vm.togglePin(s) }
     }
+    Divider()
+    Item("Reset panel layout") { vm.resetDock() }
 }

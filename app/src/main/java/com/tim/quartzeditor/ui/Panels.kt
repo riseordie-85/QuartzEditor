@@ -83,79 +83,6 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import android.graphics.Color as AColor
 
-/**
- * The right-hand column: Color and Properties (they fold away by themselves unless pinned) and
- * Layers, whose list fills whatever room is left.
- */
-@Composable
-fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
-    BoxWithConstraints(
-        modifier
-            .clip(RoundedCornerShape(Q.corner(26.dp)))
-            .background(Q.panel)
-    ) {
-        val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES) || vm.isOpen(PanelSection.HISTORY) || vm.isOpen(PanelSection.BRUSHES)
-        val layersOpen = vm.isOpen(PanelSection.LAYERS)
-        // With Color and Properties folded, the Layers list fills the column. Otherwise Layers is
-        // measured first (its settings, two rows and its buttons, which always stay on
-        // screen) and Color/Properties scroll in whatever is left.
-        val fillLayers = layersOpen && !anyOpen
-        val layersMax = (maxHeight - 150.dp).coerceAtLeast(120.dp)
-        Column(Modifier.fillMaxSize().padding(top = Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp))) {
-            Column(
-                (if (fillLayers) Modifier else Modifier.weight(1f, fill = false))
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Section(vm, PanelSection.COLOR) { ColorPanel(vm) }
-                Section(vm, PanelSection.PROPERTIES) { PropertiesPanel(vm) }
-                Section(vm, PanelSection.BRUSHES) { BrushesPanel(vm) }
-                Section(vm, PanelSection.HISTORY) { HistoryList(vm) }
-            }
-            LayersPanel(
-                vm, onPlaceImage,
-                fillList = fillLayers,
-                modifier = if (fillLayers) Modifier.weight(1f) else Modifier.heightIn(max = layersMax),
-            )
-        }
-    }
-}
-
-@Composable
-private fun Section(vm: EditorViewModel, s: PanelSection, content: @Composable () -> Unit) {
-    val open = vm.isOpen(s)
-    val pinned = s in vm.pinnedSections
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { vm.toggleSection(s) }
-                .padding(horizontal = Q.gap(10.dp, 6.dp), vertical = Q.gap(6.dp, 1.dp)),
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .clickable { vm.togglePin(s) },
-            ) {
-                Icon(
-                    if (pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
-                    contentDescription = if (pinned) "Unpin (fold away by itself)" else "Pin open",
-                    tint = if (pinned) Q.accent else Q.textDim,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            Text(s.label, color = Q.text, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-            Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Q.text, modifier = Modifier.size(28.dp))
-        }
-        AnimatedVisibility(open) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = Q.gap(12.dp, 8.dp)).padding(bottom = Q.gap(10.dp, 4.dp))) { content() }
-        }
-        Box(Modifier.fillMaxWidth().padding(horizontal = Q.gap(20.dp, 12.dp)).height(1.dp).background(Q.divider))
-    }
-}
-
 /** A floating window over the picture (Layer Style, Adjustments, Filters). */
 @Composable
 fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
@@ -359,7 +286,7 @@ fun parseHex(text: String): Int? {
 }
 
 @Composable
-private fun ColorPanel(vm: EditorViewModel) {
+internal fun ColorPanel(vm: EditorViewModel) {
     val slot = vm.colorSlot
     val color = if (slot == ColorSlot.FOREGROUND) vm.foreground else vm.background
     // Hue is kept separately so grays don't make the hue bar jump
@@ -638,7 +565,7 @@ internal fun FiltersPanel(vm: EditorViewModel) {
 // ===================================================================== properties
 
 @Composable
-private fun PropertiesPanel(vm: EditorViewModel) {
+internal fun PropertiesPanel(vm: EditorViewModel) {
     TransformProperties(vm)
     ToolOptions(vm)
     val tool = vm.tool

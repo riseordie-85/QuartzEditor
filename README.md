@@ -379,7 +379,14 @@ the list; the button shows the one you used last.
   same scale and place, keeping its warp and smart filters; linked copies change too.
 
 ### Panels
-Only **Color**, **Properties** and **Layers** live in the column.
+The column holds **Color**, **Properties**, **Brushes**, **History** and **Layers**, and you arrange it:
+- **Move** a section: drag its header up or down; a line shows where it will go.
+- **Stack** sections as tabs: drag a header onto another's header (it's outlined). Tap a tab to show it;
+  drag a tab out (to a line between sections) to give it a place of its own again.
+- **Sizes**: drag the line between two open sections (it has a small grip) to give one more room and the
+  other less; each keeps the height you gave it. Double-tap the line: back to automatic (as tall as needed).
+  The section showing Layers always takes whatever room is left.
+- It's all remembered; **Window → Reset panel layout** puts everything back.
 - **Color** and **Properties** fold away by themselves: picking a tool opens Properties with that tool's
   settings (selection shape and mode, crop ratio, transform numbers, bucket tolerance, gradient presets
   and type, brush tips and opacity), and tapping a color swatch opens Color. The **pin** on a section's
@@ -390,9 +397,8 @@ Only **Color**, **Properties** and **Layers** live in the column.
   current color to My swatches (hold one to remove it), and **Import** reads Photoshop's .aco and Adobe's
   .ase swatch files (RGB, CMYK, Lab and gray colors; each group becomes a set).
 - **Layers** — like Photoshop, the settings on top (blend mode, opacity, locks, fill) and the buttons at the
-  bottom stay put; only the list between them scrolls. It shrinks to two layers while Color or Properties
-  is open (scroll for the rest; the active layer stays in sight; the buttons always stay), and fills the column
-  when they're folded.
+  bottom stay put; only the list between them scrolls. It fills the room the other open sections leave
+  (keeping enough for a few layers; the buttons always stay).
   Tap its header to fold it too.
   - All of Photoshop's blend modes (Normal, Dissolve, Darken, Multiply, Color Burn, Linear Burn, Darker
     Color, Lighten, Screen, Color Dodge, Linear Dodge, Lighter Color, Overlay, Soft Light, Hard Light, Vivid
@@ -707,7 +713,7 @@ Everything is under `app/src/main/java/com/tim/quartzeditor/`.
   pressure curve), `PressureCurveEditor`, `QuickShape` (draw and hold; the shape fitting is
   `engine/ShapeFit`), `ColorDrop`, `ComfyBar`, `BrushLibrary` and `BrushStudio` (with `.abr` import:
   `engine/Abr`),
-  `MenuContent` (what each menu holds, shared by the menu bar and the ☰ menu), `DesktopChrome` (the menu
+  `PanelDock` (the panel column: sections, tabs, moving and sizing them), `MenuContent` (what each menu holds, shared by the menu bar and the ☰ menu), `DesktopChrome` (the menu
   bar, options bar, status bar, History list, hover tips and the pen's right click).
 - `app/src/offline/` and `app/src/online/` — what's different in the two apps: the offline one removes
   internet access; the online one adds it (plain `http://` allowed), its name, and the built-in

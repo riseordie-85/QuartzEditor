@@ -111,16 +111,35 @@ import com.tim.quartzeditor.engine.Blend
 import com.tim.quartzeditor.engine.Layer
 import kotlin.math.roundToInt
 
+/** Several layers picked: how many, and a tap to go back to one (in the Layers header). */
+@Composable
+internal fun LayersPickedChip(vm: EditorViewModel) {
+    val n = vm.selectedLayerIds().size
+    if (n <= 1) return
+    Text(
+        "$n picked  ✕",
+        color = Color.White,
+        fontSize = 12.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Q.accent)
+            .clickable { vm.clearMultiSelect() }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+    Spacer(Modifier.width(4.dp))
+}
+
 /** [onPlaceImage] opens the photo picker to add an image as a new layer. */
 @Composable
-fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean, modifier: Modifier = Modifier) {
+fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean, modifier: Modifier = Modifier, showHeader: Boolean = true) {
     val d = vm.doc ?: return
     val active = d.active
     var renaming by remember { mutableStateOf<Layer?>(null) }
     // Top settings and bottom buttons stay put; only the list between them scrolls (like Photoshop)
     SqueezeColumn(fillList, modifier.padding(horizontal = Q.gap(12.dp, 6.dp))) {
         val open = vm.isOpen(PanelSection.LAYERS)
-        Row(
+        // (In the panel dock the header is the dock's, with its tabs)
+        if (showHeader) Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
@@ -152,7 +171,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                 modifier = Modifier.size(28.dp),
             )
         }
-        if (!open) return@SqueezeColumn
+        if (!open && showHeader) return@SqueezeColumn
 
         // Blend mode and opacity
         Row(verticalAlignment = Alignment.CenterVertically) {
