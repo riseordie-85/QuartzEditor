@@ -96,7 +96,7 @@ fun EditorViewModel.runComfyShortcut(s: ComfyShortcut) {
             return@launch
         }
         val batchKey = if (s.cloud) "comfyOneBatch:cloud" else "comfyOneBatch"
-        runComfy(w, p.prompt.trim(), p.enhance, p.merged, w.keep(p.overrides), p.megapixels, p.count, prefs.getBoolean(batchKey, s.cloud))
+        runComfy(w, p.prompt.trim(), p.enhance, p.merged, w.keep(p.overrides), p.megapixels, p.count, prefs.getBoolean(batchKey, s.cloud), grow = p.grow ?: comfyGrow(w))
     }
 }
 

@@ -8,7 +8,7 @@ import com.tim.quartzeditor.engine.Doc
 
 // Several files open at once, each in a tab (the menu bar shows them, with their smart layers'
 // tabs). Each keeps its own tabs, undo and view; the one shown is in the view model's tabs. Leaving
-// a file saves it to Projects (quietly), so nothing waits unsaved in the background.
+// a file autosaves its changes to Drafts (the project itself changes only when you save it).
 
 /** One open file: its tabs (the picture first, then smart layers' contents) and which is shown. */
 class OpenFile(tabs: List<EditorTab>, tabIndex: Int) {
@@ -49,14 +49,14 @@ internal fun EditorViewModel.fileRoot(f: OpenFile): Doc? =
 /** The tabs of open file [i] (live for the file shown). */
 internal fun EditorViewModel.fileTabs(i: Int): List<EditorTab> = if (i == fileIndex) tabs else files.getOrNull(i)?.tabs.orEmpty()
 
-/** Puts the file shown away: its view and tabs kept, saved to Projects if it changed. */
+/** Puts the file shown away: its view and tabs kept, its changes autosaved to Drafts. */
 internal fun EditorViewModel.stashFile() {
     val f = files.getOrNull(fileIndex) ?: return
     if (doc == null) return
     // Text being typed goes in first
     if (textEdit != null) finishText()
     saveView()
-    saveToProjects(quiet = true)
+    saveDraft()
     f.tabs = tabs
     f.tabIndex = tabIndex
     f.canvasColor = canvasColor
@@ -95,17 +95,8 @@ fun EditorViewModel.switchFileTab(i: Int, k: Int) {
     if (k != tabIndex) switchTab(k)
 }
 
-/** Closes open file [i] (saved to Projects). One not shown was saved when it was left: it just goes. */
-fun EditorViewModel.closeFile(i: Int) {
-    if (i !in files.indices) return
-    if (i != fileIndex) {
-        files = files.filterIndexed { j, _ -> j != i }
-        if (i < fileIndex) fileIndex--
-        rebalanceUndo()
-        return
-    }
-    closeDocument()
-}
+/** Closes open file [i]: with unsaved changes it's shown and you're asked whether to save them. */
+fun EditorViewModel.closeFile(i: Int) = requestClose(i)
 
 /** Its project was deleted: the open file showing it closes without saving (so it doesn't come back). */
 internal fun EditorViewModel.projectDeleted(id: String) {
@@ -134,10 +125,10 @@ internal fun EditorViewModel.fileClosed() {
 /** Opening another file from another app: anything pending in the one shown is applied first. */
 internal fun EditorViewModel.readyForAnotherFile(then: () -> Unit): Boolean = pendingFirst(then)
 
-/** The start screen, to open or start another file (this one stays open, saved). */
+/** The start screen, to open or start another file (this one stays open, its changes in Drafts). */
 fun EditorViewModel.openHome() {
     if (doc == null) return
     if (pendingFirst { openHome() }) return
-    saveToProjects(quiet = true)
+    saveDraft()
     showHome = true
 }

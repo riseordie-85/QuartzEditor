@@ -136,6 +136,18 @@ fun Workspace(vm: EditorViewModel) {
     val requestPlace = { placeImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     var exportOpen by remember { mutableStateOf(false) }
     var discardOpen by remember { mutableStateOf(false) }
+    // File → New…, Open file…, Open image…
+    var newDocOpen by remember { mutableStateOf(false) }
+    var openImageOpen by remember { mutableStateOf(false) }
+    val openFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let { u -> if (!vm.readyForAnotherFile { vm.openPicked(u) }) vm.openPicked(u) }
+    }
+    val launchOpenFile = {
+        try {
+            openFilePicker.launch(OPEN_FILE_TYPES)
+        } catch (_: android.content.ActivityNotFoundException) {
+        }
+    }
     var gridOpen by remember { mutableStateOf(false) }
     var guideOpen by remember { mutableStateOf(false) }
     var editGuidesOpen by remember { mutableStateOf(false) }
@@ -150,6 +162,10 @@ fun Workspace(vm: EditorViewModel) {
         saveProject = { saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}") },
         placeImage = requestPlace,
         discard = { discardOpen = true },
+        // (Anything half done here is applied first)
+        newDoc = { if (!vm.readyForAnotherFile { newDocOpen = true }) newDocOpen = true },
+        openFile = { if (!vm.readyForAnotherFile { launchOpenFile() }) launchOpenFile() },
+        openImage = { if (!vm.readyForAnotherFile { openImageOpen = true }) openImageOpen = true },
         imageSize = { imageSizeOpen = true },
         upscale = { upscaleOpen = true },
         grid = { gridOpen = true },
@@ -505,6 +521,8 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
     BigPsdDialog(vm)
+    if (newDocOpen) NewDocDialog(vm, onPickFile = launchOpenFile, onDismiss = { newDocOpen = false })
+    if (openImageOpen) OpenImageDialog(vm, onDismiss = { openImageOpen = false })
     if (editGuidesOpen) EditGuidesDialog(vm, onDismiss = { editGuidesOpen = false }, onNew = {
         editGuidesOpen = false
         guideOpen = true

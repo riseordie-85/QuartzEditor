@@ -17,7 +17,11 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /** A saved project, for the launch screen. */
-data class ProjectInfo(val id: String, val name: String, val width: Int, val height: Int, val modified: Long, val thumb: File)
+data class ProjectInfo(
+    val id: String, val name: String, val width: Int, val height: Int, val modified: Long, val thumb: File,
+    /** For a draft: the project it's the unsaved changes of (null: a picture never saved as a project). */
+    val project: String? = null,
+)
 
 /**
  * Projects keep every layer, mask and setting so they reopen exactly as you left them.
@@ -32,15 +36,22 @@ object ProjectIO {
 
     fun dir(context: Context): File = File(context.filesDir, "projects").apply { mkdirs() }
 
+    /** Drafts: what's being edited, autosaved as it goes (the project itself only changes when you save it). */
+    fun draftDir(context: Context): File = File(context.filesDir, "drafts").apply { mkdirs() }
+
     private fun projectFile(context: Context, id: String) = File(dir(context), "$id.$EXTENSION")
     private fun thumbFile(context: Context, id: String) = File(dir(context), "$id.jpg")
     private fun metaFile(context: Context, id: String) = File(dir(context), "$id.json")
 
-    fun list(context: Context): List<ProjectInfo> =
-        dir(context).listFiles { f -> f.extension == EXTENSION }.orEmpty().mapNotNull { f ->
+    fun list(context: Context): List<ProjectInfo> = listIn(dir(context))
+
+    fun listDrafts(context: Context): List<ProjectInfo> = listIn(draftDir(context))
+
+    private fun listIn(dir: File): List<ProjectInfo> =
+        dir.listFiles { f -> f.extension == EXTENSION }.orEmpty().mapNotNull { f ->
             val id = f.nameWithoutExtension
             val meta = try {
-                JSONObject(metaFile(context, id).readText())
+                JSONObject(File(dir, "$id.json").readText())
             } catch (e: Exception) {
                 null
             }
@@ -50,7 +61,8 @@ object ProjectIO {
                 meta?.optInt("width") ?: 0,
                 meta?.optInt("height") ?: 0,
                 f.lastModified(),
-                thumbFile(context, id),
+                File(dir, "$id.jpg"),
+                meta?.optString("project")?.takeIf { it.isNotBlank() },
             )
         }.sortedByDescending { it.modified }
 
@@ -58,6 +70,32 @@ object ProjectIO {
         projectFile(context, id).delete()
         thumbFile(context, id).delete()
         metaFile(context, id).delete()
+    }
+
+    fun deleteDraft(context: Context, id: String) {
+        val d = draftDir(context)
+        File(d, "$id.$EXTENSION").delete()
+        File(d, "$id.jpg").delete()
+        File(d, "$id.json").delete()
+    }
+
+    fun hasDraft(context: Context, id: String): Boolean = File(draftDir(context), "$id.$EXTENSION").exists()
+
+    fun draftInfo(context: Context, id: String): ProjectInfo? = listDrafts(context).firstOrNull { it.id == id }
+
+    /** Autosaves [doc] (a [Doc.shallowCopy] with a draft id) into Drafts. */
+    fun saveDraft(context: Context, doc: Doc, canvasColor: Int) {
+        val id = doc.draftId ?: throw IllegalStateException("No draft id")
+        saveInto(draftDir(context), id, doc, canvasColor, doc.projectId)
+    }
+
+    /** A draft: the picture, its workspace color, and the project it belongs to (if any). */
+    fun openDraft(context: Context, id: String): Triple<Doc, Int, String?> {
+        val (doc, color) = File(draftDir(context), "$id.$EXTENSION").inputStream().buffered().use { read(it) }
+        val project = runCatching { JSONObject(File(draftDir(context), "$id.json").readText()).optString("project") }.getOrNull()?.takeIf { it.isNotBlank() }
+        doc.projectId = project
+        doc.draftId = id
+        return Triple(doc, color, project)
     }
 
     /** A new project id (give it to the document before saving). */
@@ -69,19 +107,23 @@ object ProjectIO {
      */
     fun saveToProjects(context: Context, doc: Doc, canvasColor: Int) {
         val id = doc.projectId ?: throw IllegalStateException("No project id")
-        val tmp = File(dir(context), "$id.${System.nanoTime()}.tmp")
+        saveInto(dir(context), id, doc, canvasColor, null)
+    }
+
+    private fun saveInto(dir: File, id: String, doc: Doc, canvasColor: Int, project: String?) {
+        val tmp = File(dir, "$id.${System.nanoTime()}.tmp")
         tmp.outputStream().buffered().use { write(doc, it, canvasColor) }
-        val dest = projectFile(context, id)
+        val dest = File(dir, "$id.$EXTENSION")
         if (!tmp.renameTo(dest)) {
             tmp.copyTo(dest, overwrite = true)
             tmp.delete()
         }
         val small = DocRenderer.buildAllEffects(doc, 512)
         val thumb = DocRenderer.thumbnail(doc, 360, background = 0xFF2B2B2B.toInt(), effects = { small[it.id] })
-        thumbFile(context, id).outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        File(dir, "$id.jpg").outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 85, it) }
         thumb.recycle()
-        metaFile(context, id).writeText(
-            JSONObject().put("name", doc.name).put("width", doc.width).put("height", doc.height).toString()
+        File(dir, "$id.json").writeText(
+            JSONObject().put("name", doc.name).put("width", doc.width).put("height", doc.height).apply { project?.let { put("project", it) } }.toString()
         )
     }
 

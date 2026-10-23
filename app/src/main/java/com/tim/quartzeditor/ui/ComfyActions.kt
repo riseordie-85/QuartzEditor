@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
@@ -241,7 +242,7 @@ fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
     if (w.builtIn) return
     // What was remembered for it goes too (a workflow added again later under its name starts fresh)
     val f = w.fileName
-    prefs.edit().remove("comfyOv:$f").remove("comfyPrompt:$f").remove("comfyMP:$f").remove("comfyEnhance:$f").apply()
+    prefs.edit().remove("comfyOv:$f").remove("comfyPrompt:$f").remove("comfyMP:$f").remove("comfyEnhance:$f").remove("comfyGrow:$f").apply()
     viewModelScope.launch {
         setComfyList(w.cloud, withContext(Dispatchers.IO) {
             File(userWorkflowDir(), w.fileName).delete()
@@ -251,6 +252,10 @@ fun EditorViewModel.removeComfyWorkflow(w: ComfyWorkflow) {
 }
 
 /** The prompt last used with [w] (or the one it was saved with). */
+/** Whether [w]'s bigger results make the image bigger (on at first for workflows named for upscaling). */
+fun EditorViewModel.comfyGrow(w: ComfyWorkflow): Boolean =
+    prefs.getBoolean("comfyGrow:" + w.fileName, w.name.contains("upscal", ignoreCase = true) || w.fileName.contains("upscal", ignoreCase = true))
+
 fun EditorViewModel.comfyPrompt(w: ComfyWorkflow): String = prefs.getString("comfyPrompt:" + w.fileName, null) ?: w.savedPrompt
 
 
@@ -285,6 +290,8 @@ fun EditorViewModel.runComfy(
     megapixels: Float = w.savedMegapixels,
     count: Int = 1,
     oneBatch: Boolean = false,
+    /** A result bigger than what was sent (an upscale): the whole image is made bigger to match it. */
+    grow: Boolean = false,
 ) {
     val d = doc ?: return
     comfyJob?.let { j ->
@@ -293,7 +300,7 @@ fun EditorViewModel.runComfy(
             return
         }
     }
-    if (pendingFirst { runComfy(w, prompt, enhance, merged, overrides, megapixels, count, oneBatch) }) return
+    if (pendingFirst { runComfy(w, prompt, enhance, merged, overrides, megapixels, count, oneBatch, grow) }) return
     val server = comfyServer()
     val cloudKey = comfyCloudKey()
     if (w.cloud && cloudKey.isBlank()) {
@@ -365,6 +372,8 @@ fun EditorViewModel.runComfy(
         var socket: ComfySocket? = null
         var upload: ComfyUpload? = null
         var placed = 0
+        // How much bigger than what was sent the first result came back (an upscale)
+        var growBy = 1f
         try {
             upload = withContext(Dispatchers.Default) { comfyPicture(w.kind, input) }
             val uploaded = withContext(Dispatchers.IO) {
@@ -456,6 +465,7 @@ fun EditorViewModel.runComfy(
                 }
                 // Each picture as its own layer, as soon as it's back
                 for (bmp in results) {
+                    if (placed == 0 && grow) growBy = minOf(bmp.width.toFloat() / input.region.width(), bmp.height.toFloat() / input.region.height())
                     if (placeComfyResult(d, w, prompt, input, upload?.alpha, bmp, number = if (runs > 1 || results.size > 1) placed + 1 else 0)) placed++
                 }
             }
@@ -463,6 +473,14 @@ fun EditorViewModel.runComfy(
             upload?.alpha?.recycle()
             if (comfyJob === job) comfyJob = null
             if (placed > 1) toast("${w.name}: $placed new layers")
+            // An upscale: the image grows to the result's size (the new smart layer keeps every pixel it came with)
+            if (placed > 0 && growBy > 1.05f && doc === d && d.width == input.docW && d.height == input.docH) {
+                val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.MAX_SIDE.toFloat() / max(d.width, d.height))
+                if (k > 1.05f) {
+                    resizeImage((d.width * k).roundToInt(), (d.height * k).roundToInt(), scaleStyles = true)
+                    toast("${w.name}: the image is now ${(d.width * k).roundToInt()} × ${(d.height * k).roundToInt()} to match")
+                }
+            }
         } catch (e: CancellationException) {
             socket?.close()
             upload?.alpha?.recycle()
@@ -846,10 +864,12 @@ class ComfyPreset(
     val megapixels: Float,
     val overrides: com.tim.quartzeditor.engine.ComfyOverrides,
     val count: Int = 1,
+    /** A bigger result makes the image bigger to match (upscales); null: saved before there was the choice. */
+    val grow: Boolean? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("name", name).put("file", fileName).put("prompt", prompt).put("enhance", enhance)
-        .put("merged", merged).put("mp", megapixels.toDouble()).put("overrides", overrides.toJson()).put("count", count)
+        .put("merged", merged).put("mp", megapixels.toDouble()).put("overrides", overrides.toJson()).put("count", count).apply { grow?.let { put("grow", it) } }
 
     companion object {
         fun fromJson(o: JSONObject): ComfyPreset? {
@@ -859,6 +879,7 @@ class ComfyPreset(
                 o.optDouble("mp", 1.0).toFloat(),
                 com.tim.quartzeditor.engine.ComfyOverrides.fromJson(o.optJSONObject("overrides")?.toString()),
                 o.optInt("count", 1).coerceIn(1, 16),
+                if (o.has("grow")) o.optBoolean("grow") else null,
             )
         }
     }
@@ -913,6 +934,8 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var prompt by remember(file) { mutableStateOf(picked?.let { vm.comfyPrompt(it) }.orEmpty()) }
     var enhance by remember(file) { mutableStateOf(picked?.let { vm.prefs.getBoolean("comfyEnhance:" + it.fileName, it.savedEnhance) } ?: false) }
     var merged by remember { mutableStateOf(vm.prefs.getBoolean("comfyMerged", false)) }
+    // Upscale workflows: the image grows to the result's size (on by default for ones named "upscale")
+    var grow by remember(file) { mutableStateOf(picked?.let { vm.comfyGrow(it) } ?: false) }
     var count by remember { mutableIntStateOf(vm.prefs.getInt("comfyCount", 1)) }
     // One batch by default on Cloud (it costs less), separate runs on your server (less memory at once)
     fun batchKey() = if (cloudMode) "comfyOneBatch:cloud" else "comfyOneBatch"
@@ -931,7 +954,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     /** What's typed for the workflow on screen, kept when another is picked or the page closes. */
     fun keepTyped() {
         val f = file ?: return
-        vm.prefs.edit().putString("comfyPrompt:$f", prompt).putBoolean("comfyEnhance:$f", enhance).putFloat("comfyMP:$f", megapixels).apply()
+        vm.prefs.edit().putString("comfyPrompt:$f", prompt).putBoolean("comfyEnhance:$f", enhance).putFloat("comfyMP:$f", megapixels).putBoolean("comfyGrow:$f", grow).apply()
     }
     val close = {
         keepTyped()
@@ -1012,7 +1035,8 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         .apply()
                     vm.prefs.edit().putInt("comfyCount", count).apply()
                     onDismiss()
-                    vm.runComfy(w, prompt.trim(), enhance, merged, overrides, megapixels, count, oneBatch)
+                    vm.prefs.edit().putBoolean("comfyGrow:" + w.fileName, grow).apply()
+                    vm.runComfy(w, prompt.trim(), enhance, merged, overrides, megapixels, count, oneBatch, grow)
                 }
             }
             // Where it runs
@@ -1035,13 +1059,24 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                 }
             }
             HorizontalDividerLine()
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            // The whole width scrolls (not just the middle), and the settings sit on a card of their own
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(Q.palette.panelDark)
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.TopCenter,
+            ) {
                 Column(
                     Modifier
+                        .padding(horizontal = 12.dp, vertical = 14.dp)
                         .widthIn(max = 860.dp)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .clip(RoundedCornerShape(Q.corner(18.dp)))
+                        .background(Q.palette.panel)
+                        .border(1.dp, Q.divider, RoundedCornerShape(Q.corner(18.dp)))
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                 ) {
                     // Workflow
                     SectionTitle("Workflow")
@@ -1100,11 +1135,13 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                     .putBoolean("comfyEnhance:" + w.fileName, p.enhance)
                                     .putFloat("comfyMP:" + w.fileName, p.megapixels)
                                     .putBoolean("comfyMerged", p.merged)
+                                    .putBoolean("comfyGrow:" + w.fileName, p.grow ?: vm.comfyGrow(w))
                                     .apply()
                                 prompt = p.prompt
                                 enhance = p.enhance
                                 megapixels = p.megapixels
                                 merged = p.merged
+                                grow = p.grow ?: vm.comfyGrow(w)
                                 count = p.count
                                 overrides = w.keep(p.overrides)
                                 vm.toast("Loaded \"${p.name}\"")
@@ -1135,7 +1172,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             }
                             if (i > 0) SmallButton("↑") { vm.setComfyShortcuts(shortcuts.toMutableList().also { l -> l.add(i - 1, l.removeAt(i)) }) }
                             if (picked != null) SmallButton("Update") {
-                                vm.setComfyShortcuts(shortcuts.toMutableList().also { l -> l[i] = ComfyShortcut(sc.label, ComfyPreset(sc.label, picked.fileName, prompt, enhance, merged, megapixels, overrides, count)) })
+                                vm.setComfyShortcuts(shortcuts.toMutableList().also { l -> l[i] = ComfyShortcut(sc.label, ComfyPreset(sc.label, picked.fileName, prompt, enhance, merged, megapixels, overrides, count, grow)) })
                                 vm.toast("\"${sc.label}\" now runs ${picked.name} as set here")
                             }
                             SmallButton("Rename") { renamingShortcut = i }
@@ -1162,6 +1199,15 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             color = if (w.kind == ComfyKind.INPAINT && !hasSel) Q.accent else Q.text,
                             fontSize = 14.sp,
                         )
+                        if (w.kind != ComfyKind.GENERATE) {
+                            Spacer(Modifier.height(6.dp))
+                            ToggleRow("A bigger result makes the image bigger (upscales)", grow) { grow = it }
+                            Text(
+                                if (grow) "When it comes back bigger than what was sent, the whole image is enlarged to match, so the new layer keeps every pixel."
+                                else "Off: the result is fitted to the canvas, at the canvas's size (its full size stays in the smart layer).",
+                                color = Q.textDim, fontSize = 12.sp,
+                            )
+                        }
                         if (w.kind == ComfyKind.EDIT) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                                 SmallButton("Active layer", primary = !merged) { merged = false }
@@ -1374,7 +1420,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
             val n = name.trim()
             if (n.isNotEmpty()) {
                 keepTyped()
-                vm.setComfyShortcuts(vm.comfyShortcuts + ComfyShortcut(n, ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count)))
+                vm.setComfyShortcuts(vm.comfyShortcuts + ComfyShortcut(n, ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count, grow)))
                 if (!vm.showComfyBar) vm.showComfyBar = true
                 vm.toast("\"$n\" is on the ComfyUI bar")
             }
@@ -1393,7 +1439,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
             savingPreset = false
             val n = name.trim()
             if (n.isNotEmpty()) {
-                vm.saveComfyPreset(ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count))
+                vm.saveComfyPreset(ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count, grow))
                 allPresets = vm.comfyPresets()
                 vm.toast("Saved preset \"$n\"")
             }

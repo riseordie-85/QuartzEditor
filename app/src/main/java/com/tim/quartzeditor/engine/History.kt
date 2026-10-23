@@ -78,6 +78,10 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
     var editsSinceSave = 0
         private set
 
+    /** Number of edits since its draft (the autosave) was last written. */
+    var editsSinceDraft = 0
+        private set
+
     val canUndo: Boolean get() = version >= 0 && undoStack.isNotEmpty()
     val canRedo: Boolean get() = version >= 0 && redoStack.isNotEmpty()
     val undoLabel: String? get() = undoStack.lastOrNull()?.label
@@ -102,6 +106,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         redoStack.clear()
         trim()
         editsSinceSave++
+        editsSinceDraft++
         version++
     }
 
@@ -110,6 +115,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         c.undo(doc)
         redoStack.addLast(c)
         editsSinceSave++
+        editsSinceDraft++
         version++
         return c.label
     }
@@ -119,6 +125,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         c.redo(doc)
         undoStack.addLast(c)
         editsSinceSave++
+        editsSinceDraft++
         version++
         return c.label
     }
@@ -126,6 +133,19 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
     /** [count] edits were saved (more may have happened since the save started). */
     fun markSaved(count: Int = editsSinceSave) {
         editsSinceSave = (editsSinceSave - count).coerceAtLeast(0)
+        // (The project now has them: its draft is let go, so only what's newer is undrafted)
+        editsSinceDraft = minOf(editsSinceDraft, editsSinceSave)
+    }
+
+    /** [count] edits went into the draft. */
+    fun markDrafted(count: Int = editsSinceDraft) {
+        editsSinceDraft = (editsSinceDraft - count).coerceAtLeast(0)
+    }
+
+    /** Opened from a draft: it has changes the project doesn't (closing asks), all already in the draft. */
+    fun markRestored() {
+        editsSinceSave = maxOf(editsSinceSave, 1)
+        editsSinceDraft = 0
     }
 
     fun clear() {
@@ -133,6 +153,7 @@ class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
         redoStack.clear()
         trimmed = false
         editsSinceSave = 0
+        editsSinceDraft = 0
         version++
     }
 

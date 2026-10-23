@@ -176,12 +176,12 @@ fun LaunchScreen(vm: EditorViewModel) {
                                     .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                             ) {
                                 Text(name, color = Color.White, fontSize = 14.sp, maxLines = 1)
-                                // Close it (saved to Projects)
+                                // Close it (asks first when it has unsaved changes)
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier.padding(start = 4.dp).size(28.dp).clip(CircleShape).clickable { vm.closeFile(i) },
                                 ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Close \"$name\" (saved to Projects)", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Filled.Close, contentDescription = "Close \"$name\"", tint = Color.White, modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
@@ -198,12 +198,12 @@ fun LaunchScreen(vm: EditorViewModel) {
                         Spacer(Modifier.width(28.dp))
                         // Scrolls if a short screen (like an unfolded Fold) can't fit it all
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                            NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream", "application/x-photoshop", "application/photoshop", "application/psd")) })
+                            NewDocForm(vm, onPick = { picker.launch(OPEN_FILE_TYPES) })
                         }
                     }
                 } else {
                     Column(card.fillMaxWidth()) {
-                        NewDocForm(vm, onPick = { picker.launch(arrayOf("image/*", ProjectIO.MIME, "application/octet-stream", "application/x-photoshop", "application/photoshop", "application/psd")) })
+                        NewDocForm(vm, onPick = { picker.launch(OPEN_FILE_TYPES) })
                     }
                     Spacer(Modifier.height(14.dp))
                     Column(card.fillMaxWidth().height(520.dp)) { RecentPane(vm, Modifier.fillMaxSize()) }
@@ -235,13 +235,75 @@ fun LaunchScreen(vm: EditorViewModel) {
 @Composable
 private fun RecentPane(vm: EditorViewModel, modifier: Modifier) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    // Drafts: unsaved changes kept when the app closed (not the files open now: those are live)
+    var drafts by remember { mutableStateOf<List<ProjectInfo>>(emptyList()) }
+    val openDrafts = vm.files.mapNotNull { vm.fileRoot(it)?.draftId }.toSet()
+    LaunchedEffect(vm.projectsVersion, openDrafts) {
+        drafts = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ProjectIO.listDrafts(context) }.filter { it.id !in openDrafts }
+    }
     Column(modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             TabLabel("Recent Photos in Gallery", tab == 0) { tab = 0 }
             TabLabel("Projects", tab == 1) { tab = 1 }
+            if (drafts.isNotEmpty() || tab == 2) TabLabel("Drafts (${drafts.size})", tab == 2) { tab = 2 }
         }
         Spacer(Modifier.height(12.dp))
-        if (tab == 0) GalleryGrid(vm) else ProjectsGrid(vm)
+        when (tab) {
+            0 -> GalleryGrid(vm)
+            1 -> ProjectsGrid(vm)
+            else -> DraftsGrid(vm, drafts)
+        }
+    }
+}
+
+/** Unsaved changes kept when the app closed before they were saved or thrown away. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DraftsGrid(vm: EditorViewModel, drafts: List<ProjectInfo>) {
+    var discarding by remember { mutableStateOf<ProjectInfo?>(null) }
+    if (drafts.isEmpty()) {
+        Text("No drafts. Unsaved changes are kept here if the app closes before you save them.", color = Q.launchDim, fontSize = 14.sp)
+        return
+    }
+    Text("Changes that weren't saved or thrown away when the app closed. Tap to open; hold to throw away.", color = Q.launchDim, fontSize = 13.sp)
+    Spacer(Modifier.height(8.dp))
+    val fmt = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT) }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(120.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(drafts, key = { it.id }) { p ->
+            Column(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .combinedClickable(onClick = { vm.openDraft(p.id) }, onLongClick = { discarding = p })
+            ) {
+                AsyncImage(
+                    model = coil.request.ImageRequest.Builder(LocalContext.current).data(p.thumb).memoryCacheKey("${p.thumb}:${p.modified}").diskCacheKey("${p.thumb}:${p.modified}").build(),
+                    contentDescription = p.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Q.launchField),
+                )
+                Text(p.name, color = Q.launchText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text((if (p.project != null) "Changes to a project · " else "Never saved · ") + fmt.format(java.util.Date(p.modified)), color = Q.launchDim, fontSize = 11.sp, maxLines = 2)
+            }
+        }
+    }
+    discarding?.let { p ->
+        AlertDialog(
+            onDismissRequest = { discarding = null },
+            title = { Text("Throw away \"${p.name}\"'s changes?") },
+            text = { Text(if (p.project != null) "The project stays as it was last saved." else "It was never saved as a project, so it's gone for good.") },
+            confirmButton = { TextButton(onClick = { vm.discardDraft(p.id); discarding = null }) { Text("Throw away") } },
+            dismissButton = { TextButton(onClick = { discarding = null }) { Text("Keep") } },
+        )
     }
 }
 
@@ -262,7 +324,7 @@ private fun hasPhotoAccess(context: android.content.Context): Boolean {
 }
 
 @Composable
-private fun GalleryGrid(vm: EditorViewModel) {
+internal fun GalleryGrid(vm: EditorViewModel, onOpened: () -> Unit = {}) {
     val context = LocalContext.current
     var access by remember { mutableStateOf(hasPhotoAccess(context)) }
     var photos by remember { mutableStateOf<List<GalleryPhoto>?>(null) }
@@ -312,7 +374,10 @@ private fun GalleryGrid(vm: EditorViewModel) {
                     .aspectRatio(1f)
                     .clip(RoundedCornerShape(4.dp))
                     .background(Q.launchField)
-                    .clickable { vm.openImage(p.uri) },
+                    .clickable {
+                        vm.openImage(p.uri)
+                        onOpened()
+                    },
             )
         }
     }
@@ -328,7 +393,7 @@ private fun ProjectsGrid(vm: EditorViewModel) {
         projects = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ProjectIO.list(context) }
     }
     if (projects.isEmpty()) {
-        Text("Projects you work on are saved here automatically, with all their layers.", color = Q.launchDim, fontSize = 14.sp)
+        Text("Projects you save (File → Save project, or Save when you close one) are kept here, with all their layers.", color = Q.launchDim, fontSize = 14.sp)
         return
     }
     LazyVerticalGrid(
@@ -373,7 +438,7 @@ private fun ProjectsGrid(vm: EditorViewModel) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
+internal fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
     val context = LocalContext.current
     val screen: DisplayMetrics = context.resources.displayMetrics
     // Your own sizes, kept in the app

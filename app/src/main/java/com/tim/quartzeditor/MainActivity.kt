@@ -5,7 +5,8 @@ import android.os.Bundle
 import android.view.KeyEvent
 import com.tim.quartzeditor.ui.handleIntent
 import com.tim.quartzeditor.ui.onKeyDown
-import com.tim.quartzeditor.ui.saveToProjects
+import com.tim.quartzeditor.ui.saveDraft
+import com.tim.quartzeditor.ui.FileDialogs
 import com.tim.quartzeditor.ui.onKeyUp
 import com.tim.quartzeditor.ui.onTabKey
 import com.tim.quartzeditor.ui.releaseKeys
@@ -31,6 +32,8 @@ class MainActivity : ComponentActivity() {
             QuartzTheme {
                 // (The start screen can also show over open files, to open another)
                 if (vm.doc == null || vm.showHome) LaunchScreen(vm) else Workspace(vm)
+                // Save changes? / Open the unsaved changes?
+                FileDialogs(vm)
             }
         }
     }
@@ -59,6 +62,6 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         vm.releaseKeys()
         // Put away or switched apps: keep the work safe
-        vm.saveToProjects(quiet = true)
+        vm.saveDraft()
     }
 }

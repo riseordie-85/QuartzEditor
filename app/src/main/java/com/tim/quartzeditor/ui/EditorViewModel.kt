@@ -140,6 +140,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The start screen is shown over open files (to open or start another). */
     var showHome by mutableStateOf(false)
 
+    /** Closing a file with unsaved changes: Save, Don't save or Cancel is being asked. */
+    var closeAsk by mutableStateOf(false)
+    /** Opening a project that has unsaved changes in Drafts: which to open is being asked. */
+    var draftAsk by mutableStateOf<com.tim.quartzeditor.engine.ProjectInfo?>(null)
+
     // ------------------------------------------------------------ tools and colors
 
     var tool by mutableStateOf(Tool.BRUSH)
@@ -670,7 +675,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             // Too many open: the one left longest ago closes (it was saved when it was left)
             if (files.size >= MAX_OPEN_FILES) {
                 val drop = if (fileIndex == 0) 1 else 0
-                toast("\"${fileRoot(files[drop])?.name ?: "A file"}\" was closed to make room (it's in Projects)")
+                val unsaved = (files[drop].tabs.firstOrNull()?.history?.editsSinceSave ?: 0) > 0
+                toast("\"${fileRoot(files[drop])?.name ?: "A file"}\" was closed to make room (${if (unsaved) "its changes are in Drafts" else "it's in Projects"})")
                 files = files.filterIndexed { j, _ -> j != drop }
                 if (drop < fileIndex) fileIndex--
             }

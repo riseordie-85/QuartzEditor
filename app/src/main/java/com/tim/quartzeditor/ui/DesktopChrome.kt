@@ -132,7 +132,7 @@ fun MenuBar(vm: EditorViewModel, a: MenuActions, panelsOpen: Boolean, togglePane
 
 /**
  * The open files, each followed by its smart layers' tabs (a smart layer's contents being edited),
- * then + to open or start another. Tap one to show it; × closes it (a file is saved to Projects, a
+ * then + to open or start another. Tap one to show it; × closes it (a file with unsaved changes asks whether to save them, a
  * smart layer's edits go into the layer).
  */
 @Composable
@@ -149,7 +149,7 @@ private fun FileTabs(vm: EditorViewModel) {
                     smart = t.parent != null,
                     shown = shown,
                     // A file can always close; a smart layer's tab from its own file
-                    closeLabel = if (t.parent == null) "Close \"$name\" (saved to Projects)" else "Close \"$name\" (its edits go into the layer)",
+                    closeLabel = if (t.parent == null) "Close \"$name\" (asks to save changes)" else "Close \"$name\" (its edits go into the layer)",
                     onClose = { if (t.parent == null) vm.closeFile(i) else { vm.switchFile(i); if (vm.fileIndex == i) vm.closeTab(k) } },
                 ) { vm.switchFileTab(i, k) }
             }

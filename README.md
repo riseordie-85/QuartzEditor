@@ -13,7 +13,7 @@ from the build). Background removal's model is fetched by Google Play services i
   only to the ComfyUI server you give it.
 
 ## Launch screen
-- **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files) or **Projects** (your saved work, with all layers). Tap to open.
+- **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files), **Projects** (your saved work, with all layers) or **Drafts** (shown when there are any: unsaved changes kept when the app closed; tap to open, hold to throw away). Tap to open.
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
   portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
@@ -102,14 +102,14 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
 - **Status bar** at the bottom: zoom (tap for Fit and 25–400 %), how far the canvas is turned (tap to
   straighten) and the turning lock, the canvas size, the layer, the finger-painting switch, and show/hide panels.
 - **Open files in tabs**: the menu bar lists every open file, each followed by its smart layers' tabs
-  (a smart layer's contents being edited). Tap one to show it; × closes it (a file is saved to Projects
-  as it closes; a smart layer's edits go into the layer). **+** (or File → New or open…, or Quartz →
+  (a smart layer's contents being edited). Tap one to show it; × closes it (with unsaved changes it asks: Save,
+  Don't save or Cancel; a smart layer's edits go into the layer). **+** (or File → New or open…, or Quartz →
   Home) shows the start screen with your files still open: what you open or start there joins them as a
   new tab, opening a project that's already open just shows it, and "Open:" at the top (or Back) goes
   back (× on a chip closes that file). Each file keeps its own undo, view, workspace color and tabs; the
-  one you leave is saved to Projects quietly. Up to 5 files at once (opening a sixth closes the one left
-  longest ago; it's in Projects). Open files share one undo memory budget, most of it for the one shown.
-  File → Close saves and closes the one shown (the next one comes up). Home and Back (on phones too) go
+  changes of the one you leave are autosaved to Drafts. Up to 5 files at once (opening a sixth closes the one left
+  longest ago; its changes are in Drafts). Open files share one undo memory budget, most of it for the one shown.
+  File → Close project asks about unsaved changes and closes the one shown (the next one comes up). Home and Back (on phones too) go
   to the start screen with the files kept open. Deleting a project that's open closes it.
 - **Squarer look**: the bars, toolbar, panels and picture have only slightly rounded corners and sit
   closer together.
@@ -120,8 +120,8 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
 Top to bottom: ☰ Menu, Move, Select, Transform (and the warps), Crop (and Perspective crop), Healing, Fill, Toning, Pen, Shape (hold for Custom shapes), Text, Brush/Eraser,
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
-- **☰ Menu** — Home, then pages: **File** (Rename, Export, Save project file, Place image, Close without
-  saving), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **Enhance** (see
+- **☰ Menu** — Home, then pages: **File** (New…, Open file…, Open image…, Save project, Export image…,
+  **Quick export** (the big colored one), Rename, Save a copy as a project file…, Close project), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **Enhance** (see
   below), **View** (Snap, Checkerboard, Modifier button, **Grid** and
   **Rulers and guides** pages), and Settings. Tap a page to open it; ← goes back.
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
@@ -532,9 +532,24 @@ A mask hides parts of its layer without erasing them: paint black to hide, white
 in between. With a selection, the mask button makes a mask that shows only what's selected. Tap the mask thumbnail to paint on the mask, the layer thumbnail to paint pixels.
 **Remove background** makes a mask from the subject (on-device), which you can touch up with the brush.
 
-### Saving
-- Your work is saved to **Projects** automatically when you go Home or switch apps, with every layer,
-  mask and setting (smart layers keep their full-size contents inside the project).
+### Saving: Projects and Drafts
+- **Projects** are what you've saved: **File → Save project** (Ctrl+S), or **Save** when you close one.
+  They keep every layer, mask and setting (smart layers keep their full-size contents inside).
+- **Drafts** keep what you're doing safe as you go: changes are autosaved into a draft when you switch
+  files, go Home or switch apps. A project you opened is **never changed by the autosave** — only by
+  Save project.
+- **Closing** (× on its tab, File → Close project) with unsaved changes asks: **Save** (into the
+  project; its draft goes), **Don't save** (the draft is thrown away; the project stays as it was last
+  saved) or **Cancel**.
+- If the app closes first (you swipe it away, it crashes, the tablet restarts), the changes wait in
+  **Drafts** on the start screen. Opening a project that has a draft asks: **Open the changes** or
+  **Open saved** (the changes are thrown away).
+- **File menu**: **New…** (the canvas size screen: presets, your own size, orientation, background),
+  **Open file…** (pictures, projects, Photoshop and TIFF files), **Open image…** (your recent photos, or
+  Browse…), **Save project**, **Export image…**, **Quick export** (the big colored button), **Rename
+  image…**, **Save a copy as a project file…**, **Close project**. What's opened or made joins the open
+  files in a tab of its own. (Place image is in the Layer menu; Import brushes in the brush picker and
+  Brushes panel.)
 - **Quick export (.png)** (Menu, under Home) saves a PNG of the whole picture straight to
   `Pictures/Quartz Editor`, named for when it was saved (`Quartz 10-20-26 19-30-05.png`), with no questions.
 - **Export image** saves a flattened PNG, JPG, WebP or TIFF (ZIP-compressed, with transparency) to `Pictures/Quartz Editor` (shows up in Quartz
@@ -562,7 +577,6 @@ in between. With a selection, the mask button makes a mask that shows only what'
   app shows as the flattened picture, with everything above kept inside it the way Photoshop keeps its
   own layered TIFFs (Photoshop and Quartz Editor open it with its layers). Plain **TIFF** stays one
   flattened picture.
-- **Close without saving** (menu) throws away changes since the last save.
 - The menu also rotates the whole image 90° or flips it.
 - **Save project file** writes a `.qedit` file anywhere (Drive, Downloads...). Projects live inside the app,
   so uninstalling removes them — keep a project file of anything important.
@@ -585,7 +599,7 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
 - View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels, **Ctrl+'** grid,
   **Ctrl+R** rulers, **Ctrl+;** guides (**Ctrl+Alt+;** lock them). **Shift** and **Alt** work like the
   modifier button.
-- **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves to Projects.
+- **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves the project.
 
 ## How it works
 - Layers are stored as 512 px tiles that only exist where there are pixels, so empty layers cost nothing
@@ -627,6 +641,11 @@ one, while you keep editing. A chip
 at the bottom of the picture shows what it's doing (loading models, step 12 / 25…) with ComfyUI's live
 preview, and **Cancel** (which stops it on the server too). If something goes wrong (the computer's
 off, a model is missing) the chip says what ComfyUI said.
+- **Upscales**: "A bigger result makes the image bigger" (for workflows that send a picture; on at first
+  for ones named "upscale") enlarges the whole image to the result's size when it comes back bigger, so
+  the new layer keeps every pixel (Image Size, one more undo step). Off, it's fitted to the canvas (the
+  full size stays inside the smart layer). Saved per workflow, in presets and bar buttons.
+- The window's settings sit on a card; the whole width scrolls, not just the middle.
 - **Server**: like `http://my-pc.tailnet.ts.net:8188` (**Test** shows the graphics card). ComfyUI has
   to listen on the network: start it with `--listen`. The app comes with Tim's server filled in.
 - **My server | Comfy Cloud** (at the top) picks where it runs. Each has its own workflows (and presets);

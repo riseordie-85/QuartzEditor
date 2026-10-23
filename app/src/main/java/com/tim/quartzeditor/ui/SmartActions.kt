@@ -61,6 +61,9 @@ class EditorTab(val doc: Doc, var history: History, val parent: EditorTab?, val 
 
     /** [history]'s version when the picture was last saved with this tab's edits in it. */
     var savedVersion = -1
+
+    /** [history]'s version when the picture's draft was last written with this tab's edits in it. */
+    var draftedVersion = -1
 }
 
 /** The picture itself (not a smart layer's contents in a tab). */
@@ -428,6 +431,9 @@ internal val EditorViewModel.tabsHaveEdits: Boolean get() = tabs.any { it.hasNew
 
 /** Tabs with edits that aren't in the picture's last save either. */
 internal val EditorViewModel.tabsUnsaved: List<EditorTab> get() = tabs.filter { it.hasNewEdits && it.history.version != it.savedVersion }
+
+/** Smart layers' tabs with edits not yet in the picture's draft. */
+internal val EditorViewModel.tabsUndrafted: List<EditorTab> get() = tabs.filter { it.hasNewEdits && it.history.version != it.draftedVersion }
 
 /**
  * A copy of the picture to save or export (made on the main thread; cheap), including what's being

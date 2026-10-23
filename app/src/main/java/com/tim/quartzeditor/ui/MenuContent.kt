@@ -20,6 +20,12 @@ import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -37,6 +43,9 @@ class MenuActions(
     val saveProject: () -> Unit,
     val placeImage: () -> Unit,
     val discard: () -> Unit,
+    val newDoc: () -> Unit,
+    val openFile: () -> Unit,
+    val openImage: () -> Unit,
     val imageSize: () -> Unit,
     val upscale: () -> Unit,
     val grid: () -> Unit,
@@ -58,17 +67,19 @@ fun PagedMenuScope.AppMenuItems(vm: EditorViewModel, a: MenuActions) {
 
 @Composable
 fun PagedMenuScope.FileMenuItems(vm: EditorViewModel, a: MenuActions) {
-    Item("New or open… (this one stays open)") { vm.openHome() }
+    // (What's opened or made joins the open files, in a tab of its own)
+    Item("New…", Icons.Outlined.Add) { a.newDoc() }
+    Item("Open file…", Icons.Outlined.FolderOpen) { a.openFile() }
+    Item("Open image…", Icons.Outlined.Image) { a.openImage() }
+    Divider()
+    Item("Save project", Icons.Outlined.Save, enabled = vm.hasUnsavedChanges) { vm.saveToProjects(quiet = false) }
+    Item("Export image…", Icons.Outlined.IosShare) { a.export() }
+    BigItem("Quick export (.png)", Icons.Outlined.Bolt) { vm.quickExport() }
     Divider()
     Item("Rename image…") { a.rename() }
-    Item("Quick export (.png)") { vm.quickExport() }
-    Item("Export image…") { a.export() }
-    Item("Save project file…") { a.saveProject() }
-    Item("Place image as layer…") { a.placeImage() }
-    Item("Import brushes (.abr)…") { vm.abrImportRequest++ }
+    Item("Save a copy as a project file…") { a.saveProject() }
     Divider()
-    Item("Close (saves to Projects)") { vm.closeDocument() }
-    Item("Close without saving…") { a.discard() }
+    Item("Close project", Icons.Outlined.Close) { vm.requestClose() }
 }
 
 @Composable

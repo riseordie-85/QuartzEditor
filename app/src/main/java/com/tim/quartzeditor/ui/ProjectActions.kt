@@ -62,12 +62,20 @@ fun EditorViewModel.openImage(uri: Uri) {
     }
 }
 
-fun EditorViewModel.openProject(id: String) {
+fun EditorViewModel.openProject(id: String, skipDraft: Boolean = false) {
     // Already open: that tab
     val open = files.indexOfFirst { fileRoot(it)?.projectId == id }
     if (open >= 0) {
         showHome = false
         switchFile(open)
+        return
+    }
+    // Unsaved changes of it in Drafts (the app closed before you saved or discarded them): which to open?
+    if (!skipDraft) {
+        viewModelScope.launch {
+            val draft = withContext(Dispatchers.IO) { ProjectIO.draftInfo(ctx, id) }
+            if (draft != null) draftAsk = draft else openProject(id, skipDraft = true)
+        }
         return
     }
     runBusy("Opening…") {
@@ -77,7 +85,7 @@ fun EditorViewModel.openProject(id: String) {
     }
 }
 
-/** Opens a .qedit file picked from anywhere (a copy is kept in Projects). */
+/** Opens a .qedit file picked from anywhere (as a new image: Save project keeps a copy in Projects). */
 fun EditorViewModel.openProjectFile(uri: Uri) {
     runBusy("Opening…") {
         val (d, color) = withContext(Dispatchers.IO) {
@@ -218,7 +226,7 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
     if (uri == null) return false
     // Anything half done in the file shown goes in first (it stays open in its tab)
     if (doc != null && readyForAnotherFile { handleIntent(intent) }) return true
-    if (doc != null) saveToProjects(quiet = true)
+    if (doc != null) saveDraft()
     viewModelScope.launch {
         val psd = withContext(Dispatchers.IO) { runCatching { isPsd(uri) }.getOrDefault(false) }
         if (psd) openPsd(uri) else openImage(uri)
@@ -226,17 +234,72 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
     return true
 }
 
-/** Saves (when there's anything worth saving) and closes the document. */
-fun EditorViewModel.closeDocument() {
+/** The file shown has changes its project doesn't (or it was never saved). */
+val EditorViewModel.hasUnsavedChanges: Boolean
+    get() = doc != null && ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsUnsaved.isNotEmpty())
+
+/**
+ * Closes open file [i] (the one shown when it's left out). With unsaved changes it's shown and
+ * [closeAsk] asks: Save, Don't save, or Cancel. Without, it just closes.
+ */
+fun EditorViewModel.requestClose(i: Int = fileIndex) {
+    if (doc == null) return
+    if (busy != null) {
+        toast("Just a moment: ${busy?.trimEnd('…', '.')} is still working")
+        return
+    }
+    if (i != fileIndex && i in files.indices) {
+        switchFile(i)
+        if (fileIndex != i) return
+    }
+    if (pendingFirst { requestClose(fileIndex) }) return
+    if (hasUnsavedChanges) closeAsk = true else closeDocument(save = false)
+}
+
+/** Lets go of draft [id] (once any autosave still being written is done). */
+internal fun EditorViewModel.dropDraft(id: String?) {
+    id ?: return
+    viewModelScope.launch {
+        saveLock.withLock { withContext(Dispatchers.IO) { ProjectIO.deleteDraft(ctx, id) } }
+        projectsVersion++
+    }
+}
+
+/** Throws away the unsaved changes of draft [id] (from the start screen's Drafts). */
+fun EditorViewModel.discardDraft(id: String) = dropDraft(id)
+
+/** Opens draft [id]: the unsaved changes kept when the app closed (its project, if any, as it was saved, stays as it is). */
+fun EditorViewModel.openDraft(id: String) {
+    draftAsk = null
+    val open = files.indexOfFirst { fileRoot(it)?.draftId == id }
+    if (open >= 0) {
+        showHome = false
+        switchFile(open)
+        return
+    }
+    runBusy("Opening…") {
+        val (d, color, _) = saveLock.withLock { withContext(Dispatchers.IO) { ProjectIO.openDraft(ctx, id) } }
+        setDocument(d, color)
+        // Changes its project doesn't have (closing asks), already all in the draft
+        (tabs.firstOrNull()?.history ?: history).markRestored()
+    }
+}
+
+/**
+ * Closes the document. [save]: unsaved changes go into its project first (Save); otherwise they're
+ * thrown away with its draft (Don't save), and its project stays as it was last saved.
+ */
+fun EditorViewModel.closeDocument(save: Boolean = true) {
     if (doc == null) return
     // Something's being worked out (AI, healing, saving): wait for it
     if (busy != null) {
         toast("Just a moment: ${busy?.trimEnd('…', '.')} is still working")
         return
     }
-    if (pendingFirst { closeDocument() }) return
+    if (pendingFirst { closeDocument(save) }) return
+    closeAsk = false
     // The picture is what's saved (with what's being edited in smart layers' tabs)
-    if ((tabs.firstOrNull()?.history ?: history).editsSinceSave > 0 || tabsUnsaved.isNotEmpty()) saveToProjects(quiet = false)
+    if (save && hasUnsavedChanges) saveToProjects(quiet = false) else dropDraft(rootDoc?.draftId)
     tabs.firstOrNull()?.let { root ->
         if (doc !== root.doc) {
             doc = root.doc
@@ -282,15 +345,53 @@ fun EditorViewModel.discardDocument() {
     fileClosed()
 }
 
-/** Saves to the app's projects in the background (also called when the app is put away). */
+/**
+ * Autosaves the changes into Drafts in the background (as you go: leaving the file, the start
+ * screen, the app being put away). The project itself isn't touched: if the app closes before you
+ * save or discard, the draft is there to open again.
+ */
+fun EditorViewModel.saveDraft() {
+    if (doc == null) return
+    val d = rootDoc ?: return
+    val h = tabs.firstOrNull()?.history ?: history
+    val undrafted = tabsUndrafted.map { it to it.history.version }
+    if (h.editsSinceDraft == 0 && undrafted.isEmpty()) return
+    // Just as its project has it: nothing to keep
+    if (!hasUnsavedChanges) return
+    if (d.draftId == null) d.draftId = d.projectId ?: ProjectIO.newId()
+    val sc = saveCopy() ?: return
+    val copy = sc.doc
+    val color = canvasColor
+    val edits = h.editsSinceDraft
+    viewModelScope.launch {
+        try {
+            saveLock.withLock {
+                withContext(Dispatchers.Default) { sc.finish() }
+                withContext(Dispatchers.IO) { ProjectIO.saveDraft(ctx, copy, color) }
+            }
+            h.markDrafted(edits)
+            for ((t, v) in undrafted) t.draftedVersion = v
+            projectsVersion++
+        } catch (e: Throwable) {
+            toast("Couldn't autosave the changes (${e.message})")
+        }
+    }
+}
+
+/** Saves the project (File → Save project, Ctrl+S, or Save when closing), in the background. */
 fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
     if (doc == null) return
     // The picture itself is what's saved, with what's being edited in smart layers' tabs
     val d = rootDoc ?: return
     val h = tabs.firstOrNull()?.history ?: history
     val unsaved = tabsUnsaved.map { it to it.history.version }
-    if (h.editsSinceSave == 0 && unsaved.isEmpty()) return
-    if (d.projectId == null) d.projectId = ProjectIO.newId()
+    if (h.editsSinceSave == 0 && unsaved.isEmpty()) {
+        if (!quiet) toast("Nothing new to save")
+        return
+    }
+    // (A picture never saved takes its draft's id, so the two stay together)
+    if (d.projectId == null) d.projectId = d.draftId ?: ProjectIO.newId()
+    d.draftId = d.projectId
     val sc = saveCopy() ?: return
     val copy = sc.doc
     val color = canvasColor
@@ -303,7 +404,12 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
                 withContext(Dispatchers.IO) { ProjectIO.saveToProjects(ctx, copy, color) }
             }
             h.markSaved(edits)
-            for ((t, v) in unsaved) t.savedVersion = v
+            for ((t, v) in unsaved) {
+                t.savedVersion = v
+                t.draftedVersion = v
+            }
+            // The project has it all now: its draft goes (unless more was done while saving)
+            if (h.editsSinceSave == 0) withContext(Dispatchers.IO) { saveLock.withLock { ProjectIO.deleteDraft(ctx, copy.projectId!!) } }
             if (!quiet) toast("Saved to Projects")
             projectsVersion++
         } catch (e: Throwable) {
@@ -315,6 +421,7 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
 fun EditorViewModel.deleteProject(id: String) {
     projectDeleted(id)
     ProjectIO.delete(ctx, id)
+    dropDraft(id)
     projectsVersion++
 }
 

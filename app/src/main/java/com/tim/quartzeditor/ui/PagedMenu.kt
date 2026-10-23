@@ -17,6 +17,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -183,4 +187,29 @@ private fun PagedMenuScope.CascadeItem(label: String, icon: ImageVector?) {
             },
         onClick = { openIt() },
     )
+}
+
+/** A bigger item in the accent color, for the one most used (Quick export). */
+@Composable
+fun PagedMenuScope.BigItem(label: String, icon: ImageVector? = null, onClick: () -> Unit) {
+    if (!visible) return
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Q.accent)
+            .clickable {
+                dismiss()
+                onClick()
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White)
+            androidx.compose.foundation.layout.Spacer(Modifier.width(12.dp))
+        }
+        Text(label, color = androidx.compose.ui.graphics.Color.White, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+    }
 }

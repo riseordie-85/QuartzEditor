@@ -252,6 +252,9 @@ class Doc(width: Int, height: Int, name: String) {
     /** Where this document is saved in the app's projects (null until first saved). */
     var projectId: String? = null
 
+    /** Where its unsaved changes are kept as they're made (Drafts), so a crash loses nothing (null until the first). */
+    var draftId: String? = null
+
     /** A layer put in only to show a preview (Enhance): left out of undo steps and saved files. */
     var previewLayerId = 0L
 
@@ -437,6 +440,7 @@ class Doc(width: Int, height: Int, name: String) {
         d.guidesX.addAll(guidesX)
         d.guidesY.addAll(guidesY)
         d.projectId = projectId
+        d.draftId = draftId
         d.nextId = nextId
         d.previewLayerId = previewLayerId
         return d
