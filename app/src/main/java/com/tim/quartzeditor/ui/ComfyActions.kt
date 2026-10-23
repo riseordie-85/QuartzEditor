@@ -941,6 +941,8 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var allPresets by remember { mutableStateOf(vm.comfyPresets()) }
     val presets = allPresets.filter { it.fileName.startsWith("cloud/") == cloudMode }
     var savingPreset by remember { mutableStateOf(false) }
+    var addingShortcut by remember { mutableStateOf(false) }
+    var renamingShortcut by remember { mutableStateOf(-1) }
     var promptsOpen by remember { mutableStateOf(false) }
     var savingPrompt by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -1109,6 +1111,42 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                             }
                         }
                         if (picked != null) SmallButton("Save as preset…") { savingPreset = true }
+                    }
+
+                    // Bar buttons: favorite runs, a tap away on the ComfyUI bar
+                    Spacer(Modifier.height(12.dp))
+                    SectionTitle("Bar buttons")
+                    val shortcuts = vm.comfyShortcuts
+                    if (shortcuts.isEmpty()) {
+                        Text(
+                            "Set a workflow up the way you like it (prompt and all), then add it as a button on the ComfyUI bar under a name of yours. A tap there runs it.",
+                            color = Q.textDim, fontSize = 13.sp,
+                        )
+                    }
+                    shortcuts.forEachIndexed { i, sc ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 3.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(sc.label, color = Q.text, fontSize = 14.sp)
+                                val wfName = com.tim.quartzeditor.engine.ComfyWorkflow.nameFrom(sc.run.fileName.substringAfter("cloud/"))
+                                Text(
+                                    (if (sc.cloud) "Comfy Cloud · " else "") + wfName + (if (sc.run.prompt.isNotBlank()) " · " + sc.run.prompt.trim().take(60) else ""),
+                                    color = Q.textDim, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (i > 0) SmallButton("↑") { vm.setComfyShortcuts(shortcuts.toMutableList().also { l -> l.add(i - 1, l.removeAt(i)) }) }
+                            if (picked != null) SmallButton("Update") {
+                                vm.setComfyShortcuts(shortcuts.toMutableList().also { l -> l[i] = ComfyShortcut(sc.label, ComfyPreset(sc.label, picked.fileName, prompt, enhance, merged, megapixels, overrides, count)) })
+                                vm.toast("\"${sc.label}\" now runs ${picked.name} as set here")
+                            }
+                            SmallButton("Rename") { renamingShortcut = i }
+                            SmallButton("Remove") { vm.setComfyShortcuts(shortcuts.filterIndexed { k, _ -> k != i }) }
+                        }
+                    }
+                    if (picked != null) {
+                        Spacer(Modifier.height(6.dp))
+                        SmallButton("Add this as a bar button…", enabled = shortcuts.size < MAX_COMFY_SHORTCUTS) { addingShortcut = true }
+                        if (shortcuts.size >= MAX_COMFY_SHORTCUTS) Text("The bar holds $MAX_COMFY_SHORTCUTS: remove one to add another.", color = Q.textDim, fontSize = 12.sp)
+                        else Text("Update puts what's set here into a button (this workflow, its prompt and settings).", color = Q.textDim, fontSize = 12.sp)
                     }
 
                     if (picked != null) {
@@ -1328,6 +1366,26 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
         }) { t ->
             promptsOpen = false
             prompt = t
+        }
+    }
+    if (addingShortcut && picked != null) {
+        RenameDialog(picked.name, title = "Button name", onDismiss = { addingShortcut = false }) { name ->
+            addingShortcut = false
+            val n = name.trim()
+            if (n.isNotEmpty()) {
+                keepTyped()
+                vm.setComfyShortcuts(vm.comfyShortcuts + ComfyShortcut(n, ComfyPreset(n, picked.fileName, prompt, enhance, merged, megapixels, overrides, count)))
+                if (!vm.showComfyBar) vm.showComfyBar = true
+                vm.toast("\"$n\" is on the ComfyUI bar")
+            }
+        }
+    }
+    vm.comfyShortcuts.getOrNull(renamingShortcut)?.let { sc ->
+        RenameDialog(sc.label, title = "Rename button", onDismiss = { renamingShortcut = -1 }) { name ->
+            val i = renamingShortcut
+            renamingShortcut = -1
+            val n = name.trim()
+            if (n.isNotEmpty()) vm.setComfyShortcuts(vm.comfyShortcuts.toMutableList().also { l -> if (i in l.indices) l[i] = ComfyShortcut(n, l[i].run) })
         }
     }
     if (savingPreset && picked != null) {

@@ -604,9 +604,13 @@ The Photoshop file writer follows ag-psd (MIT, by Agamnentzar) for how Photoshop
 descriptors, text engine data and smart objects.
 
 ## ComfyUI (Quartz Online)
-**The ComfyUI bar** floats at the bottom middle of the picture: pick a workflow, type its prompt and
-**Run** (with the settings last used in the ComfyUI window); its last button opens the full window. View →
-ComfyUI bar shows or hides it. ComfyUI is also first in the Filter menu.
+**The ComfyUI bar** floats at the bottom middle of the picture: **ComfyUI** opens the full window, and
+the rest are **your favorite runs** as buttons under names of your own (Remove background, say). Each
+button is a workflow with its prompt and settings saved with it, so a tap runs it straight away (the
+result comes in as a new smart layer, as usual). Make them in the ComfyUI window under **Bar buttons**: set
+a workflow up, then **Add this as a bar button…** (up to 4); there you can also rename them, move them up,
+remove them, or **Update** one with what's set on the page. Hover with the pen to see a button's prompt.
+View → ComfyUI bar shows or hides the bar. ComfyUI is also first in the Filter menu.
 
 Menu → **ComfyUI…** opens a full-screen page that runs one of your ComfyUI workflows on your own
 computer (over Tailscale, say) and brings back what it made as a new **smart layer** above the active
