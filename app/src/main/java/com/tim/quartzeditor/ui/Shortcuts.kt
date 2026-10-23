@@ -12,7 +12,8 @@ import kotlin.math.roundToInt
 
 /** Handles a key press. True when it did something. */
 fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
-    if (doc == null) return false
+    // (Not on the start screen shown over open files: the file isn't there to see)
+    if (doc == null || showHome) return false
     val cmd = e.isCtrlPressed || e.isMetaPressed
     val shift = e.isShiftPressed
     val alt = e.isAltPressed
@@ -195,7 +196,7 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
 
 /** Tab shows or hides the panels. Taken before anything on screen can use it to move focus. */
 fun EditorViewModel.onTabKey(e: KeyEvent): Boolean {
-    if (doc == null || e.keyCode != KeyEvent.KEYCODE_TAB || e.isCtrlPressed || e.isAltPressed || e.isMetaPressed) return false
+    if (doc == null || showHome || e.keyCode != KeyEvent.KEYCODE_TAB || e.isCtrlPressed || e.isAltPressed || e.isMetaPressed) return false
     if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) panelsToggle++
     return true
 }

@@ -60,7 +60,13 @@ class StackChange(private val before: DocSnap, private val after: DocSnap, overr
 }
 
 /** Undo / redo with a memory budget: the oldest steps are dropped when it fills up. */
-class History(private val budgetBytes: Long, private val maxSteps: Int = 80) {
+class History(private var budgetBytes: Long, private val maxSteps: Int = 80) {
+    /** A new memory budget (open files share one): older steps go if it's now over. */
+    fun setBudget(bytes: Long) {
+        budgetBytes = bytes
+        trim()
+    }
+
     private val undoStack = ArrayDeque<Change>()
     private val redoStack = ArrayDeque<Change>()
 

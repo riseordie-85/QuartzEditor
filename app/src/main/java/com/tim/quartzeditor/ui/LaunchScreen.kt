@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.CropLandscape
 import androidx.compose.material.icons.outlined.CropPortrait
@@ -162,11 +163,9 @@ fun LaunchScreen(vm: EditorViewModel) {
                     ) {
                         Text("Open:", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
                         vm.files.forEachIndexed { i, f ->
-                            Text(
-                                vm.fileRoot(f)?.name ?: "Untitled",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                maxLines = 1,
+                            val name = vm.fileRoot(f)?.name ?: "Untitled"
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(if (i == vm.fileIndex) Q.accent else Color.White.copy(alpha = 0.14f))
@@ -174,8 +173,17 @@ fun LaunchScreen(vm: EditorViewModel) {
                                         vm.showHome = false
                                         vm.switchFile(i)
                                     }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                            )
+                                    .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            ) {
+                                Text(name, color = Color.White, fontSize = 14.sp, maxLines = 1)
+                                // Close it (saved to Projects)
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(start = 4.dp).size(28.dp).clip(CircleShape).clickable { vm.closeFile(i) },
+                                ) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Close \"$name\" (saved to Projects)", tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
                         }
                     }
                 }

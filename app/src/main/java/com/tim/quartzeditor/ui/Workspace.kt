@@ -182,7 +182,8 @@ fun Workspace(vm: EditorViewModel) {
                 vm.textEdit != null -> vm.finishText()
                 vm.penPoints.isNotEmpty() -> vm.cancelPen()
                 !docked && panelsOpen -> panelsOpen = false
-                else -> vm.closeDocument()
+                // Back: the start screen, files kept open (File → Close closes one)
+                else -> vm.openHome()
             }
         }
 
@@ -221,7 +222,7 @@ fun Workspace(vm: EditorViewModel) {
                             Icon(Icons.Outlined.Menu, contentDescription = "Menu", tint = Q.text, modifier = Modifier.size(size * 0.55f))
                         }
                         PagedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }, offset = androidx.compose.ui.unit.DpOffset(size + 8.dp, -size)) {
-                            Item("Home (saves to Projects)", Icons.Outlined.Home) { vm.closeDocument() }
+                            Item("Home (your files stay open)", Icons.Outlined.Home) { vm.openHome() }
                             Item("Quick export (.png)", Icons.Outlined.Image) { vm.quickExport() }
                             Divider()
                             Page("File", Icons.Outlined.Description) { FileMenuItems(vm, menuActions) }
@@ -496,7 +497,7 @@ fun Workspace(vm: EditorViewModel) {
             title = { Text("Close without saving?") },
             text = {
                 Text(
-                    if (saved) "Changes since this project was last saved will be lost. The saved version stays in Projects."
+                    if (saved) "Changes since this project was last saved to Projects will be lost (it's also saved when you go to another file or the start screen). The saved version stays in Projects."
                     else "This image hasn't been saved. Everything you did will be lost."
                 )
             },

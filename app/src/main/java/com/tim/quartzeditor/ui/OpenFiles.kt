@@ -14,6 +14,29 @@ import com.tim.quartzeditor.engine.Doc
 class OpenFile(tabs: List<EditorTab>, tabIndex: Int) {
     var tabs by mutableStateOf(tabs)
     var tabIndex by mutableIntStateOf(tabIndex)
+    /** Its workspace color (each project keeps its own). */
+    var canvasColor: Int? = null
+}
+
+/**
+ * Open files share one memory budget for undo: the file shown gets most of it, the others what's
+ * left (their oldest steps go first); in each file the picture's own undo gets more than its smart
+ * layers' tabs.
+ */
+internal fun EditorViewModel.rebalanceUndo() {
+    val total = (Runtime.getRuntime().maxMemory() * 0.36).toLong()
+    val n = files.size
+    if (n == 0) return
+    files.forEachIndexed { i, f ->
+        val share = if (n == 1) total else if (i == fileIndex) (total * 0.6).toLong() else (total * 0.4 / (n - 1)).toLong()
+        val ts = fileTabs(i)
+        if (ts.size <= 1) ts.firstOrNull()?.history?.setBudget(share)
+        else {
+            ts.first().history.setBudget((share * 0.6).toLong())
+            val each = (share * 0.4 / (ts.size - 1)).toLong()
+            ts.drop(1).forEach { it.history.setBudget(each) }
+        }
+    }
 }
 
 /** Files open at once, at most (each keeps its pictures and undo in memory). */
@@ -30,10 +53,13 @@ internal fun EditorViewModel.fileTabs(i: Int): List<EditorTab> = if (i == fileIn
 internal fun EditorViewModel.stashFile() {
     val f = files.getOrNull(fileIndex) ?: return
     if (doc == null) return
+    // Text being typed goes in first
+    if (textEdit != null) finishText()
     saveView()
     saveToProjects(quiet = true)
     f.tabs = tabs
     f.tabIndex = tabIndex
+    f.canvasColor = canvasColor
 }
 
 /** Shows open file [i] as it was left. */
@@ -42,7 +68,9 @@ private fun EditorViewModel.enterFile(i: Int) {
     fileIndex = i
     tabs = f.tabs
     tabIndex = f.tabIndex.coerceIn(0, (f.tabs.size - 1).coerceAtLeast(0))
+    f.canvasColor?.let { if (it != canvasColor) changeCanvasColor(it) }
     enterTab(tabIndex, force = true)
+    rebalanceUndo()
 }
 
 /** Shows open file [i] (anything pending is applied first, and the one left is saved). */
@@ -67,13 +95,27 @@ fun EditorViewModel.switchFileTab(i: Int, k: Int) {
     if (k != tabIndex) switchTab(k)
 }
 
-/** Closes open file [i] (saved to Projects, like Home). */
+/** Closes open file [i] (saved to Projects). One not shown was saved when it was left: it just goes. */
 fun EditorViewModel.closeFile(i: Int) {
+    if (i !in files.indices) return
     if (i != fileIndex) {
-        switchFile(i)
-        if (fileIndex != i) return
+        files = files.filterIndexed { j, _ -> j != i }
+        if (i < fileIndex) fileIndex--
+        rebalanceUndo()
+        return
     }
     closeDocument()
+}
+
+/** Its project was deleted: the open file showing it closes without saving (so it doesn't come back). */
+internal fun EditorViewModel.projectDeleted(id: String) {
+    val i = files.indexOfFirst { fileRoot(it)?.projectId == id }
+    if (i < 0) return
+    if (i == fileIndex) discardDocument()
+    else {
+        files = files.filterIndexed { j, _ -> j != i }
+        if (i < fileIndex) fileIndex--
+    }
 }
 
 /** After the file shown was closed: it leaves the open files, and the next one is shown (or the start screen). */
@@ -89,13 +131,12 @@ internal fun EditorViewModel.fileClosed() {
     enterFile(gone.coerceAtMost(files.lastIndex))
 }
 
+/** Opening another file from another app: anything pending in the one shown is applied first. */
+internal fun EditorViewModel.readyForAnotherFile(then: () -> Unit): Boolean = pendingFirst(then)
+
 /** The start screen, to open or start another file (this one stays open, saved). */
 fun EditorViewModel.openHome() {
     if (doc == null) return
-    if (files.size >= MAX_OPEN_FILES) {
-        toast("$MAX_OPEN_FILES files are open: close one first")
-        return
-    }
     if (pendingFirst { openHome() }) return
     saveToProjects(quiet = true)
     showHome = true

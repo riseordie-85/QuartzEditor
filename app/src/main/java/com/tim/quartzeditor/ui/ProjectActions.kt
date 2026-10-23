@@ -216,6 +216,8 @@ fun EditorViewModel.handleIntent(intent: Intent?): Boolean {
         else -> null
     }
     if (uri == null) return false
+    // Anything half done in the file shown goes in first (it stays open in its tab)
+    if (doc != null && readyForAnotherFile { handleIntent(intent) }) return true
     if (doc != null) saveToProjects(quiet = true)
     viewModelScope.launch {
         val psd = withContext(Dispatchers.IO) { runCatching { isPsd(uri) }.getOrDefault(false) }
@@ -309,6 +311,7 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
 }
 
 fun EditorViewModel.deleteProject(id: String) {
+    projectDeleted(id)
     ProjectIO.delete(ctx, id)
     projectsVersion++
 }

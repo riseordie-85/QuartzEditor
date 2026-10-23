@@ -619,7 +619,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     internal fun setDocument(d: Doc, canvas: Int? = null) {
         // Files already open stay open (in tabs): the one shown is put away first
         val keep = doc != null && files.isNotEmpty()
-        if (keep) stashFile()
+        if (keep) {
+            stashFile()
+            // Too many open: the one left longest ago closes (it was saved when it was left)
+            if (files.size >= MAX_OPEN_FILES) {
+                val drop = if (fileIndex == 0) 1 else 0
+                toast("\"${fileRoot(files[drop])?.name ?: "A file"}\" was closed to make room (it's in Projects)")
+                files = files.filterIndexed { j, _ -> j != drop }
+                if (drop < fileIndex) fileIndex--
+            }
+        }
         cancelEnhance()
         colorRange = null
         pickingForRange = false
@@ -655,8 +664,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // The picture itself is the first tab; smart layers' contents open as more tabs
         tabs = listOf(EditorTab(d, history, null, -1L))
         tabIndex = 0
-        files = (if (keep) files else emptyList()) + OpenFile(tabs, 0)
+        files = (if (keep) files else emptyList()) + OpenFile(tabs, 0).also { it.canvasColor = canvas ?: canvasColor }
         fileIndex = files.lastIndex
+        rebalanceUndo()
         showHome = false
         fitted = false
         canvas?.let { changeCanvasColor(it) }
@@ -678,6 +688,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         propsBefore = null
         multiSelected = emptySet()
         resetVectorState()
+        // (Layer ids repeat between documents: a point picked in one isn't picked in another)
+        penEditing = false
+        penSelected = -1
         transform = null
         liquifyJob?.cancel()
         warp = null
