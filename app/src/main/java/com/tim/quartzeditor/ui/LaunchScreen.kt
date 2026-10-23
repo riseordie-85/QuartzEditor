@@ -68,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -120,7 +121,17 @@ fun LaunchScreen(vm: EditorViewModel) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.radialGradient(listOf(Q.launchCenter, Q.launchEdge), radius = 1800f))
+            // The app icon's background: magenta at the top, through blue, to yellow at the bottom (a little slanted)
+            .drawBehind {
+                drawRect(
+                    Brush.linearGradient(
+                        0f to Color(0xFFAA3D89), 0.07f to Color(0xFF8B4893), 0.28f to Color(0xFF5C529F),
+                        0.46f to Color(0xFF1358A8), 0.70f to Color(0xFF80898D), 0.88f to Color(0xFFC6BC65), 1f to Color(0xFFFFF200),
+                        start = androidx.compose.ui.geometry.Offset(size.width * 0.6f, 0f),
+                        end = androidx.compose.ui.geometry.Offset(size.width * 0.4f, size.height),
+                    )
+                )
+            }
             .safeDrawingPadding()
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
