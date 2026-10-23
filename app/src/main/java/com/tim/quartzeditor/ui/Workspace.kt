@@ -270,30 +270,7 @@ fun Workspace(vm: EditorViewModel) {
                     RoundButton(Icons.Outlined.FitScreen, "Fit to screen, straight (or pinch in quickly)") { vm.fit() }
                 }
                 // The canvas is turned: how far (tap to straighten it)
-                val turned = vm.normalizedRotation()
-                if (turned != 0f) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 56.dp, end = 6.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Q.toolbar.copy(alpha = 0.9f))
-                            .clickable(onClickLabel = "Straighten the canvas") { vm.straightenView() }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                    ) {
-                        Icon(
-                            Icons.Outlined.Navigation, contentDescription = null, tint = Q.text,
-                            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = turned },
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("${turned.roundToInt()}°", color = Q.text, fontSize = 13.sp)
-                        if (vm.rotationLocked) {
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Outlined.Lock, contentDescription = "Turning locked", tint = Q.textDim, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                }
+                RotationChip(vm, Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 6.dp))
 
                 // Rulers (under the buttons)
                 Rulers(vm)
@@ -599,6 +576,32 @@ private fun EditButton(vm: EditorViewModel, modifier: Modifier) {
             Divider()
             Item("Select all") { vm.selectAll() }
             Item("Deselect", enabled = sel) { vm.deselect() }
+        }
+    }
+}
+
+/** How far the canvas is turned (only while it is); a tap straightens it. Its own scope, so turning doesn't redraw the workspace. */
+@Composable
+private fun RotationChip(vm: EditorViewModel, modifier: Modifier) {
+    val turned = vm.normalizedRotation()
+    if (turned == 0f) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Q.toolbar.copy(alpha = 0.9f))
+            .clickable(onClickLabel = "Straighten the canvas") { vm.straightenView() }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            Icons.Outlined.Navigation, contentDescription = null, tint = Q.text,
+            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = turned },
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("${turned.roundToInt()}°", color = Q.text, fontSize = 13.sp)
+        if (vm.rotationLocked) {
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Outlined.Lock, contentDescription = "Turning locked", tint = Q.textDim, modifier = Modifier.size(14.dp))
         }
     }
 }

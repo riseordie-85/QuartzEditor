@@ -298,8 +298,13 @@ class StrokeSession(
      * thinner toward the end). Called once, before [commit].
      */
     fun finish() {
+        // A tap with a start taper: a dot at full size, not the taper's thin start
+        if (dynamics.taperStart > 0f && travelled < max(1f, size * 0.25f) && !lastX.isNaN()) {
+            stamp(buffer, canvases, lastX, lastY, lastP, lastTilt, lastAz, tailDabs.lastOrNull()?.angle ?: 0f, 1f)
+            return
+        }
         val b = base ?: return
-        // A short stroke tapers over its second half (a tap stays a dot)
+        // A short stroke tapers over its second half
         val len = min(dynamics.taperEnd, travelled * 0.5f)
         if (tailDabs.isEmpty() || len < 1f) return
         // The buffer goes back to the stroke without its last stretch, which is drawn again tapering
@@ -309,9 +314,22 @@ class StrokeSession(
         canvases.putAll(baseCanvases)
         dabCount = baseDabs
         val endAt = travelled
-        for (d in tailDabs) {
-            val left = endAt - d.along
-            stamp(buffer, canvases, d.x, d.y, d.p, d.tilt, d.az, d.angle, taperFactor(d.along) * ease(left / len))
+        fun factorAt(along: Float) = taperFactor(along) * ease((endAt - along) / len)
+        val dabs = tailDabs.toList()
+        for ((i, d) in dabs.withIndex()) {
+            stamp(buffer, canvases, d.x, d.y, d.p, d.tilt, d.az, d.angle, factorAt(d.along))
+            // As the dabs get smaller they need to be closer: more go in between (so the tip isn't beaded)
+            val n = dabs.getOrNull(i + 1) ?: break
+            val gap = n.along - d.along
+            if (gap <= 0f) continue
+            var t = max(1f, size * pressureFactor(d.p) * factorAt(d.along) * tip.spacing)
+            while (t < gap - 0.5f) {
+                val f = t / gap
+                val along = d.along + gap * f
+                val p = d.p + (n.p - d.p) * f
+                stamp(buffer, canvases, d.x + (n.x - d.x) * f, d.y + (n.y - d.y) * f, p, d.tilt + (n.tilt - d.tilt) * f, d.az, d.angle, factorAt(along))
+                t += max(1f, size * pressureFactor(p) * factorAt(along) * tip.spacing)
+            }
         }
         tailDabs.clear()
     }

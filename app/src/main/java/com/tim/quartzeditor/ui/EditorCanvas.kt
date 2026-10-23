@@ -32,12 +32,14 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
@@ -218,17 +220,34 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         // The picture, in a layer of its own that keeps what it drew: when anything else on the
         // screen moves (the layers list scrolling, a panel sliding), it's shown as it is instead of
         // drawing every layer again. It's drawn again only when the picture or the view changes.
+        // (Straight, it only needs the screen's size; turned, the whole view)
+        val turned by remember { derivedStateOf { vm.rotation % 360f != 0f } }
         androidx.compose.foundation.layout.Spacer(
             Modifier
-                .fillMaxSize()
+                .align(Alignment.Center)
+                .then(if (turned) Modifier.fillMaxSize() else Modifier.requiredSize(with(density) { sw.toDp() }, with(density) { sh.toDp() }))
                 .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                 .drawBehind {
             val d = vm.doc ?: return@drawBehind
             // Read so the canvas redraws when the picture changes
             @Suppress("UNUSED_VARIABLE") val v = d.renderVersion
             val s = vm.scale
-            val ox = vm.offsetX
-            val oy = vm.offsetY
+            // Where this layer starts in the view's coordinates (it's centered in the view)
+            val px0 = (vm.viewW - size.width) / 2f
+            val py0 = (vm.viewH - size.height) / 2f
+            val ox = vm.offsetX - px0
+            val oy = vm.offsetY - py0
+            // The part of it the screen shows (its bounding box, when turned): only that is drawn
+            val th = Math.toRadians(vm.rotation.toDouble())
+            val ac = abs(kotlin.math.cos(th)).toFloat()
+            val asn = abs(kotlin.math.sin(th)).toFloat()
+            val hx = ac * vm.screenW / 2f + asn * vm.screenH / 2f + 2f
+            val hy = asn * vm.screenW / 2f + ac * vm.screenH / 2f + 2f
+            val vis = android.graphics.Rect(
+                kotlin.math.floor(size.width / 2f - hx).toInt().coerceAtLeast(0), kotlin.math.floor(size.height / 2f - hy).toInt().coerceAtLeast(0),
+                kotlin.math.ceil(size.width / 2f + hx).toInt().coerceAtMost(size.width.roundToInt()), kotlin.math.ceil(size.height / 2f + hy).toInt().coerceAtMost(size.height.roundToInt()),
+            )
+            if (vis.width() <= 0 || vis.height() <= 0) return@drawBehind
             drawRect(Color(vm.canvasColor))
             val left = ox
             val top = oy
@@ -246,15 +265,17 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     nc.drawRect(left, top, right, bottom, Paint().apply { color = android.graphics.Color.WHITE })
                 }
                 nc.save()
+                nc.clipRect(vis)
                 nc.translate(ox, oy)
                 nc.scale(s, s)
-                val visible = RectF(-ox / s, -oy / s, (size.width - ox) / s, (size.height - oy) / s)
+                val visible = RectF((vis.left - ox) / s, (vis.top - oy) / s, (vis.right - ox) / s, (vis.bottom - oy) / s)
                 // Zoomed out, smaller copies of the tiles are drawn; any not made yet follow in the next frames
                 val more = com.tim.quartzeditor.engine.TileLod.drawing(s) {
                     DocRenderer.draw(
                         nc, d, visible, vm.stroke, vm.preview, smooth = s < 2f, effects = vm.effectsLookup,
-                        view = Matrix().apply { setScale(s, s); postTranslate(ox, oy) },
-                        viewW = size.width.roundToInt(), viewH = size.height.roundToInt(),
+                        // (Recorded only for the part shown: its own pixels start at its corner)
+                        view = Matrix().apply { setScale(s, s); postTranslate(ox - vis.left, oy - vis.top) },
+                        viewW = vis.width(), viewH = vis.height(),
                     )
                 }
                 if (more) lodHandler.post { if (vm.doc === d) d.invalidate() }
@@ -516,7 +537,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 // Long press without moving
                                 longPressDone = true
                                 // A finger held on the picture while fingers don't paint: pick the color there
-                                if (fingerNav && (tool == Tool.BRUSH || tool == Tool.ERASER || tool == Tool.RETOUCH) && vm.isOnCanvas(start.x, start.y)) {
+                                // (Not right after the pen was used: then it's likely the hand holding it)
+                                if (fingerNav && (tool == Tool.BRUSH || tool == Tool.ERASER || tool == Tool.RETOUCH) && vm.isOnCanvas(start.x, start.y) &&
+                                    vm.pen.idleFor(SystemClock.uptimeMillis()) > 2500
+                                ) {
                                     loupe = start to vm.sampleAt(startCx, startCy, commit = false)
                                     lastPos = start
                                     mode = GestureMode.EYEDROP
@@ -629,7 +653,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     // Twisting turns the canvas (once it's clearly a twist), snapping to straight angles
                                     if (!vm.rotationLocked && c != Offset.Unspecified) {
                                         rotTotal += ev.calculateRotation()
-                                        if (!rotating && abs(rotTotal) > ROTATE_START) {
+                                        // (Only when it's mostly a twist, so a long pinch doesn't start turning it)
+                                        if (!rotating && abs(rotTotal) > ROTATE_START && abs(rotTotal) > abs(kotlin.math.ln(totalZoom)) * 60f) {
                                             rotating = true
                                             rotSign = if (rotTotal > 0f) 1f else -1f
                                             moved = true
@@ -1328,20 +1353,6 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             MarchingAnts(vm, sel?.path, draft, if (vm.tool == Tool.SELECT) vm.polygonPoints.toList() else emptyList())
         }
 
-        // Eyedropper loupe
-        loupe?.let { (p, c) ->
-            val sizePx = with(density) { 64.dp.toPx() }
-            val lift = with(density) { 90.dp.toPx() }
-            Box(
-                Modifier
-                    .offset { IntOffset((p.x - sizePx / 2).roundToInt(), (p.y - lift - sizePx / 2).coerceAtLeast(0f).roundToInt()) }
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(if (c != null) Color(c) else Color.Transparent)
-                    .border(3.dp, Color.White, CircleShape)
-            )
-        }
-
         // Long press beside the canvas: workspace color
         canvasMenuAt?.let { p ->
             Box(Modifier.offset { IntOffset(p.x.roundToInt(), p.y.roundToInt()) }) {
@@ -1369,6 +1380,33 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+
+    // Eyedropper loupe: on the screen, straight and above the finger however the view is turned
+    loupe?.let { (p, c) ->
+        val sizePx = with(density) { 64.dp.toPx() }
+        val lift = with(density) { 90.dp.toPx() }
+        val th = Math.toRadians(vm.rotation.toDouble())
+        val cs = kotlin.math.cos(th).toFloat()
+        val sn = kotlin.math.sin(th).toFloat()
+        val vx = p.x - vm.viewW / 2f
+        val vy = p.y - vm.viewH / 2f
+        val qx = sw / 2f + cs * vx - sn * vy
+        val qy = sh / 2f + sn * vx + cs * vy
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .offset {
+                    IntOffset(
+                        (qx - sizePx / 2).coerceIn(0f, (sw - sizePx).coerceAtLeast(0f)).roundToInt(),
+                        (qy - lift - sizePx / 2).coerceIn(0f, (sh - sizePx).coerceAtLeast(0f)).roundToInt(),
+                    )
+                }
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(if (c != null) Color(c) else Color.Transparent)
+                .border(3.dp, Color.White, CircleShape)
+        )
     }
     }
 }

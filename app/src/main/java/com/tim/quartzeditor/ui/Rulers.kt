@@ -59,7 +59,8 @@ val RULER = 20.dp
 @Composable
 fun Rulers(vm: EditorViewModel, modifier: Modifier = Modifier) {
     // (Not on a turned canvas: its edges don't line up with them)
-    if (!vm.showRulers || vm.doc == null || vm.normalizedRotation() != 0f) return
+    val turned by androidx.compose.runtime.remember { androidx.compose.runtime.derivedStateOf { vm.normalizedRotation() != 0f } }
+    if (!vm.showRulers || vm.doc == null || turned) return
     val density = LocalDensity.current
     val thick = with(density) { RULER.toPx() }
     Box(modifier.fillMaxSize()) {

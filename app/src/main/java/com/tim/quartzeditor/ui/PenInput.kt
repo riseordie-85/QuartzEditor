@@ -116,6 +116,9 @@ class PenTracker {
      */
     fun near(now: Long): Boolean = (touching && now - lastSeen < 3000) || now - lastSeen < 500
 
+    /** How long since the pen was last seen (uptime ms). */
+    fun idleFor(now: Long): Long = now - lastSeen
+
     /** The pen left the canvas, or its touch was taken back. */
     fun left() {
         touching = false

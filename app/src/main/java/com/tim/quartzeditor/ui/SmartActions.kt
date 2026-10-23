@@ -47,8 +47,9 @@ import androidx.compose.ui.unit.sp
  * [layerId] whose contents [doc] is (null for the picture itself).
  */
 class EditorTab(val doc: Doc, var history: History, val parent: EditorTab?, val layerId: Long) {
-    /** The view (zoom and position) when last left. */
+    /** The view (zoom and position) when last left, and how far it was turned. */
     var view: Triple<Float, Float, Float>? = null
+    var viewRotation = 0f
 
     /** The contents as they were when last put into the smart layer. */
     var baseline: ContentsSnap? = null
@@ -495,6 +496,7 @@ private fun depth(t: EditorTab): Int {
 
 private fun EditorViewModel.saveView() {
     currentTab?.view = Triple(scale, offsetX, offsetY)
+    currentTab?.viewRotation = rotation
 }
 
 /** Shows tab [i]: its document, its undo, its view. */
@@ -516,6 +518,7 @@ private fun EditorViewModel.enterTab(i: Int, force: Boolean = false) {
         scale = v.first
         offsetX = v.second
         offsetY = v.third
+        rotation = t.viewRotation
     } else {
         fit()
     }
