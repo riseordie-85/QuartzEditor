@@ -54,6 +54,18 @@ class PenTracker {
     /** The side button was pressed while the pen wasn't touching. */
     var onButtonPress: (() -> Unit)? = null
 
+    /** The pen is over the canvas (not the panels or bars), as the canvas sees it. */
+    var overCanvas = false
+        private set
+    /** When the pen was last over the canvas (uptime ms). */
+    private var lastOnCanvas = Long.MIN_VALUE / 2
+
+    /** The canvas saw the pen (hovering or touching) at [time]. */
+    fun onCanvas(time: Long) {
+        overCanvas = true
+        lastOnCanvas = time
+    }
+
     /** Reads one touch event. True when a pen is in it. */
     fun onMotion(e: MotionEvent): Boolean {
         var idx = -1
@@ -114,7 +126,7 @@ class PenTracker {
      * hand. A hovering pen keeps sending events, so going quiet means it's gone (even when its leaving
      * was told to another part of the screen); one held still on the screen may be quiet a while.
      */
-    fun near(now: Long): Boolean = (touching && now - lastSeen < 3000) || now - lastSeen < 500
+    fun near(now: Long): Boolean = (touching && overCanvas && now - lastSeen < 3000) || now - lastOnCanvas < 500
 
     /** How long since the pen was last seen (uptime ms). */
     fun idleFor(now: Long): Long = now - lastSeen
@@ -123,6 +135,7 @@ class PenTracker {
     fun left() {
         touching = false
         hovering = false
+        overCanvas = false
     }
 
     /**

@@ -148,6 +148,9 @@ fun Workspace(vm: EditorViewModel) {
         renameLayer = { renameLayerOpen = true },
     )
 
+    // Hover tips are drawn over everything, in a layer touches go straight through
+    val tipHost = remember { TipHostState() }
+    androidx.compose.runtime.CompositionLocalProvider(LocalTipHost provides tipHost) {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -158,6 +161,7 @@ fun Workspace(vm: EditorViewModel) {
     ) {
         // Big screens: a menu bar, the tool's settings in a bar under it, a status bar at the bottom
         val desktop = vm.desktopFor(maxWidth.value, maxHeight.value)
+        val screenW = maxWidth
         val wide = maxWidth >= 760.dp || desktop
         val compact = !desktop && (maxWidth < 600.dp || maxHeight < 480.dp)
         var panelsOpen by rememberSaveable { mutableStateOf(wide) }
@@ -219,7 +223,7 @@ fun Workspace(vm: EditorViewModel) {
                             Item("Quick export (.png)", Icons.Outlined.Image) { vm.quickExport() }
                             Divider()
                             Page("File", Icons.Outlined.Description) { FileMenuItems(vm, menuActions) }
-                            Page("Image", Icons.Outlined.Image) { ImageMenuItems(vm, menuActions) }
+                            Page("Image", Icons.Outlined.Image) { ImageMenuItems(vm, menuActions, withEnhance = false) }
                             Page("Enhance", Icons.Outlined.AutoFixHigh) { EnhanceMenuItems(vm, menuActions) }
                             if (vm.online) Item("ComfyUI…", Icons.Outlined.Cloud) { comfyOpen = true }
                             Page("View", Icons.Outlined.Visibility) { ViewMenuItems(vm, menuActions) }
@@ -251,6 +255,9 @@ fun Workspace(vm: EditorViewModel) {
                 // Rulers (under the buttons)
                 Rulers(vm)
 
+                // Typing: the text field (it needs more room than the options bar has, so it's here in both layouts)
+                TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = if (desktop) 8.dp else 56.dp, start = 8.dp, end = 8.dp))
+
                 // Transforming: cancel / flip / rotate / distort / apply (big screens: in the options bar)
                 if (!desktop) {
                     TransformBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
@@ -258,7 +265,6 @@ fun Workspace(vm: EditorViewModel) {
                     CropBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                     WarpBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
                     PenBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
-                    TextBar(vm, Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
 
                     // Cut, copy, paste (big screens: the Edit menu)
                     EditButton(vm, Modifier.align(Alignment.BottomStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp))
@@ -309,7 +315,8 @@ fun Workspace(vm: EditorViewModel) {
                 if (desktop) DockHandle(vm, pad) else Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
-                Box(Modifier.width(if (desktop) vm.dockWidth.dp else 310.dp).fillMaxHeight()) {
+                // (Never more than about half the screen, so the picture keeps room)
+                Box(Modifier.width(if (desktop) vm.dockWidth.dp.coerceAtMost(screenW * 0.45f) else 310.dp).fillMaxHeight()) {
                     // The panels stay underneath (hidden), so they're as you left them when the window closes
                     PanelColumn(vm, requestPlace, Modifier.fillMaxSize().alpha(if (vm.popup != null) 0f else 1f))
                     if (vm.popup != null) {
@@ -374,7 +381,7 @@ fun Workspace(vm: EditorViewModel) {
                 fontSize = 14.sp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp, start = 80.dp, end = 80.dp)
+                    .padding(bottom = if (desktop) 60.dp else 24.dp, start = 80.dp, end = 80.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(Color.Black.copy(alpha = 0.8f))
                     .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -389,7 +396,7 @@ fun Workspace(vm: EditorViewModel) {
                 vm,
                 Modifier
                     .align(if (wide) Alignment.TopEnd else Alignment.Center)
-                    .padding(top = if (wide) 64.dp else 16.dp, bottom = 16.dp, start = 16.dp, end = if (wide) 80.dp else 16.dp)
+                    .padding(top = if (desktop) 124.dp else if (wide) 64.dp else 16.dp, bottom = if (desktop) 56.dp else 16.dp, start = 16.dp, end = if (wide) 80.dp else 16.dp)
                     .widthIn(max = 340.dp)
                     .heightIn(max = maxHeight * 0.85f),
             )
@@ -399,6 +406,8 @@ fun Workspace(vm: EditorViewModel) {
         ComfyStatus(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp, start = 64.dp, end = 64.dp))
 
         BusyOverlay(vm.busy)
+        TipLayer(tipHost)
+    }
     }
 
     if (comfyOpen) ComfyDialog(vm, onImport = {
@@ -578,10 +587,10 @@ private fun DockHandle(vm: EditorViewModel, width: androidx.compose.ui.unit.Dp) 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .width(width.coerceAtLeast(8.dp))
+            .width(width.coerceAtLeast(14.dp))
             .fillMaxHeight()
             .pointerInput(Unit) {
-                detectHorizontalDragGestures(onDragEnd = { vm.saveDockWidth() }) { change, dx ->
+                detectHorizontalDragGestures(onDragEnd = { vm.saveDockWidth() }, onDragCancel = { vm.saveDockWidth() }) { change, dx ->
                     change.consume()
                     vm.dockWidth = (vm.dockWidth - dx / density.density).coerceIn(260f, 560f)
                 }

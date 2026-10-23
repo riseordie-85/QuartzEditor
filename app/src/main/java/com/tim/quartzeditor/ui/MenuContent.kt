@@ -88,7 +88,7 @@ fun PagedMenuScope.EditMenuItems(vm: EditorViewModel, a: MenuActions) {
 }
 
 @Composable
-fun PagedMenuScope.ImageMenuItems(vm: EditorViewModel, a: MenuActions) {
+fun PagedMenuScope.ImageMenuItems(vm: EditorViewModel, a: MenuActions, withEnhance: Boolean = true) {
     Label("${vm.doc?.width ?: 0} × ${vm.doc?.height ?: 0} px")
     Item("Image size…") { a.imageSize() }
     Item("Crop") { vm.onToolButton(Tool.CROP) }
@@ -98,8 +98,11 @@ fun PagedMenuScope.ImageMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Flip horizontally") { vm.flipImage(horizontal = true) }
     Item("Flip vertically") { vm.flipImage(horizontal = false) }
     Divider()
-    Page("Enhance") { EnhanceMenuItems(vm, a) }
-    Divider()
+    // (Pages are told apart by their names: a menu with an Enhance page of its own leaves this one out)
+    if (withEnhance) {
+        Page("Enhance") { EnhanceMenuItems(vm, a) }
+        Divider()
+    }
     Item("Flatten image") { vm.flattenImage() }
 }
 

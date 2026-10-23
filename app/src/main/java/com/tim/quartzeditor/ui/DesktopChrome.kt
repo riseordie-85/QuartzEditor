@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -55,6 +56,11 @@ import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -79,7 +85,7 @@ enum class UiLayout(val label: String) { AUTO("Automatic"), DESKTOP("Menu bar"),
 /** The menu bar layout, for this screen [w] × [h] (dp). */
 internal fun EditorViewModel.desktopFor(w: Float, h: Float): Boolean = when (uiLayout) {
     UiLayout.AUTO -> w >= 900f && h >= 560f
-    UiLayout.DESKTOP -> w >= 600f
+    UiLayout.DESKTOP -> w >= 760f && h >= 480f
     UiLayout.CLASSIC -> false
 }
 
@@ -96,20 +102,23 @@ fun MenuBar(vm: EditorViewModel, a: MenuActions, panelsOpen: Boolean, togglePane
             .background(Q.toolbar)
             .padding(horizontal = 6.dp),
     ) {
-        MenuTitle("Quartz", bold = true) { AppMenuItems(vm, a) }
-        MenuTitle("File") { FileMenuItems(vm, a) }
-        MenuTitle("Edit") { EditMenuItems(vm, a) }
-        MenuTitle("Image") { ImageMenuItems(vm, a) }
-        MenuTitle("Layer") { LayerMenuItems(vm, a) }
-        MenuTitle("Select") { SelectMenuItems(vm) }
-        MenuTitle("Filter") { FilterMenuItems(vm, a) }
-        MenuTitle("View") { ViewMenuItems(vm, a) }
-        MenuTitle("Window") { WindowMenuItems(vm, panelsOpen, togglePanels) }
-        Text(
-            vm.rootDoc?.name ?: "",
-            color = Q.textDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
-        )
+        // (Scrolls when it doesn't fit, so undo and redo always stay on screen)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+            MenuTitle("Quartz", bold = true) { AppMenuItems(vm, a) }
+            MenuTitle("File") { FileMenuItems(vm, a) }
+            MenuTitle("Edit") { EditMenuItems(vm, a) }
+            MenuTitle("Image") { ImageMenuItems(vm, a) }
+            MenuTitle("Layer") { LayerMenuItems(vm, a) }
+            MenuTitle("Select") { SelectMenuItems(vm) }
+            MenuTitle("Filter") { FilterMenuItems(vm, a) }
+            MenuTitle("View") { ViewMenuItems(vm, a) }
+            MenuTitle("Window") { WindowMenuItems(vm, panelsOpen, togglePanels) }
+            Text(
+                vm.rootDoc?.name ?: "",
+                color = Q.textDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 12.dp).widthIn(max = 260.dp),
+            )
+        }
         val h = vm.history
         @Suppress("UNUSED_VARIABLE") val v = h.version
         BarIconButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.enhance != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
@@ -193,13 +202,12 @@ fun ToolOptionsBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         when (vm.tool) {
             Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> BrushOptions(vm, Modifier.weight(1f))
             else -> Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                // At most one of these is showing (each knows when it's needed)
+                // At most one of these is showing (each knows when it's needed; the text field stays over the picture)
                 TransformBar(vm)
                 SelectBar(vm)
                 CropBar(vm)
                 WarpBar(vm)
                 PenBar(vm)
-                TextBar(vm)
                 if (vm.tool == Tool.MOVE || vm.tool == Tool.PAN || vm.tool == Tool.EYEDROPPER || vm.tool == Tool.BUCKET || vm.tool == Tool.GRADIENT || vm.tool == Tool.SHAPE) {
                     Text("More settings in Properties", color = Q.textDim, fontSize = 12.sp)
                 }
@@ -462,14 +470,28 @@ private class TipPosition(private val beside: Boolean, private val gap: Int) : P
     }
 }
 
+/** A hover tip being shown: its text, where its button is (window pixels), and which side it goes. */
+class TipSpec(val text: String, val anchor: androidx.compose.ui.geometry.Rect, val beside: Boolean, val owner: Any)
+
+/** Where hover tips are drawn: a layer over the whole screen that touches go straight through. */
+class TipHostState {
+    var tip by mutableStateOf<TipSpec?>(null)
+}
+
+val LocalTipHost = androidx.compose.runtime.staticCompositionLocalOf<TipHostState?> { null }
+
 /**
  * Shows [text] beside [content] while a pen (or mouse) hovers over it for a moment, like a desktop
  * tooltip. Fingers can't hover, so they never see it. [beside]: to the right instead of below.
+ * Drawn by [TipLayer] (it never catches a tap); outside one, in a popup.
  */
 @Composable
 fun HoverTip(text: String, beside: Boolean = false, content: @Composable () -> Unit) {
+    val host = LocalTipHost.current
+    val owner = remember { Any() }
     var hovering by remember { mutableStateOf(false) }
     var show by remember { mutableStateOf(false) }
+    var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     LaunchedEffect(hovering) {
         if (hovering) {
             delay(450)
@@ -478,39 +500,83 @@ fun HoverTip(text: String, beside: Boolean = false, content: @Composable () -> U
             show = false
         }
     }
+    if (host != null) {
+        LaunchedEffect(show, text, bounds) {
+            if (show) host.tip = TipSpec(text, bounds, beside, owner)
+            else if (host.tip?.owner === owner) host.tip = null
+        }
+        androidx.compose.runtime.DisposableEffect(Unit) {
+            onDispose { if (host.tip?.owner === owner) host.tip = null }
+        }
+    }
     Box(
-        Modifier.pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    val e = awaitPointerEvent(PointerEventPass.Initial)
-                    val c = e.changes.firstOrNull() ?: continue
-                    if (c.type != PointerType.Stylus && c.type != PointerType.Eraser && c.type != PointerType.Mouse) {
-                        hovering = false
-                        continue
-                    }
-                    hovering = when (e.type) {
-                        PointerEventType.Enter, PointerEventType.Move -> !c.pressed
-                        else -> false
+        Modifier
+            .onGloballyPositioned { bounds = it.boundsInWindow() }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        val c = e.changes.firstOrNull() ?: continue
+                        if (c.type != PointerType.Stylus && c.type != PointerType.Eraser && c.type != PointerType.Mouse) {
+                            hovering = false
+                            continue
+                        }
+                        hovering = when (e.type) {
+                            PointerEventType.Enter, PointerEventType.Move -> !c.pressed
+                            else -> false
+                        }
                     }
                 }
-            }
-        },
+            },
     ) {
         content()
-        if (show) {
+        if (show && host == null) {
             val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
-            Popup(popupPositionProvider = remember(beside, gap) { TipPosition(beside, gap) }) {
-                Text(
-                    text,
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.85f))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
+            Popup(popupPositionProvider = remember(beside, gap) { TipPosition(beside, gap) }) { TipText(text) }
         }
+    }
+}
+
+@Composable
+private fun TipText(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        color = Color.White,
+        fontSize = 12.sp,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.85f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
+}
+
+/** Draws the hover tip being shown, over everything (put it last in the screen's box). */
+@Composable
+fun TipLayer(host: TipHostState) {
+    val t = host.tip ?: return
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }) {
+        TipText(
+            t.text,
+            Modifier.layout { m, c ->
+                val p = m.measure(androidx.compose.ui.unit.Constraints())
+                val w = c.maxWidth
+                val h = c.maxHeight
+                val a = t.anchor.translate(-origin.x, -origin.y)
+                val x: Int
+                val y: Int
+                if (t.beside) {
+                    x = (a.right.roundToInt() + gap).coerceAtMost((w - p.width).coerceAtLeast(0))
+                    y = (a.center.y.roundToInt() - p.height / 2).coerceIn(0, (h - p.height).coerceAtLeast(0))
+                } else {
+                    x = (a.center.x.roundToInt() - p.width / 2).coerceIn(0, (w - p.width).coerceAtLeast(0))
+                    val below = a.bottom.roundToInt() + gap
+                    y = if (below + p.height <= h) below else (a.top.roundToInt() - p.height - gap).coerceAtLeast(0)
+                }
+                layout(w, h) { p.place(x, y) }
+            },
+        )
     }
 }
 

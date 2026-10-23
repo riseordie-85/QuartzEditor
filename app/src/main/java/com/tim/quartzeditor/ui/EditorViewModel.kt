@@ -385,7 +385,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** What the pen is doing right now (fed by every touch on the canvas). */
     val pen = PenTracker().also { t ->
         // The side button pressed while the pen hovers: undo, when that's what it does
-        t.onButtonPress = { if (penButton == PenButton.UNDO && !stroking && !penGesture) undo() }
+        // (Only over the canvas: over the panels the button opens an item's menu)
+        t.onButtonPress = { if (penButton == PenButton.UNDO && t.overCanvas && !stroking && !penGesture) undo() }
     }
     /** A pen has been used here: the pen settings show, and fingers can move the view instead of painting. */
     var penSeen by mutableStateOf(prefs.getBoolean("penSeen", false))

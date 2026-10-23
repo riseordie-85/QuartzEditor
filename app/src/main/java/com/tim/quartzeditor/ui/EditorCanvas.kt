@@ -293,7 +293,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             val c = e.changes.firstOrNull { it.isPen }
                             hover = if (c != null && !c.pressed && e.type != PointerEventType.Exit) c.position else null
                             // The pen went off the canvas (its leaving is told to whatever it went over)
-                            if (c != null && e.type == PointerEventType.Exit) vm.pen.left()
+                            if (c != null) {
+                                if (e.type == PointerEventType.Exit) vm.pen.left() else vm.pen.onCanvas(c.uptimeMillis)
+                            }
                         }
                     }
                 }
