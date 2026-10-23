@@ -38,7 +38,7 @@ import kotlin.math.roundToInt
 class ColorDrag(val color: Int, val window: Offset)
 
 /** The last ColorDrop: where (canvas pixels), with what, and its fill in the history (to fill again). */
-class ColorDropFill(val x: Float, val y: Float, val color: Int, val change: Change)
+class ColorDropFill(val x: Float, val y: Float, val color: Int, val change: Change, val layerId: Long)
 
 /** Lets go of a dragged color at [window] (window pixels): fills there when it's over the picture. */
 fun EditorViewModel.colorDropAt(window: Offset, color: Int) {
@@ -47,20 +47,25 @@ fun EditorViewModel.colorDropAt(window: Offset, color: Int) {
     val d = doc ?: return
     if (cx < 0f || cy < 0f || cx >= d.width || cy >= d.height) return
     colorDropFill = null
-    bucketFill(cx, cy, color, colorDropTolerance) { change -> colorDropFill = ColorDropFill(cx, cy, color, change) }
+    val layerId = d.active?.id ?: return
+    bucketFill(cx, cy, color, colorDropTolerance) { change -> colorDropFill = ColorDropFill(cx, cy, color, change, layerId) }
 }
 
 /** Fills the last ColorDrop again with the tolerance as it is now. */
 fun EditorViewModel.colorDropRefill() {
     val f = colorDropFill ?: return
     val d = doc ?: return
-    if (history.peekUndo() !== f.change || stroking || busy != null) {
+    // Still filling: the next slide fills again
+    if (stroking || busy != null) return
+    // Only when the fill is still the last thing done, on the layer you're still on (and can paint)
+    val l = d.active
+    if (history.peekUndo() !== f.change || l?.id != f.layerId || paintBlocker(l) != null) {
         colorDropFill = null
         return
     }
     history.undo(d)
     d.invalidate()
-    bucketFill(f.x, f.y, f.color, colorDropTolerance) { change -> colorDropFill = ColorDropFill(f.x, f.y, f.color, change) }
+    bucketFill(f.x, f.y, f.color, colorDropTolerance) { change -> colorDropFill = ColorDropFill(f.x, f.y, f.color, change, f.layerId) }
 }
 
 /** The dragged color, following the finger or pen (drawn over everything; touches go through). */
@@ -88,7 +93,7 @@ internal fun ColorDropBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val f = vm.colorDropFill ?: return
     // Anything else done since (another edit, undo, another file): the bar goes
     val version = vm.history.version
-    LaunchedEffect(version, vm.doc) {
+    LaunchedEffect(version, vm.doc, vm.busy) {
         if (vm.busy == null && vm.history.peekUndo() !== f.change) vm.colorDropFill = null
     }
     Row(

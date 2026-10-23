@@ -252,6 +252,7 @@ fun EditorViewModel.closeDocument() {
     paletteFrom = null
     doc = null
     stroke = null
+    resetQuickShape()
     preview = null
     fxThumb = null
     d.invalidate()
@@ -269,6 +270,7 @@ fun EditorViewModel.discardDocument() {
     resetVectorState()
     doc = null
     stroke = null
+    resetQuickShape()
     preview = null
     fxThumb = null
     history = newHistory()

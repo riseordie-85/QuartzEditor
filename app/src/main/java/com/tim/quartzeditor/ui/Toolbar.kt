@@ -734,6 +734,7 @@ private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit)
                     // ColorDrop: dragged sideways, the color comes along to be let go of on the picture
                     var dragColor: Int? = null
                     var released = false
+                    try {
                     while (true) {
                         val e = awaitPointerEvent()
                         val c = e.changes.firstOrNull { it.id == down.id } ?: break
@@ -754,6 +755,10 @@ private fun ColorSwatches(vm: EditorViewModel, size: Dp, onColorTap: () -> Unit)
                             coords[0]?.takeIf { it.isAttached }?.let { vm.colorDrag = ColorDrag(col, it.localToWindow(c.position)) }
                         }
                         c.consume()
+                    }
+                    } finally {
+                        // (Also when the gesture's cut short: the dragged color doesn't stay on the screen)
+                        if (dragColor != null && !released) vm.colorDrag = null
                     }
                     if (dragColor != null) {
                         val drag = vm.colorDrag

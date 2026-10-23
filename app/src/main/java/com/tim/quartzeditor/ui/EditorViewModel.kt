@@ -702,6 +702,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         failedEffects.clear()
         moveLayer = null
         stroke = null
+        resetQuickShape()
         preview = null
         pendingFx = null
         fxThumb = null
@@ -754,6 +755,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         failedEffects.clear()
         moveLayer = null
         stroke = null
+        resetQuickShape()
         preview = null
         pendingFx = null
         fxThumb = null

@@ -221,7 +221,7 @@ private fun PenSettings(vm: EditorViewModel) {
     }
     Text(
         "Draw a line, an ellipse, a rectangle or a triangle, and keep the pen (or finger) still at the end: it snaps clean. " +
-            "Keep holding and move to size and turn it. Shift, the Modifier button or a finger on the screen makes it perfect: a circle, a square, a line at 45°.",
+            "Keep holding and move to size and turn it; once it's snapped, Shift, the Modifier button or a finger put on the screen makes it perfect: a circle, a square, a line at 45°.",
         color = Q.textDim, fontSize = 12.sp,
     )
     if (vm.quickShapeOn) {

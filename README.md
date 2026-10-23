@@ -315,14 +315,14 @@ the list; the button shows the one you used last.
   its color**. The hand button under the brush sliders (or View → Fingers paint) lets fingers paint again. Touches are ignored while the pen is near
   the screen, so your hand can rest on it, and a pen stroke can't be turned into a pinch. All in Settings →
   Pen and drawing, including the **pressure curve**.
-- **Draw and hold (QuickShape)**: draw a line, a few straight lines, an ellipse, a rectangle or a triangle
-  and keep the pen (or finger) still at the end for a moment: the stroke snaps to that shape, drawn again
-  with the same brush at its usual pressure. Keep holding and move to size and turn it (a line's end follows
-  the pen). **Shift**, the Modifier button or **a finger on the screen** makes it perfect: a circle, a square,
+- **Draw and hold (QuickShape)**: draw a line, a few straight lines, an arc, an ellipse, a rectangle or a
+  triangle and keep the pen (or finger) still at the end for a moment: the stroke snaps to that shape, drawn
+  again with the same brush at its usual pressure. Keep holding and move to size and turn it (a line's end
+  follows the pen). Once it's snapped, **Shift**, the Modifier button or **a finger put on the screen** makes it perfect: a circle, a square,
   an even triangle, lines in 45° steps (shapes then turn in 15° steps). Lift to keep it; undo takes it away.
   Settings → Pen and drawing turns it off and sets how long to hold.
 - **ColorDrop**: drag the foreground (or background) color sideways off its swatch onto the picture and let
-  go: the area there fills with it, like the paint bucket (on the layer you're on). A bar at the top then
+  go: the area there fills with it, like the paint bucket (on the layer you're on). A bar at the bottom then
   shows the **tolerance**: slide it and the fill is done again taking in more or fewer colors; Done (or doing
   anything else) puts it away.
 - **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it

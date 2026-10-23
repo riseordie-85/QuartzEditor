@@ -28,7 +28,18 @@ class QuickShapeHold(
     val azimuth: Float,
     /** Shown as made perfect. */
     var perfect: Boolean = false,
-)
+) {
+    /** Where the pen was when the shape was last drawn (canvas pixels), to skip moves too small to matter. */
+    var lastX = grab.x
+    var lastY = grab.y
+}
+
+/** Forgets the snapped shape and the points it was fitted from (a stroke ended or was dropped). */
+internal fun EditorViewModel.resetQuickShape() {
+    quickShape = null
+    strokePoints.clear()
+    strokeRemake = null
+}
 
 /** The stroke under way could snap to a shape now (when it's held). */
 internal val EditorViewModel.quickShapeReady: Boolean
@@ -41,8 +52,9 @@ internal val EditorViewModel.quickShapeReady: Boolean
 fun EditorViewModel.quickShapeSnap(perfect: Boolean): Boolean {
     if (!quickShapeReady) return false
     val pts = strokePoints.map { PointF(it[0], it[1]) }
-    val shape = ShapeFit.fit(pts, false) ?: return false
-    val perfectShape = ShapeFit.fit(pts, true)?.takeIf { it.closed == shape.closed }
+    // (Very short strokes, on the screen, aren't shapes: a shaky end of a dab when zoomed out)
+    val shape = ShapeFit.fit(pts, minLength = 24f / scale) ?: return false
+    val perfectShape = ShapeFit.perfect(pts, shape).takeIf { it.closed == shape.closed && it !== shape }
     // Drawn evenly, with the stroke's typical pressure (not the light start and lift)
     val ps = strokePoints.map { it[2] }.sorted()
     val pressure = ps[ps.size / 2]
@@ -67,6 +79,10 @@ fun EditorViewModel.quickShapeSnap(perfect: Boolean): Boolean {
 fun EditorViewModel.quickShapeMove(x: Float, y: Float, perfect: Boolean) {
     val h = quickShape ?: return
     val usePerfect = perfect && h.perfectShape != null
+    // Moves under half a screen pixel don't change anything you'd see
+    if (usePerfect == h.perfect && hypot(x - h.lastX, y - h.lastY) * scale < 0.5f) return
+    h.lastX = x
+    h.lastY = y
     val base = if (usePerfect) h.perfectShape!! else h.shape
     h.perfect = usePerfect
     val out: ShapeFit.Result = if (!base.closed && base.kind != "arc") {
@@ -107,8 +123,11 @@ fun EditorViewModel.quickShapeMove(x: Float, y: Float, perfect: Boolean) {
 /** The stroke drawn again from scratch, along [shape]. */
 private fun EditorViewModel.redrawShape(h: QuickShapeHold, shape: ShapeFit.Result) {
     val remake = strokeRemake ?: return
+    // (Only while the brush stroke it came from is still under way)
+    if (stroke == null || retouch != null || strokeHeals != null) return
     val s = remake(shape.closed)
-    val line = ShapeFit.dense(shape, (s.size * 0.1f).coerceIn(1f, 6f))
+    // The stroke spaces its own dabs between the corners
+    val line = if (shape.closed) shape.points + shape.points.first() else shape.points
     for (p in line) s.addPoint(p.x, p.y, h.pressure, h.tilt, h.azimuth)
     stroke = s
     doc?.invalidate()

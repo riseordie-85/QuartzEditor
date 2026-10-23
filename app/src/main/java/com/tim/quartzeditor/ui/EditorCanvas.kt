@@ -58,6 +58,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
@@ -206,15 +207,19 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
 
     // The view: a square bigger than the screen (its diagonal), so turned it still covers it. It's
     // turned as a whole, so everything in it (and every touch) works in its own straight coordinates.
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(Color(vm.canvasColor))) {
+    // ColorDrop: the view's coordinates and the part of it that shows (the view is bigger than the screen)
+    val viewCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(2) }
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(Color(vm.canvasColor)).onGloballyPositioned { viewCoords[1] = it }) {
     val sw = constraints.maxWidth.toFloat()
     val sh = constraints.maxHeight.toFloat()
     val side = kotlin.math.ceil(kotlin.math.hypot(sw, sh)).toInt().coerceAtLeast(1)
     androidx.compose.runtime.SideEffect { vm.setViewSize(vm.viewW, vm.viewH, sw, sh) }
     // ColorDrop: where a color let go of over the screen lands in the view (turned with it)
-    val viewCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
     androidx.compose.runtime.DisposableEffect(vm) {
-        vm.canvasViewFromWindow = { w -> viewCoords[0]?.takeIf { it.isAttached }?.windowToLocal(w) }
+        vm.canvasViewFromWindow = { w ->
+            val shown = viewCoords[1]?.takeIf { it.isAttached }?.boundsInWindow()
+            if (shown == null || !shown.contains(w)) null else viewCoords[0]?.takeIf { it.isAttached }?.windowToLocal(w)
+        }
         onDispose { vm.canvasViewFromWindow = null }
     }
     Box(
@@ -505,6 +510,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var holdT = t0
                         var holdTried = false
                         val holdSlop = 6.dp.toPx()
+                        // Touches seen before the stroke snapped (a hand settling on the screen): only a finger put down after makes it perfect
+                        val beforeSnap = HashSet<PointerId>()
                         // Clone Stamp: Shift + tap (or Pick source, then a tap) sets where it copies from, and
                         // Alt keeps the stroke straight; every other brush is straight with Shift
                         val cloning = tool == Tool.RETOUCH && vm.retouchKind == com.tim.quartzeditor.engine.RetouchKind.CLONE
@@ -554,7 +561,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
                             if (ev == null && mode == GestureMode.STROKE) {
                                 holdTried = true
-                                vm.quickShapeSnap(perfect = vm.shiftOn)
+                                vm.quickShapeSnap(perfect = false)
                                 continue
                             }
                             if (ev == null) {
@@ -695,8 +702,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     if (navTravel > slop || abs(totalZoom - 1f) > 0.06f) moved = true
                                 }
                                 GestureMode.STROKE -> {
-                                    // Another finger on the screen (not a resting hand): a snapped shape goes perfect
-                                    val extraFinger = ev.changes.any { it.pressed && it.id != down.id && it.id !in resting && !it.isPen }
+                                    // Another finger put on the screen after it snapped (not a resting hand): the shape goes perfect
+                                    if (vm.quickShape == null) ev.changes.forEach { if (it.pressed) beforeSnap.add(it.id) }
+                                    val extraFinger = vm.quickShape != null && ev.changes.any { it.pressed && it.id != down.id && it.id !in resting && it.id !in beforeSnap && !it.isPen }
                                     // Held still (pens jiggle a little, so "still" is within a few pixels)
                                     if (main != null && (main.position - holdPos).getDistance() > holdSlop) {
                                         holdPos = main.position
@@ -715,7 +723,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         cursor = main.position
                                     } else if (!holdTried && now - holdT >= vm.quickShapeDelay && vm.quickShapeReady && !straightOn()) {
                                         holdTried = true
-                                        vm.quickShapeSnap(perfect = vm.shiftOn || extraFinger)
+                                        vm.quickShapeSnap(perfect = false)
                                         cursor = main.position
                                     } else if (straightOn()) {
                                         // Straight: along 0°, 45° or 90° from where it started

@@ -44,6 +44,7 @@ fun EditorViewModel.onBlockedStroke() {
  * possible. [pen] is the pen's pressure and tilt there (null for a finger).
  */
 fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boolean {
+    resetQuickShape()
     // Smoothing: the brush trails behind on a string (its length grows with the setting; on the
     // screen, so it feels the same at any zoom)
     smoother = currentBrush.smoothing.takeIf { it > 0.001f }?.let {
@@ -73,15 +74,15 @@ fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boo
     val bg = background
     val sel = d.selection
     val dyn = strokeDynamics(b, pen != null)
+    // (The same random variation each time it's drawn again, so a held shape doesn't shimmer)
+    val seed = System.nanoTime()
     val remake = { closed: Boolean ->
         // (A closed shape has no ends to taper)
-        StrokeSession(layer, target, erase, fg, bg, b.opacity, b.tip, b.size, b.softness, sel, if (closed) dyn.copy(taperStart = 0f, taperEnd = 0f) else dyn, b.style, customTip = b.customTip)
+        StrokeSession(layer, target, erase, fg, bg, b.opacity, b.tip, b.size, b.softness, sel, if (closed) dyn.copy(taperStart = 0f, taperEnd = 0f) else dyn, b.style, seed = seed, customTip = b.customTip)
     }
     val s = remake(false)
     s.addPoint(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f)
     strokeRemake = remake
-    quickShape = null
-    strokePoints.clear()
     strokePoints.add(floatArrayOf(x, y, pen?.pressure ?: 1f, pen?.tilt ?: 0f, pen?.azimuth ?: 0f))
     stroke = s
     d.invalidate()
@@ -142,12 +143,8 @@ private fun EditorViewModel.addStrokePoint(x: Float, y: Float, pen: PenSample?) 
 
 fun EditorViewModel.endStroke() {
     // A snapped shape is done as it is
-    if (quickShape != null) {
-        quickShape = null
-        smoother = null
-    }
-    strokePoints.clear()
-    strokeRemake = null
+    if (quickShape != null) smoother = null
+    resetQuickShape()
     // Smoothing: the line catches up to where the pen lifted
     smoother?.let { sm ->
         smoother = null
@@ -183,9 +180,7 @@ fun EditorViewModel.endStroke() {
 /** Drops a stroke that turned out to be the start of a two-finger gesture. */
 fun EditorViewModel.cancelStroke() {
     smoother = null
-    quickShape = null
-    strokePoints.clear()
-    strokeRemake = null
+    resetQuickShape()
     cancelRetouch()
     strokeHeals = null
     stroke = null

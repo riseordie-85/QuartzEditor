@@ -19,10 +19,11 @@ import kotlin.math.sqrt
 object ShapeFit {
     class Result(val points: List<PointF>, val closed: Boolean, val kind: String)
 
-    /** The shape [pts] look like (null: none of them); [perfect] makes that same shape perfect. */
-    fun fit(pts: List<PointF>, perfect: Boolean): Result? {
-        val r = fitLoose(pts) ?: return null
-        if (!perfect) return r
+    /** The shape [pts] look like (null: none of them, or the stroke is shorter than [minLength]). */
+    fun fit(pts: List<PointF>, minLength: Float = 16f): Result? = fitLoose(pts, minLength)
+
+    /** [r] (fitted to [pts]) made perfect: a circle, a square, an even triangle, a line at 45° steps. */
+    fun perfect(pts: List<PointF>, r: Result): Result {
         return when (r.kind) {
             "line" -> openShape(pts, 1f, true)?.takeIf { it.kind == "line" } ?: r
             "ellipse" -> ellipse(pts, true) ?: r
@@ -32,11 +33,11 @@ object ShapeFit {
         }
     }
 
-    private fun fitLoose(pts: List<PointF>): Result? {
+    private fun fitLoose(pts: List<PointF>, minLength: Float): Result? {
         if (pts.size < 3) return null
         var length = 0f
         for (i in 1 until pts.size) length += dist(pts[i - 1], pts[i])
-        if (length < 16f) return null
+        if (length < max(16f, minLength)) return null
         val minX = pts.minOf { it.x }
         val maxX = pts.maxOf { it.x }
         val minY = pts.minOf { it.y }
@@ -73,6 +74,30 @@ object ShapeFit {
         if (arc != null && arcErr < diag * 0.03f && arcErr <= linesErr * 1.15f) return arc
         if (linesErr < diag * 0.03f) return Result(simple, false, "lines")
         return null
+    }
+
+    /** A closed outline's corners without the ones it goes almost straight through (turning under 25°). */
+    private fun dropStraight(loop: List<PointF>): List<PointF> {
+        var p = loop
+        while (p.size > 3) {
+            var removed = false
+            for (i in p.indices) {
+                val a = p[(i - 1 + p.size) % p.size]
+                val b = p[i]
+                val c = p[(i + 1) % p.size]
+                val a1 = atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
+                val a2 = atan2((c.y - b.y).toDouble(), (c.x - b.x).toDouble())
+                var d = abs(a2 - a1)
+                if (d > Math.PI) d = 2 * Math.PI - d
+                if (d < Math.toRadians(25.0)) {
+                    p = p.filterIndexed { k, _ -> k != i }
+                    removed = true
+                    break
+                }
+            }
+            if (!removed) break
+        }
+        return p
     }
 
     /** Real corners (each turns 40° or more) between sides that aren't tiny: not a curve cut into pieces. */
@@ -150,7 +175,8 @@ object ShapeFit {
     private fun closedShape(pts: List<PointF>, diag: Float, perfect: Boolean): Result? {
         val ell = ellipse(pts, perfect)
         val rect = rectangle(pts, perfect)
-        val loop = simplify(pts + pts.first(), diag * 0.09f).dropLast(1)
+        // Its corners (where it started may be partway along a side: not a corner)
+        val loop = dropStraight(simplify(pts + pts.first(), diag * 0.09f).dropLast(1))
         val tri = if (loop.size == 3) triangle(loop, perfect) else null
         val candidates = listOfNotNull(
             ell?.let { it to averageError(pts, it.points, true) },
@@ -162,18 +188,32 @@ object ShapeFit {
     }
 
     private fun ellipse(pts: List<PointF>, perfect: Boolean): Result? {
-        val n = pts.size
-        val cx = pts.sumOf { it.x.toDouble() }.toFloat() / n
-        val cy = pts.sumOf { it.y.toDouble() }.toFloat() / n
+        // Each point counts by how much of the outline it stands for (hands slow down round the
+        // tight ends, which would otherwise count more)
+        val wts = DoubleArray(pts.size) { i ->
+            val a = pts[if (i == 0) pts.lastIndex else i - 1]
+            val b = pts[if (i == pts.lastIndex) 0 else i + 1]
+            (dist(a, pts[i]) + dist(pts[i], b)).toDouble() / 2 + 1e-3
+        }
+        val n = wts.sum()
+        var cxd = 0.0
+        var cyd = 0.0
+        for (i in pts.indices) {
+            cxd += pts[i].x * wts[i]
+            cyd += pts[i].y * wts[i]
+        }
+        val cx = (cxd / n).toFloat()
+        val cy = (cyd / n).toFloat()
         var sxx = 0.0
         var syy = 0.0
         var sxy = 0.0
-        for (p in pts) {
+        for (i in pts.indices) {
+            val p = pts[i]
             val dx = (p.x - cx).toDouble()
             val dy = (p.y - cy).toDouble()
-            sxx += dx * dx
-            syy += dy * dy
-            sxy += dx * dy
+            sxx += dx * dx * wts[i]
+            syy += dy * dy * wts[i]
+            sxy += dx * dy * wts[i]
         }
         sxx /= n
         syy /= n
@@ -184,13 +224,14 @@ object ShapeFit {
         // Points round an ellipse spend about half their time at each axis: radius = √(2 × variance)
         var vx = 0.0
         var vy = 0.0
-        for (p in pts) {
+        for (i in pts.indices) {
+            val p = pts[i]
             val dx = (p.x - cx).toDouble()
             val dy = (p.y - cy).toDouble()
             val u = dx * c + dy * s
             val v = -dx * s + dy * c
-            vx += u * u
-            vy += v * v
+            vx += u * u * wts[i]
+            vy += v * v * wts[i]
         }
         var rx = sqrt(2 * vx / n).toFloat()
         var ry = sqrt(2 * vy / n).toFloat()
@@ -319,19 +360,5 @@ object ShapeFit {
         if (l2 < 1e-6f) return dist(p, a)
         val t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / l2).coerceIn(0f, 1f)
         return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
-    }
-
-    /** The shape as points about [step] pixels apart along it (and back to the start when it's closed). */
-    fun dense(r: Result, step: Float = 2f): List<PointF> {
-        val path = if (r.closed) r.points + r.points.first() else r.points
-        val out = ArrayList<PointF>()
-        out.add(path.first())
-        for (i in 1 until path.size) {
-            val a = path[i - 1]
-            val b = path[i]
-            val n = max(1, (dist(a, b) / step).roundToInt())
-            for (k in 1..n) out.add(PointF(a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n))
-        }
-        return out
     }
 }

@@ -67,6 +67,8 @@ internal fun PressureCurveEditor(vm: EditorViewModel) {
                     val hs = vm.penCurve.handles
                     val d0 = hypot(pad + hs[0] * w - down.position.x, pad + (1 - hs[1]) * h - down.position.y)
                     val d1 = hypot(pad + hs[2] * w - down.position.x, pad + (1 - hs[3]) * h - down.position.y)
+                    // Only near a handle: elsewhere the touch scrolls the page
+                    if (minOf(d0, d1) > 32.dp.toPx()) return@awaitEachGesture
                     dragging = if (d0 <= d1) 0 else 1
                     down.consume()
                     while (true) {
