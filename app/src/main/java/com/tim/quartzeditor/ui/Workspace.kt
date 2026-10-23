@@ -64,6 +64,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Navigation
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlin.math.roundToInt
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -214,6 +218,9 @@ fun Workspace(vm: EditorViewModel) {
                             }
                             if (vm.online) Item("ComfyUI…", Icons.Outlined.Cloud) { comfyOpen = true }
                             Page("View", Icons.Outlined.Visibility) {
+                                Item("Lock canvas turning", checked = vm.rotationLocked) { vm.toggleRotationLock() }
+                                if (vm.normalizedRotation() != 0f) Item("Straighten canvas") { vm.straightenView() }
+                                if (vm.penSeen) Item("Fingers paint (not just the pen)", checked = !vm.penFingersNavigate) { vm.toggleFingerPainting() }
                                 Item("Snap to center, edges and guides", checked = vm.snapOn) { vm.toggleSnap() }
                                 Item("Checkerboard for see-through", checked = vm.showChecker) { vm.toggleChecker() }
                                 Item("Modifier button (Shift / Alt)", checked = vm.showModifier) {
@@ -260,7 +267,32 @@ fun Workspace(vm: EditorViewModel) {
                     RoundButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.enhance != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
                     RoundButton(Icons.AutoMirrored.Outlined.Redo, "Redo (three-finger tap)", enabled = h.canRedo) { vm.redo() }
                     HistoryButton(vm)
-                    RoundButton(Icons.Outlined.FitScreen, "Fit to screen (or pinch in quickly)") { vm.fit() }
+                    RoundButton(Icons.Outlined.FitScreen, "Fit to screen, straight (or pinch in quickly)") { vm.fit() }
+                }
+                // The canvas is turned: how far (tap to straighten it)
+                val turned = vm.normalizedRotation()
+                if (turned != 0f) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 56.dp, end = 6.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Q.toolbar.copy(alpha = 0.9f))
+                            .clickable(onClickLabel = "Straighten the canvas") { vm.straightenView() }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Navigation, contentDescription = null, tint = Q.text,
+                            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = turned },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("${turned.roundToInt()}°", color = Q.text, fontSize = 13.sp)
+                        if (vm.rotationLocked) {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Outlined.Lock, contentDescription = "Turning locked", tint = Q.textDim, modifier = Modifier.size(14.dp))
+                        }
+                    }
                 }
 
                 // Rulers (under the buttons)

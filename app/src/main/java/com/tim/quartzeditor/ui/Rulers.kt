@@ -58,7 +58,8 @@ val RULER = 20.dp
 
 @Composable
 fun Rulers(vm: EditorViewModel, modifier: Modifier = Modifier) {
-    if (!vm.showRulers || vm.doc == null) return
+    // (Not on a turned canvas: its edges don't line up with them)
+    if (!vm.showRulers || vm.doc == null || vm.normalizedRotation() != 0f) return
     val density = LocalDensity.current
     val thick = with(density) { RULER.toPx() }
     Box(modifier.fillMaxSize()) {
@@ -87,7 +88,8 @@ fun Rulers(vm: EditorViewModel, modifier: Modifier = Modifier) {
 /** Dragging out of a ruler: a new guide follows the finger and is placed where it's let go on the picture. */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.guideDrag(vm: EditorViewModel, vertical: Boolean, baseX: Float, baseY: Float, thick: Float) {
     var last = Offset.Zero
-    fun canvasPos(p: Offset): Float = if (vertical) (p.x + baseX - vm.offsetX) / vm.scale else (p.y + baseY - vm.offsetY) / vm.scale
+    // (The view's coordinates start off the screen: it's bigger, so it covers the screen when turned)
+    fun canvasPos(p: Offset): Float = if (vertical) (p.x + baseX + vm.viewPadX - vm.offsetX) / vm.scale else (p.y + baseY + vm.viewPadY - vm.offsetY) / vm.scale
     detectDragGestures(
         onDragStart = { p ->
             last = p
@@ -116,7 +118,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.guideDra
 private fun DrawScope.drawRuler(vm: EditorViewModel, horizontal: Boolean, offsetPx: Float, startPx: Float) {
     val s = vm.scale
     if (s <= 0f) return
-    val origin = if (horizontal) vm.offsetX else vm.offsetY - offsetPx
+    val origin = if (horizontal) vm.offsetX - vm.viewPadX else vm.offsetY - vm.viewPadY - offsetPx
     val length = if (horizontal) size.width else size.height
     // A labeled tick every 1, 2 or 5 × 10ⁿ canvas pixels, at least ~64 dp apart
     val minGap = 64.dp.toPx() / s

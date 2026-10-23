@@ -222,14 +222,22 @@ the list; the button shows the one you used last.
   takes everything you see. **Paste** puts it on a new layer right where it came from (in the middle if
   that's off the canvas) and picks Move to place it; it pastes pictures copied in other apps too. Cut takes
   the selected pixels away (or the whole layer). Also New layer via copy / cut, Select all, Deselect.
-- One finger: the tool. Two fingers: move and pinch-zoom. **Two-finger tap: undo. Three-finger tap: redo.**
+- One finger: the tool. Two fingers: move, pinch-zoom and **twist to turn the canvas** (it snaps straight near
+  0°/90°/180°/270°; a quick pinch in fits it on the screen, straight). While it's turned, a chip at the top
+  right shows the angle (tap: straighten). View → Lock canvas turning (or Settings → Pen) stops two fingers
+  turning it. Rulers hide while it's turned. **Two-finger tap: undo. Three-finger tap: redo.**
+- **Smoothing and taper** (the sliders button under a brush's sliders, for the brush, eraser and retouch
+  brushes each): Smoothing makes the line trail the pen or finger on a "string" so wobbles smooth out (it
+  catches up when you lift). Taper at the start / end makes strokes grow from a point and thin out to one,
+  with a pen or a finger (the end thins out when you lift; short strokes taper over their second half).
 - **A pen (stylus)** works like Photoshop on a tablet. **Pressure** changes the brush's and eraser's size
   (down to a smallest size you set) and, if you want, its opacity; for the retouch brushes it changes the strength.
   Each brush has small pen switches under its Size and Opacity sliders; they appear once you've used a pen.
   **Tilt** the pen to stretch the brush along the way it leans, like the side of a pencil. The **eraser
   end** erases with any tool, using the eraser's settings. The **side button** picks a color while held, by
   default; it can erase or undo instead. Hovering shows the brush's outline. Once a pen's been used,
-  one finger moves the view and two zoom, instead of painting. Touches are ignored while the pen is near
+  one finger moves the view and two zoom, instead of painting, and **holding a finger on the picture picks
+  its color**. The hand button under the brush sliders (or View → Fingers paint) lets fingers paint again. Touches are ignored while the pen is near
   the screen, so your hand can rest on it, and a pen stroke can't be turned into a pinch. All in Settings → Pen.
 - **Modifier button** (the floating emblem button; drag its grip to move it; ☰ → Modifier button turns it off): hold it
   for **Shift** (the button fills with your accent color), slide out past its edge for **Alt** (the emblem turns the accent color), double-tap to keep Shift on. A keyboard's Shift and

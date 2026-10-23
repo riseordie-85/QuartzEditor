@@ -44,6 +44,11 @@ fun EditorViewModel.onBlockedStroke() {
  * possible. [pen] is the pen's pressure and tilt there (null for a finger).
  */
 fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boolean {
+    // Smoothing: the brush trails behind on a string (its length grows with the setting; on the
+    // screen, so it feels the same at any zoom)
+    smoother = currentBrush.smoothing.takeIf { it > 0.001f }?.let {
+        StrokeSmoother(x, y, 150f * Math.pow(it.toDouble(), 1.3).toFloat() / scale)
+    }
     if (paintTool == Tool.RETOUCH) {
         if (pendingFx != null) {
             applyFx()
@@ -71,8 +76,44 @@ fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boo
     return true
 }
 
+/**
+ * The brush on a string: it only moves once the pen is more than [radius] (canvas pixels) away, and
+ * then just enough to keep up, so wobbles smaller than the string never reach the line.
+ */
+internal class StrokeSmoother(var x: Float, var y: Float, private val radius: Float) {
+    /** Where the pen really is, and how it's held there. */
+    var rawX = x
+    var rawY = y
+    var rawPen: PenSample? = null
+
+    /** The pen moved to ([px], [py]): true when the brush moved too (to ([x], [y])). */
+    fun pull(px: Float, py: Float, pen: PenSample?): Boolean {
+        rawX = px
+        rawY = py
+        rawPen = pen
+        val dx = px - x
+        val dy = py - y
+        val d = kotlin.math.hypot(dx, dy)
+        if (d <= radius) return false
+        val k = (d - radius) / d
+        x += dx * k
+        y += dy * k
+        return true
+    }
+}
+
 /** The stroke's next point; [pen] as for [beginStroke]. */
 fun EditorViewModel.strokeTo(x: Float, y: Float, pen: PenSample? = null) {
+    val sm = smoother
+    if (sm != null) {
+        if (!sm.pull(x, y, pen)) return
+        addStrokePoint(sm.x, sm.y, pen)
+    } else {
+        addStrokePoint(x, y, pen)
+    }
+}
+
+private fun EditorViewModel.addStrokePoint(x: Float, y: Float, pen: PenSample?) {
     retouch?.let {
         it.addPoint(x, y, retouchPressure(pen?.pressure ?: 1f))
         doc?.invalidate()
@@ -85,6 +126,11 @@ fun EditorViewModel.strokeTo(x: Float, y: Float, pen: PenSample? = null) {
 }
 
 fun EditorViewModel.endStroke() {
+    // Smoothing: the line catches up to where the pen lifted
+    smoother?.let { sm ->
+        smoother = null
+        if (kotlin.math.hypot(sm.rawX - sm.x, sm.rawY - sm.y) > 0.5f) addStrokePoint(sm.rawX, sm.rawY, sm.rawPen)
+    }
     if (retouch != null) {
         endRetouch()
         return
@@ -100,6 +146,8 @@ fun EditorViewModel.endStroke() {
         return
     }
     s.lastPoint?.let { lastStrokeEnd = Triple(s.layer.id, it.x, it.y) }
+    // The end taper: the last stretch thins out now that it's known where the stroke ends
+    s.finish()
     val change = s.commit()
     stroke = null
     if (change != null) {
@@ -112,6 +160,7 @@ fun EditorViewModel.endStroke() {
 
 /** Drops a stroke that turned out to be the start of a two-finger gesture. */
 fun EditorViewModel.cancelStroke() {
+    smoother = null
     cancelRetouch()
     strokeHeals = null
     stroke = null

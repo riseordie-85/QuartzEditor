@@ -150,13 +150,23 @@ internal val PointerInputChange.isPen: Boolean
 internal fun EditorViewModel.penPressure(raw: Float): Float = raw.coerceIn(0f, 1f).pow(penCurve.power)
 
 /** The pen's state at point [k] of [m] of [change] (its historical points, then itself); null for a finger. */
-internal fun EditorViewModel.penSample(change: PointerInputChange, k: Int, m: Int, time: Long): PenSample? =
-    if (!change.isPen) null else pen.sample(k, m, time) { penPressure(it) }
+internal fun EditorViewModel.penSample(change: PointerInputChange, k: Int, m: Int, time: Long): PenSample? {
+    if (!change.isPen) return null
+    val s = pen.sample(k, m, time) { penPressure(it) } ?: return null
+    // The pen leans a way on the screen; on a turned canvas that's a different way on the picture
+    if (rotation == 0f) return s
+    return PenSample(s.pressure, s.tilt, s.azimuth - Math.toRadians(rotation.toDouble()).toFloat())
+}
 
-/** What a pen does to a brush or eraser stroke with [b]'s settings (nothing for a finger). */
-internal fun EditorViewModel.strokeDynamics(b: BrushSettings, byPen: Boolean): StrokeDynamics =
-    if (!byPen) StrokeDynamics.NONE
-    else StrokeDynamics(minSize = if (b.pressureSize) penMinSize.coerceIn(0.01f, 1f) else null, opacity = b.pressureOpacity, tilt = penTilt)
+/** How long a taper of [t] (0..1) is on a brush [size] pixels across (canvas pixels). */
+internal fun taperLength(t: Float, size: Float): Float = if (t <= 0f) 0f else t * (size * 6f + 80f)
+
+/** What a stroke with [b]'s settings does as it goes: its tapers, and (by pen) pressure and tilt. */
+internal fun EditorViewModel.strokeDynamics(b: BrushSettings, byPen: Boolean): StrokeDynamics {
+    val taper = StrokeDynamics(taperStart = taperLength(b.taperStart, b.size), taperEnd = taperLength(b.taperEnd, b.size))
+    return if (!byPen) taper
+    else taper.copy(minSize = if (b.pressureSize) penMinSize.coerceIn(0.01f, 1f) else null, opacity = b.pressureOpacity, tilt = penTilt)
+}
 
 /** The retouch strength the pen's pressure gives (full when pressure doesn't set it). */
 internal fun EditorViewModel.retouchPressure(p: Float): Float = if (retouchBrush.pressureOpacity) p else 1f
@@ -171,6 +181,13 @@ internal fun EditorViewModel.notePenSeen() {
 
 /** Fingers move the view instead of painting. */
 internal val EditorViewModel.fingersNavigate: Boolean get() = penSeen && penFingersNavigate
+
+/** Fingers paint, or move the view (once a pen's been used). */
+internal fun EditorViewModel.toggleFingerPainting() {
+    penFingersNavigate = !penFingersNavigate
+    savePenPrefs()
+    toast(if (penFingersNavigate) "Fingers move the view; the pen paints" else "Fingers paint too")
+}
 
 /** Saves the pen settings. */
 internal fun EditorViewModel.savePenPrefs() {

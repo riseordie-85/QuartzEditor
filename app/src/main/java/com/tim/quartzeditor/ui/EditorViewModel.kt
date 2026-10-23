@@ -94,6 +94,11 @@ data class BrushSettings(
     val pressureSize: Boolean = true,
     /** A pen's pressure changes the opacity (the strength, for the retouch brushes). */
     val pressureOpacity: Boolean = false,
+    /** 0..1: how much the line trails the pen or finger to smooth out wobbles. */
+    val smoothing: Float = 0f,
+    /** 0..1: how long the stroke takes to grow to full size at its start, and to thin out at its end. */
+    val taperStart: Float = 0f,
+    val taperEnd: Float = 0f,
 )
 
 /**
@@ -423,6 +428,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var retouch: com.tim.quartzeditor.engine.RetouchSession? = null
         internal set
 
+    /** The stroke under way, smoothed: where its brush trails behind the pen (null = not smoothed). */
+    internal var smoother: StrokeSmoother? = null
+
     /** A brush, eraser or retouch stroke is under way. */
     val stroking: Boolean get() = stroke != null || retouch != null
     /** The stroke under way paints where to heal or remove (not real paint). */
@@ -512,9 +520,22 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var scale by mutableFloatStateOf(1f)
     var offsetX by mutableFloatStateOf(0f)
     var offsetY by mutableFloatStateOf(0f)
+    /**
+     * How far the view is turned (degrees, clockwise), around the middle of the view. The view is a
+     * square bigger than the screen (so turned, it still covers it), turned as a whole: everything
+     * above is in its own, unturned coordinates.
+     */
+    var rotation by mutableFloatStateOf(0f)
+    /** Two fingers don't turn the canvas. */
+    var rotationLocked by mutableStateOf(prefs.getBoolean("rotationLocked", false))
     var viewW = 0f
         private set
     var viewH = 0f
+        private set
+    /** The part of the view on the screen (it's centered in the view). */
+    var screenW = 0f
+        private set
+    var screenH = 0f
         private set
     /** True once the view was fitted for this document. */
     private var fitted = false
@@ -677,7 +698,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ================================================================== viewport
 
-    fun setViewSize(w: Float, h: Float) {
+    /** The view is [w] × [h]; the screen shows the middle [sw] × [sh] of it. */
+    fun setViewSize(w: Float, h: Float, sw: Float = w, sh: Float = h) {
+        screenW = sw
+        screenH = sh
         if (w == viewW && h == viewH) return
         val first = viewW == 0f
         // Keep the point in the middle of the screen where it was
@@ -693,17 +717,66 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Scale that shows the whole canvas with a margin. */
     fun fitScale(): Float {
         val d = doc ?: return 1f
-        val m = min(viewW, viewH) * 0.06f
-        return min((viewW - 2 * m) / d.width, (viewH - 2 * m) / d.height).coerceAtLeast(0.01f)
+        val vw = if (screenW > 0f) screenW else viewW
+        val vh = if (screenH > 0f) screenH else viewH
+        val m = min(vw, vh) * 0.06f
+        return min((vw - 2 * m) / d.width, (vh - 2 * m) / d.height).coerceAtLeast(0.01f)
     }
 
+    /** Shows the whole canvas, straight. */
     fun fit() {
         val d = doc ?: return
         if (viewW <= 0f) return
         scale = fitScale()
         offsetX = (viewW - d.width * scale) / 2f
         offsetY = (viewH - d.height * scale) / 2f
+        rotation = 0f
         fitted = true
+    }
+
+    /** How far the view's coordinates are from the screen's (the view is bigger, centered). */
+    val viewPadX: Float get() = (viewW - screenW) / 2f
+    val viewPadY: Float get() = (viewH - screenH) / 2f
+
+    /**
+     * Turns the view by [deg] (clockwise) keeping the picture under view point ([cx], [cy]) where it
+     * is on the screen.
+     */
+    fun rotateView(deg: Float, cx: Float, cy: Float) {
+        if (deg == 0f) return
+        val a = Math.toRadians(deg.toDouble())
+        val c = kotlin.math.cos(a).toFloat()
+        val sn = kotlin.math.sin(a).toFloat()
+        val mx = viewW / 2f
+        val my = viewH / 2f
+        val vx = cx - mx
+        val vy = cy - my
+        // Where that point has to be in the view's own coordinates once it's turned further
+        val nx = mx + c * vx + sn * vy
+        val ny = my - sn * vx + c * vy
+        offsetX += nx - cx
+        offsetY += ny - cy
+        rotation += deg
+        fitted = true
+    }
+
+    /** Turns the view back to straight, keeping the middle of the screen where it is. */
+    fun straightenView() {
+        rotateView(-normalizedRotation(), viewW / 2f, viewH / 2f)
+        rotation = 0f
+    }
+
+    /** The turn as -180..180 degrees. */
+    fun normalizedRotation(): Float {
+        var r = rotation % 360f
+        if (r > 180f) r -= 360f
+        if (r <= -180f) r += 360f
+        return r
+    }
+
+    fun toggleRotationLock() {
+        rotationLocked = !rotationLocked
+        prefs.edit().putBoolean("rotationLocked", rotationLocked).apply()
     }
 
     /** Zooms by [factor] around screen point ([fx], [fy]) and pans by ([dx], [dy]). */
@@ -908,6 +981,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         opacity = prefs.getFloat("$key.opacity", def.opacity),
         pressureSize = prefs.getBoolean("$key.pSize", def.pressureSize),
         pressureOpacity = prefs.getBoolean("$key.pOpacity", def.pressureOpacity),
+        smoothing = prefs.getFloat("$key.smooth", def.smoothing),
+        taperStart = prefs.getFloat("$key.taperIn", def.taperStart),
+        taperEnd = prefs.getFloat("$key.taperOut", def.taperEnd),
     )
 
     private fun saveBrush(key: String, b: BrushSettings) {
@@ -918,6 +994,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("$key.opacity", b.opacity)
             .putBoolean("$key.pSize", b.pressureSize)
             .putBoolean("$key.pOpacity", b.pressureOpacity)
+            .putFloat("$key.smooth", b.smoothing)
+            .putFloat("$key.taperIn", b.taperStart)
+            .putFloat("$key.taperOut", b.taperEnd)
             .apply()
     }
 

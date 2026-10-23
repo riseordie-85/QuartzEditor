@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
@@ -67,6 +69,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+/** Degrees two fingers turn before the canvas starts turning (so pinching doesn't turn it), and how near straight snaps. */
+private const val ROTATE_START = 10f
+private const val ROTATE_SNAP = 5f
 
 private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, PEN_MOVE, WARP, GUIDE, DEPTH, DONE }
 
@@ -180,6 +186,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         val fromS = vm.scale
         val fromX = vm.offsetX
         val fromY = vm.offsetY
+        // Turns back to straight the short way
+        val fromR = vm.normalizedRotation()
         val toS = vm.fitScale()
         val toX = (vm.viewW - d.width * toS) / 2f
         val toY = (vm.viewH - d.height * toS) / 2f
@@ -188,12 +196,25 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 vm.scale = fromS + (toS - fromS) * t
                 vm.offsetX = fromX + (toX - fromX) * t
                 vm.offsetY = fromY + (toY - fromY) * t
+                vm.rotation = fromR * (1f - t)
             }
             vm.fit()
         }
     }
 
-    Box(modifier.onSizeChanged { vm.setViewSize(it.width.toFloat(), it.height.toFloat()) }) {
+    // The view: a square bigger than the screen (its diagonal), so turned it still covers it. It's
+    // turned as a whole, so everything in it (and every touch) works in its own straight coordinates.
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(Color(vm.canvasColor))) {
+    val sw = constraints.maxWidth.toFloat()
+    val sh = constraints.maxHeight.toFloat()
+    val side = kotlin.math.ceil(kotlin.math.hypot(sw, sh)).toInt().coerceAtLeast(1)
+    androidx.compose.runtime.SideEffect { vm.setViewSize(vm.viewW, vm.viewH, sw, sh) }
+    Box(
+        Modifier
+            .requiredSize(with(density) { side.toDp() })
+            .graphicsLayer { rotationZ = vm.rotation }
+            .onSizeChanged { vm.setViewSize(it.width.toFloat(), it.height.toFloat(), sw, sh) }
+    ) {
         // The picture, in a layer of its own that keeps what it drew: when anything else on the
         // screen moves (the layers list scrolling, a panel sliding), it's shown as it is instead of
         // drawing every layer again. It's drawn again only when the picture or the view changes.
@@ -303,6 +324,11 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var moved = false
                         var navTravel = 0f
                         var totalZoom = 1f
+                        // Turning the canvas: how far the fingers have turned, and whether it's turning yet
+                        val rot0 = vm.rotation
+                        var rotTotal = 0f
+                        var rotating = false
+                        var rotSign = 1f
                         var lastPos = start
                         var longPressDone = false
                         var endTime = t0
@@ -489,6 +515,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             if (ev == null) {
                                 // Long press without moving
                                 longPressDone = true
+                                // A finger held on the picture while fingers don't paint: pick the color there
+                                if (fingerNav && (tool == Tool.BRUSH || tool == Tool.ERASER || tool == Tool.RETOUCH) && vm.isOnCanvas(start.x, start.y)) {
+                                    loupe = start to vm.sampleAt(startCx, startCy, commit = false)
+                                    lastPos = start
+                                    mode = GestureMode.EYEDROP
+                                    continue
+                                }
                                 // (Holding a pen point is the start of dragging it, not the menu)
                                 if (!vm.isOnCanvas(start.x, start.y) && penGrab < 0) {
                                     canvasMenuAt = start
@@ -593,6 +626,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                     val pan = ev.calculatePan()
                                     val c = ev.calculateCentroid(useCurrent = true)
                                     if (c != Offset.Unspecified) vm.transformView(zoom, c.x, c.y, pan.x, pan.y)
+                                    // Twisting turns the canvas (once it's clearly a twist), snapping to straight angles
+                                    if (!vm.rotationLocked && c != Offset.Unspecified) {
+                                        rotTotal += ev.calculateRotation()
+                                        if (!rotating && abs(rotTotal) > ROTATE_START) {
+                                            rotating = true
+                                            rotSign = if (rotTotal > 0f) 1f else -1f
+                                            moved = true
+                                        }
+                                        if (rotating) {
+                                            val raw = rot0 + rotTotal - rotSign * ROTATE_START
+                                            val straight = Math.round(raw / 90f) * 90f
+                                            val target = if (abs(raw - straight) < ROTATE_SNAP) straight else raw
+                                            vm.rotateView(target - vm.rotation, c.x, c.y)
+                                        }
+                                    }
                                     totalZoom *= zoom
                                     navTravel += pan.getDistance()
                                     if (navTravel > slop || abs(totalZoom - 1f) > 0.06f) moved = true
@@ -961,7 +1009,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             GestureMode.NAV -> when {
                                 !moved && duration < 350 && maxPointers == 2 -> vm.undo()
                                 !moved && duration < 350 && maxPointers >= 3 -> vm.redo()
+                                // A quick pinch in: the whole canvas, straight
                                 handoff == null && duration < 450 && totalZoom < 0.72f -> animateFit()
+                                rotating -> vm.rotation = vm.normalizedRotation()
                             }
                             else -> Unit
                         }
@@ -1319,6 +1369,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
     }
 }
 

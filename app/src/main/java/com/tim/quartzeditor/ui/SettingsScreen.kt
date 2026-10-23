@@ -184,6 +184,9 @@ private fun PenSettings(vm: EditorViewModel) {
             "Off: fingers paint too. Either way, touches are ignored while the pen is near the screen, so your hand can rest on it.",
         color = Q.textDim, fontSize = 12.sp,
     )
+    Spacer(Modifier.height(10.dp))
+    ToggleRow("Two fingers turn the canvas", !vm.rotationLocked) { vm.toggleRotationLock() }
+    Text("Twist to turn it (it snaps straight near 0°, 90°, 180°); a quick pinch in fits it on the screen, straight.", color = Q.textDim, fontSize = 12.sp)
     Spacer(Modifier.height(18.dp))
     Heading("Pressure")
     ChipRow(PenCurve.entries.map { it.label }, vm.penCurve.ordinal) {

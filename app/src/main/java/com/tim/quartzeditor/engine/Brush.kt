@@ -163,8 +163,11 @@ data class StrokeDynamics(
     val opacity: Boolean = false,
     /** Tilt stretches and turns the dab. */
     val tilt: Boolean = false,
+    /** How far (canvas pixels) the stroke grows from thin to full size where it starts, and thins out where it ends. */
+    val taperStart: Float = 0f,
+    val taperEnd: Float = 0f,
 ) {
-    val any: Boolean get() = minSize != null || opacity || tilt
+    val any: Boolean get() = minSize != null || opacity || tilt || taperStart > 0f || taperEnd > 0f
 
     companion object {
         val NONE = StrokeDynamics()
@@ -198,7 +201,7 @@ class StrokeSession(
     val softness: Float,
     /** Painting only reaches inside this (null = everywhere). */
     val selection: Selection? = null,
-    /** What a pen's pressure and tilt do (fingers send full pressure and no tilt). */
+    /** What a pen's pressure and tilt do, and the tapers (fingers send full pressure and no tilt). */
     val dynamics: StrokeDynamics = StrokeDynamics.NONE,
 ) {
     val buffer = TileGrid(alphaOnly = true)
@@ -216,6 +219,20 @@ class StrokeSession(
     private var carry = 0f
     private val spacing = max(1f, size * tip.spacing)
     private val rng = java.util.Random(size.toLong() * 31 + tip.ordinal)
+    /** How far the stroke has gone (layer pixels along the path). */
+    private var travelled = 0f
+
+    /** One dab as placed: redrawn thinner when the stroke ends with a taper. */
+    private class DabAt(val x: Float, val y: Float, val p: Float, val tilt: Float, val az: Float, val along: Float, val angle: Float)
+
+    /**
+     * With an end taper: the stroke as it is without its last stretch of dabs ([tailDabs], still
+     * drawn in [buffer] at full size), so the stretch can be drawn again thinning out when it ends.
+     */
+    private val base: TileGrid? = if (dynamics.taperEnd > 0f) TileGrid(alphaOnly = true) else null
+    private val baseCanvases = HashMap<Long, Canvas>()
+    private val tailDabs = ArrayDeque<DabAt>()
+    private var baseDabs = 0
 
     /** Canvas-space area the stroke has touched so far. */
     val dirty = RectF()
@@ -239,13 +256,13 @@ class StrokeSession(
         val y = cy - layer.y
         val p = pressure.coerceIn(0f, 1f)
         if (lastX.isNaN()) {
-            stamp(x, y, p, tilt, azimuth)
+            place(x, y, p, tilt, azimuth, 0f)
             lastX = x
             lastY = y
             lastP = p
             lastTilt = tilt
             lastAz = azimuth
-            carry = spacingAt(p)
+            carry = spacingAt(p, 0f)
             return
         }
         val dx = x - lastX
@@ -264,10 +281,11 @@ class StrokeSession(
         while (t <= len) {
             val f = t / len
             val pf = lastP + (p - lastP) * f
-            stamp(lastX + dx * f, lastY + dy * f, pf, lastTilt + (tilt - lastTilt) * f, lastAz + dAz * f)
-            t += spacingAt(pf)
+            place(lastX + dx * f, lastY + dy * f, pf, lastTilt + (tilt - lastTilt) * f, lastAz + dAz * f, travelled + t)
+            t += spacingAt(pf, travelled + t)
         }
         carry = t - len
+        travelled += len
         lastX = x
         lastY = y
         lastP = p
@@ -275,17 +293,75 @@ class StrokeSession(
         lastAz = azimuth
     }
 
+    /**
+     * The stroke is over: its end thins out over the end taper (the last stretch is drawn again,
+     * thinner toward the end). Called once, before [commit].
+     */
+    fun finish() {
+        val b = base ?: return
+        // A short stroke tapers over its second half (a tap stays a dot)
+        val len = min(dynamics.taperEnd, travelled * 0.5f)
+        if (tailDabs.isEmpty() || len < 1f) return
+        // The buffer goes back to the stroke without its last stretch, which is drawn again tapering
+        buffer.tiles.clear()
+        buffer.tiles.putAll(b.tiles)
+        canvases.clear()
+        canvases.putAll(baseCanvases)
+        dabCount = baseDabs
+        val endAt = travelled
+        for (d in tailDabs) {
+            val left = endAt - d.along
+            stamp(buffer, canvases, d.x, d.y, d.p, d.tilt, d.az, d.angle, taperFactor(d.along) * ease(left / len))
+        }
+        tailDabs.clear()
+    }
+
+    /** 0 → the taper's thin end, 1 → full size; eased so the point looks drawn, not cut. */
+    private fun ease(t: Float): Float {
+        val v = t.coerceIn(0f, 1f)
+        return 0.06f + 0.94f * (v * (2f - v))
+    }
+
+    /** How big a dab is at [along] pixels into the stroke, by the start taper alone (the end's is applied when it ends). */
+    private fun taperFactor(along: Float): Float = if (dynamics.taperStart > 0f) ease(along / dynamics.taperStart) else 1f
+
     /** How big a dab is at pressure [p], as a fraction of the brush. */
-    private fun sizeAt(p: Float): Float {
+    private fun pressureFactor(p: Float): Float {
         val m = dynamics.minSize ?: return 1f
         return m + (1f - m) * p
     }
 
-    /** Dabs get closer together as they get smaller, so a light line stays a line. */
-    private fun spacingAt(p: Float): Float = if (dynamics.minSize == null) spacing else max(1f, size * sizeAt(p) * tip.spacing)
+    /** Dabs get closer together as they get smaller, so a light or tapered line stays a line. */
+    private fun spacingAt(p: Float, along: Float): Float {
+        val k = pressureFactor(p) * taperFactor(along)
+        return if (k >= 0.999f) spacing else max(1f, size * k * tip.spacing)
+    }
 
-    private fun stamp(x: Float, y: Float, p: Float = 1f, tilt: Float = 0f, azimuth: Float = 0f) {
-        val k = sizeAt(p)
+    /** A dab of the stroke at layer-local ([x], [y]), [along] pixels into it. */
+    private fun place(x: Float, y: Float, p: Float, tilt: Float, az: Float, along: Float) {
+        // One angle per dab, the same in every tile it touches (and when it's drawn again tapering)
+        val angle = if (tip.randomRotation) rng.nextFloat() * 360f else 0f
+        val k = taperFactor(along)
+        stamp(buffer, canvases, x, y, p, tilt, az, angle, k)
+        val b = base ?: return
+        tailDabs.addLast(DabAt(x, y, p, tilt, az, along, angle))
+        // Dabs further back than the end taper reaches are final: into the stroke without its tail
+        while (tailDabs.isNotEmpty() && along - tailDabs.first().along > dynamics.taperEnd) {
+            val d = tailDabs.removeFirst()
+            stamp(b, baseCanvases, d.x, d.y, d.p, d.tilt, d.az, d.angle, taperFactor(d.along), counts = false)
+            baseDabs++
+        }
+    }
+
+    /**
+     * Draws one dab into [grid]: [taper] (0..1) and the pressure shrink it, tilt stretches it, and with
+     * pressure on opacity its strength follows the pressure. [counts]: it's one of the dabs on screen.
+     */
+    private fun stamp(
+        grid: TileGrid, cs: HashMap<Long, Canvas>, x: Float, y: Float, p: Float, tilt: Float, azimuth: Float,
+        randomAngle: Float, taper: Float, counts: Boolean = true,
+    ) {
+        val k = pressureFactor(p) * taper
         val drawn = size * k
         // Tilt stretches the dab along the way the pen leans (not for tips that turn at random)
         val stretch = if (dynamics.tilt && !tip.randomRotation) StrokeDynamics.tiltStretch(tilt) else 1f
@@ -297,45 +373,46 @@ class StrokeSession(
             else -> half
         }
         val r = RectF(x - reach, y - reach, x + reach, y + reach)
-        // One angle per dab, the same in every tile it touches
         val angle = when {
-            rotate -> rng.nextFloat() * 360f
+            rotate -> randomAngle
             stretch > 1f -> Math.toDegrees(azimuth.toDouble()).toFloat() - 90f
             else -> 0f
         }
         // Pressure on opacity: overlapping dabs build up to the pressure's strength, not past it (the
         // first dab on its own is the full strength, so a tap or a short stroke isn't faint)
-        val alpha = if (dynamics.opacity && p < 0.999f && dabCount == 0) p else if (dynamics.opacity && p < 0.999f) {
-            val overlap = max(1f, drawn / spacingAt(p))
+        val first = (if (counts) dabCount else baseDabs) == 0
+        val alpha = if (dynamics.opacity && p < 0.999f && first) p else if (dynamics.opacity && p < 0.999f) {
+            val overlap = max(1f, drawn / max(1f, size * k * tip.spacing))
             (1f - Math.pow((1f - p).toDouble(), 1.0 / overlap).toFloat()).coerceIn(0f, 1f)
         } else 1f
         if (alpha <= 0.002f) return
-        dabPaint.alpha = (alpha * 255f).roundToInt().coerceIn(1, 255)
+        val paint = dabPaint
+        paint.alpha = (alpha * 255f).roundToInt().coerceIn(1, 255)
         // A smaller dab comes from a picture about its size (each level is half the last)
         var level = 0
         if (k < 0.999f) while (level < 10 && (dabSize shr (level + 1)) >= max(2f, drawn)) level++
         val img = if (level == 0) dab else Dabs.level(tip, dabSize, softness, level)
         val plain = k >= 0.999f && stretch == 1f
-        for (key in buffer.keysIn(r)) {
-            val tile = buffer.getOrCreate(key)
-            val c = canvases.getOrPut(key) { Canvas(tile) }
+        for (key in grid.keysIn(r)) {
+            val tile = grid.getOrCreate(key)
+            val c = cs.getOrPut(key) { Canvas(tile) }
             val ox = (TileGrid.tx(key) * TileGrid.SIZE).toFloat()
             val oy = (TileGrid.ty(key) * TileGrid.SIZE).toFloat()
             c.save()
             c.translate(-ox, -oy)
             if (plain) {
                 if (rotate) c.rotate(angle, x, y)
-                c.drawBitmap(img, x - half, y - half, dabPaint)
+                c.drawBitmap(img, x - half, y - half, paint)
             } else {
                 c.translate(x, y)
                 if (angle != 0f) c.rotate(angle)
                 if (stretch != 1f) c.scale(stretch, 1f)
-                c.drawBitmap(img, null, RectF(-half, -half, half, half), dabPaint)
+                c.drawBitmap(img, null, RectF(-half, -half, half, half), paint)
             }
             c.restore()
         }
         dirty.union(r.left + layer.x, r.top + layer.y, r.right + layer.x, r.bottom + layer.y)
-        dabCount++
+        if (counts) dabCount++
     }
 
     // ------------------------------------------------------------ how the buffer is applied

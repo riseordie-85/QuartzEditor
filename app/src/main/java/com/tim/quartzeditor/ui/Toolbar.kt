@@ -54,6 +54,7 @@ import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Details
 import androidx.compose.material.icons.outlined.BlurOn
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Approval
@@ -328,7 +329,7 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
     val pen = vm.penSeen
     BoxWithConstraints(Modifier.width(if (compact) 56.dp else 66.dp).fillMaxHeight()) {
         val tipsH = if (retouch) 0.dp else (if (compact) 40.dp else 46.dp) * 4 + 24.dp
-        val extra = 150.dp + (if (pen) (if (retouch) 28.dp else 56.dp) else 0.dp)
+        val extra = 150.dp + 40.dp + (if (pen) (if (retouch) 28.dp else 56.dp) + 34.dp else 0.dp)
         val sliderH = ((maxHeight - tipsH - extra) / 3).coerceIn(56.dp, 220.dp)
         val tight = maxHeight < tipsH + extra + 56.dp * 3
         Column(
@@ -388,7 +389,82 @@ private fun BrushColumn(vm: EditorViewModel, compact: Boolean) {
             if (pen) PressureToggle(b.pressureOpacity, if (retouch) "Pen pressure changes the strength" else "Pen pressure changes the opacity") { on ->
                 vm.updateBrush(forTool) { it.copy(pressureOpacity = on) }
             }
+            Spacer(Modifier.height(8.dp))
+            // Smoothing and tapers
+            BrushMoreButton(vm, forTool, b, retouch)
+            // Fingers: move the view (the pen paints) or paint too
+            if (pen) FingerToggle(vm)
         }
+    }
+}
+
+/** Opens the brush's smoothing and taper settings. */
+@Composable
+private fun BrushMoreButton(vm: EditorViewModel, forTool: Tool, b: BrushSettings, retouch: Boolean) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(width = 44.dp, height = 32.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (b.smoothing > 0f || b.taperStart > 0f || b.taperEnd > 0f) Q.accent.copy(alpha = 0.35f) else Q.text.copy(alpha = 0.10f))
+                .clickable(onClickLabel = "Smoothing and taper") { open = true },
+        ) {
+            Icon(Icons.Outlined.Tune, contentDescription = "Smoothing and taper", tint = Q.text, modifier = Modifier.size(18.dp))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Column(Modifier.width(280.dp).padding(horizontal = 14.dp, vertical = 6.dp)) {
+                Text(
+                    when (forTool) {
+                        Tool.ERASER -> "Eraser"
+                        Tool.RETOUCH -> "Retouch brushes"
+                        else -> "Brush"
+                    },
+                    color = Q.text, fontSize = 15.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                PanelSlider(
+                    "Smoothing", b.smoothing, 0f..1f, "${(b.smoothing * 100).roundToInt()}%",
+                    onChange = { v -> vm.updateBrush(forTool) { it.copy(smoothing = v) } },
+                )
+                Text("The line trails the pen a little to smooth out wobbles.", color = Q.textDim, fontSize = 11.sp)
+                if (!retouch) {
+                    Spacer(Modifier.height(8.dp))
+                    PanelSlider(
+                        "Taper at the start", b.taperStart, 0f..1f, "${(b.taperStart * 100).roundToInt()}%",
+                        onChange = { v -> vm.updateBrush(forTool) { it.copy(taperStart = v) } },
+                    )
+                    PanelSlider(
+                        "Taper at the end", b.taperEnd, 0f..1f, "${(b.taperEnd * 100).roundToInt()}%",
+                        onChange = { v -> vm.updateBrush(forTool) { it.copy(taperEnd = v) } },
+                    )
+                    Text("Strokes grow from a point and thin out to one, with a pen or a finger. The end thins out when you lift.", color = Q.textDim, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+/** Fingers move the view (the pen paints), or paint too. */
+@Composable
+private fun FingerToggle(vm: EditorViewModel) {
+    val nav = vm.penFingersNavigate
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .padding(top = 6.dp)
+            .size(width = 44.dp, height = 32.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (nav) Q.text.copy(alpha = 0.10f) else Q.accent)
+            .clickable(onClickLabel = if (nav) "Let fingers paint" else "Fingers move the view") { vm.toggleFingerPainting() },
+    ) {
+        Icon(
+            if (nav) Icons.Outlined.PanTool else Icons.Outlined.TouchApp,
+            contentDescription = if (nav) "Fingers move the view" else "Fingers paint",
+            tint = if (nav) Q.text else Color.White,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
