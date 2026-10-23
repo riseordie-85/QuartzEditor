@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -149,6 +150,34 @@ fun LaunchScreen(vm: EditorViewModel) {
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.size(44.dp).clip(CircleShape).clickable { settingsOpen = true },
                     ) { Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = Color.White) }
+                }
+                // Over open files: back to one of them (what's opened or started here joins them)
+                if (vm.doc != null && vm.files.isNotEmpty()) {
+                    androidx.activity.compose.BackHandler { vm.showHome = false }
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        Text("Open:", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+                        vm.files.forEachIndexed { i, f ->
+                            Text(
+                                vm.fileRoot(f)?.name ?: "Untitled",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (i == vm.fileIndex) Q.accent else Color.White.copy(alpha = 0.14f))
+                                    .clickable {
+                                        vm.showHome = false
+                                        vm.switchFile(i)
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(if (wide) 20.dp else 12.dp))
                 val card = Modifier

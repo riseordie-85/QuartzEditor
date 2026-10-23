@@ -161,6 +161,8 @@ fun Workspace(vm: EditorViewModel) {
     ) {
         // Big screens: a menu bar, the tool's settings in a bar under it, a status bar at the bottom
         val desktop = vm.desktopFor(maxWidth.value, maxHeight.value)
+        // The menu bar layout's squarer look
+        androidx.compose.runtime.SideEffect { Q.squared = desktop }
         val screenW = maxWidth
         val wide = maxWidth >= 760.dp || desktop
         val compact = !desktop && (maxWidth < 600.dp || maxHeight < 480.dp)
@@ -184,7 +186,7 @@ fun Workspace(vm: EditorViewModel) {
             }
         }
 
-        val pad = if (compact || Q.compact || desktop) (if (desktop && !Q.compact) 8.dp else 4.dp) else 12.dp
+        val pad = if (compact || Q.compact || desktop) (if (desktop && !Q.compact) 6.dp else 4.dp) else 12.dp
         Column(Modifier.fillMaxSize().padding(pad)) {
         if (desktop) {
             MenuBar(vm, menuActions, panelsOpen, togglePanels = { panelsOpen = !panelsOpen })
@@ -235,7 +237,7 @@ fun Workspace(vm: EditorViewModel) {
             )
             Spacer(Modifier.width(if (compact || Q.compact) 4.dp else 12.dp))
             Box(Modifier.weight(1f).fillMaxHeight()) {
-                EditorCanvas(vm, Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)))
+                EditorCanvas(vm, Modifier.fillMaxSize().clip(RoundedCornerShape(Q.corner(12.dp))))
 
                 // Undo / redo / fit (on big screens: the menu bar and status bar)
                 if (!desktop) Row(
@@ -282,7 +284,8 @@ fun Workspace(vm: EditorViewModel) {
                 ModifierButton(vm)
 
                 // Tabs, while a smart layer's contents are open
-                TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp, top = if (vm.showRulers) RULER else 0.dp).widthIn(max = 420.dp))
+                // (The menu bar has them on big screens, with the open files)
+                if (!desktop) TabStrip(vm, Modifier.align(Alignment.TopStart).padding(6.dp).padding(start = if (vm.showRulers) RULER else 0.dp, top = if (vm.showRulers) RULER else 0.dp).widthIn(max = 420.dp))
 
                 // Panels folded away: the layers as a small stack at the edge
                 androidx.compose.animation.AnimatedVisibility(

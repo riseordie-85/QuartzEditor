@@ -63,6 +63,13 @@ fun EditorViewModel.openImage(uri: Uri) {
 }
 
 fun EditorViewModel.openProject(id: String) {
+    // Already open: that tab
+    val open = files.indexOfFirst { fileRoot(it)?.projectId == id }
+    if (open >= 0) {
+        showHome = false
+        switchFile(open)
+        return
+    }
     runBusy("Opening…") {
         // Waits for a save that's still being written
         val (d, color) = saveLock.withLock { withContext(Dispatchers.IO) { ProjectIO.openProject(ctx, id) } }
@@ -246,6 +253,8 @@ fun EditorViewModel.closeDocument() {
     preview = null
     fxThumb = null
     d.invalidate()
+    // Another file open: it's shown
+    fileClosed()
 }
 
 /** Closes the document and throws away changes since it was last saved. */
@@ -266,6 +275,7 @@ fun EditorViewModel.discardDocument() {
     com.tim.quartzeditor.engine.SmartArt.release()
     releaseAi()
     d.invalidate()
+    fileClosed()
 }
 
 /** Saves to the app's projects in the background (also called when the app is put away). */

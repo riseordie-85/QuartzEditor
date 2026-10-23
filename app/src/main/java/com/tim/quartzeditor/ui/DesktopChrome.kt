@@ -25,6 +25,9 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FilterNone
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Landscape
 import androidx.compose.material.icons.outlined.Palette
@@ -102,7 +105,7 @@ fun MenuBar(vm: EditorViewModel, a: MenuActions, panelsOpen: Boolean, togglePane
         modifier = modifier
             .fillMaxWidth()
             .height(40.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(Q.corner(14.dp)))
             .background(Q.toolbar)
             .padding(horizontal = 6.dp),
     ) {
@@ -117,16 +120,69 @@ fun MenuBar(vm: EditorViewModel, a: MenuActions, panelsOpen: Boolean, togglePane
             MenuTitle("Filter") { FilterMenuItems(vm, a) }
             MenuTitle("View") { ViewMenuItems(vm, a) }
             MenuTitle("Window") { WindowMenuItems(vm, panelsOpen, togglePanels) }
-            Text(
-                vm.rootDoc?.name ?: "",
-                color = Q.textDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 12.dp).widthIn(max = 260.dp),
-            )
+            Spacer(Modifier.width(16.dp))
+            FileTabs(vm)
         }
         val h = vm.history
         @Suppress("UNUSED_VARIABLE") val v = h.version
         BarIconButton(Icons.AutoMirrored.Outlined.Undo, "Undo (two-finger tap)", enabled = h.canUndo || vm.pendingFx != null || vm.enhance != null || vm.textEdit != null || vm.penPoints.isNotEmpty()) { vm.undo() }
         BarIconButton(Icons.AutoMirrored.Outlined.Redo, "Redo (three-finger tap)", enabled = h.canRedo) { vm.redo() }
+    }
+}
+
+/**
+ * The open files, each followed by its smart layers' tabs (a smart layer's contents being edited),
+ * then + to open or start another. Tap one to show it; × closes it (a file is saved to Projects, a
+ * smart layer's edits go into the layer).
+ */
+@Composable
+private fun FileTabs(vm: EditorViewModel) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        vm.files.forEachIndexed { i, f ->
+            val tabs = vm.fileTabs(i)
+            val current = i == vm.fileIndex
+            tabs.forEachIndexed { k, t ->
+                val name = if (t.parent == null) t.doc.name else t.parent.doc.layer(t.layerId)?.props?.name ?: t.doc.name
+                val shown = current && k == vm.tabIndex
+                FileTab(
+                    name,
+                    smart = t.parent != null,
+                    shown = shown,
+                    // A file can always close; a smart layer's tab from its own file
+                    closeLabel = if (t.parent == null) "Close \"$name\" (saved to Projects)" else "Close \"$name\" (its edits go into the layer)",
+                    onClose = { if (t.parent == null) vm.closeFile(i) else { vm.switchFile(i); if (vm.fileIndex == i) vm.closeTab(k) } },
+                ) { vm.switchFileTab(i, k) }
+            }
+            @Suppress("UNUSED_VARIABLE") val unused = f
+        }
+        BarIconButton(Icons.Outlined.Add, "Open or start another file") { vm.openHome() }
+    }
+}
+
+@Composable
+private fun FileTab(name: String, smart: Boolean, shown: Boolean, closeLabel: String, onClose: () -> Unit, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .height(32.dp)
+            .clip(RoundedCornerShape(Q.corner(10.dp)))
+            .background(if (shown) Q.text.copy(alpha = 0.16f) else Q.text.copy(alpha = 0.05f))
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 4.dp),
+    ) {
+        if (smart) {
+            Icon(Icons.Outlined.FilterNone, contentDescription = "Smart layer", tint = Q.textDim, modifier = Modifier.size(13.dp))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(name, color = if (shown) Q.text else Q.textDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+        HoverTip(closeLabel) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.padding(start = 4.dp).size(24.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onClose),
+            ) {
+                Icon(Icons.Outlined.Close, contentDescription = closeLabel, tint = if (shown) Q.text else Q.textDim, modifier = Modifier.size(14.dp))
+            }
+        }
     }
 }
 
@@ -198,7 +254,7 @@ fun ToolOptionsBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(Q.corner(14.dp)))
             .background(Q.toolbar)
             .padding(start = 14.dp, end = 6.dp),
     ) {
@@ -358,7 +414,7 @@ fun StatusBar(vm: EditorViewModel, panelsOpen: Boolean, togglePanels: () -> Unit
         modifier = modifier
             .fillMaxWidth()
             .height(34.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(Q.corner(12.dp)))
             .background(Q.toolbar)
             .padding(horizontal = 6.dp),
     ) {

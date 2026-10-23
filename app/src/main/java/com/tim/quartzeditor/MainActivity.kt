@@ -29,7 +29,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             QuartzTheme {
-                if (vm.doc == null) LaunchScreen(vm) else Workspace(vm)
+                // (The start screen can also show over open files, to open another)
+                if (vm.doc == null || vm.showHome) LaunchScreen(vm) else Workspace(vm)
             }
         }
     }

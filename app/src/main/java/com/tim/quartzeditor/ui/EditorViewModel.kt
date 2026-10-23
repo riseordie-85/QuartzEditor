@@ -123,6 +123,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var tabIndex by mutableIntStateOf(0)
         internal set
 
+    /** Open files (OpenFiles.kt): each its own tabs; [tabs] are the shown file's. */
+    var files by mutableStateOf<List<OpenFile>>(emptyList())
+        internal set
+    var fileIndex by mutableIntStateOf(0)
+        internal set
+    /** The start screen is shown over open files (to open or start another). */
+    var showHome by mutableStateOf(false)
+
     // ------------------------------------------------------------ tools and colors
 
     var tool by mutableStateOf(Tool.BRUSH)
@@ -609,6 +617,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ================================================================== opening and closing
 
     internal fun setDocument(d: Doc, canvas: Int? = null) {
+        // Files already open stay open (in tabs): the one shown is put away first
+        val keep = doc != null && files.isNotEmpty()
+        if (keep) stashFile()
         cancelEnhance()
         colorRange = null
         pickingForRange = false
@@ -644,6 +655,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // The picture itself is the first tab; smart layers' contents open as more tabs
         tabs = listOf(EditorTab(d, history, null, -1L))
         tabIndex = 0
+        files = (if (keep) files else emptyList()) + OpenFile(tabs, 0)
+        fileIndex = files.lastIndex
+        showHome = false
         fitted = false
         canvas?.let { changeCanvasColor(it) }
         if (viewW > 0f) fit()

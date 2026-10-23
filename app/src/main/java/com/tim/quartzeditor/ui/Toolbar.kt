@@ -124,7 +124,7 @@ fun Toolbar(vm: EditorViewModel, compact: Boolean, onColorTap: () -> Unit, modif
     Row(
         modifier
             .fillMaxHeight()
-            .clip(RoundedCornerShape(26.dp))
+            .clip(RoundedCornerShape(Q.corner(26.dp)))
             .background(Q.toolbar)
     ) {
         ToolColumn(vm, compact, buttonSize, onColorTap, menu)

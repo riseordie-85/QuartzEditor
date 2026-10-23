@@ -1,5 +1,7 @@
 package com.tim.quartzeditor.ui
 
+import androidx.compose.ui.unit.dp
+
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -65,6 +67,12 @@ object Q {
 
     /** Compact interface: smaller margins and padding around the toolbar, panels, buttons and rows. */
     var compact by mutableStateOf(false)
+
+    /** The menu bar layout's squarer look: the big containers' corners only slightly rounded. */
+    var squared by mutableStateOf(false)
+
+    /** A container's corner radius: [normal], or a slight rounding in the squarer look. */
+    fun corner(normal: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (squared) minOf(normal, 6.dp) else normal
 
     /** [normal] spacing, or [tight] with the compact interface on. */
     fun gap(normal: androidx.compose.ui.unit.Dp, tight: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (compact) tight else normal

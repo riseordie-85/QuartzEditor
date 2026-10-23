@@ -494,13 +494,13 @@ private fun depth(t: EditorTab): Int {
     return n
 }
 
-private fun EditorViewModel.saveView() {
+internal fun EditorViewModel.saveView() {
     currentTab?.view = Triple(scale, offsetX, offsetY)
     currentTab?.viewRotation = rotation
 }
 
 /** Shows tab [i]: its document, its undo, its view. */
-private fun EditorViewModel.enterTab(i: Int, force: Boolean = false) {
+internal fun EditorViewModel.enterTab(i: Int, force: Boolean = false) {
     val t = tabs.getOrNull(i) ?: return
     if (!force && i == tabIndex && doc === t.doc) return
     // A smart layer that was deleted (or undone away) meanwhile: its tab goes

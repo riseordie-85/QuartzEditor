@@ -99,6 +99,15 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   section of its own (on phones too): tap a step to go back to it.
 - **Status bar** at the bottom: zoom (tap for Fit and 25–400 %), how far the canvas is turned (tap to
   straighten) and the turning lock, the canvas size, the layer, the finger-painting switch, and show/hide panels.
+- **Open files in tabs**: the menu bar lists every open file, each followed by its smart layers' tabs
+  (a smart layer's contents being edited). Tap one to show it; × closes it (a file is saved to Projects
+  as it closes; a smart layer's edits go into the layer). **+** (or File → New or open…, or Quartz →
+  Home) shows the start screen with your files still open: what you open or start there joins them as a
+  new tab, opening a project that's already open just shows it, and "Open:" at the top (or Back) goes
+  back. Each file keeps its own undo, view and tabs; the one you leave is saved to Projects quietly. Up
+  to 5 files at once. File → Close saves and closes the one shown (the next one comes up).
+- **Squarer look**: the bars, toolbar, panels and picture have only slightly rounded corners and sit
+  closer together.
 - **Pen niceties** (everywhere): hover over a button for a moment to see its name; the pen's side button
   (or a mouse's right button) on a layer opens its menu, like a long press.
 

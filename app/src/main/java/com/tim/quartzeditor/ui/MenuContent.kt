@@ -50,7 +50,7 @@ class MenuActions(
 /** The app itself: home, quick export, settings. */
 @Composable
 fun PagedMenuScope.AppMenuItems(vm: EditorViewModel, a: MenuActions) {
-    Item("Home (saves to Projects)", Icons.Outlined.Home) { vm.closeDocument() }
+    Item("Home (your files stay open)", Icons.Outlined.Home) { vm.openHome() }
     Item("Quick export (.png)", Icons.Outlined.Image) { vm.quickExport() }
     Divider()
     Item("Settings…", Icons.Outlined.Settings) { a.settings() }
@@ -58,13 +58,15 @@ fun PagedMenuScope.AppMenuItems(vm: EditorViewModel, a: MenuActions) {
 
 @Composable
 fun PagedMenuScope.FileMenuItems(vm: EditorViewModel, a: MenuActions) {
+    Item("New or open… (this one stays open)") { vm.openHome() }
+    Divider()
     Item("Rename image…") { a.rename() }
     Item("Quick export (.png)") { vm.quickExport() }
     Item("Export image…") { a.export() }
     Item("Save project file…") { a.saveProject() }
     Item("Place image as layer…") { a.placeImage() }
     Divider()
-    Item("Home (saves to Projects)") { vm.closeDocument() }
+    Item("Close (saves to Projects)") { vm.closeDocument() }
     Item("Close without saving…") { a.discard() }
 }
 

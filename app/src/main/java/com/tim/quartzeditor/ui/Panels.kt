@@ -91,7 +91,7 @@ import android.graphics.Color as AColor
 fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
     BoxWithConstraints(
         modifier
-            .clip(RoundedCornerShape(26.dp))
+            .clip(RoundedCornerShape(Q.corner(26.dp)))
             .background(Q.panel)
     ) {
         val anyOpen = vm.isOpen(PanelSection.COLOR) || vm.isOpen(PanelSection.PROPERTIES) || vm.isOpen(PanelSection.HISTORY)
@@ -161,9 +161,9 @@ fun FloatingPanel(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val kind = vm.popup ?: return
     Column(
         modifier
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(Q.corner(22.dp)))
             .background(Q.panel)
-            .border(1.dp, Q.divider, RoundedCornerShape(22.dp)),
+            .border(1.dp, Q.divider, RoundedCornerShape(Q.corner(22.dp))),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 6.dp)) {
             Text(if (kind == PopupKind.ENHANCE) vm.enhance?.kind?.label ?: kind.title else kind.title, color = Q.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
