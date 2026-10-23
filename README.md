@@ -381,10 +381,13 @@ the list; the button shows the one you used last.
 ### Panels
 The column holds **Color**, **Properties**, **Brushes**, **History** and **Layers**, and you arrange it:
 - **Move** a section: drag its header up or down; a line shows where it will go.
-- **Stack** sections as tabs: drag a header onto another's header (it's outlined). Tap a tab to show it;
+- **Stack** sections as tabs: drag a header onto the middle of another's header (it's outlined; near a
+  header's top or bottom edge it moves instead). Tap a tab to show it; a section that opens by itself
+  (Properties when you pick a tool) comes to the front of its tabs;
   drag a tab out (to a line between sections) to give it a place of its own again.
-- **Sizes**: drag the line between two open sections (it has a small grip) to give one more room and the
-  other less; each keeps the height you gave it. Double-tap the line: back to automatic (as tall as needed).
+- **Sizes**: drag a line between sections (it has a small grip when it can be dragged) to give the open
+  section above it more room and the open one below less (folded ones in between don't count); each keeps
+  the height you gave it. Double-tap the line: back to automatic (as tall as needed).
   The section showing Layers always takes whatever room is left.
 - It's all remembered; **Window → Reset panel layout** puts everything back.
 - **Color** and **Properties** fold away by themselves: picking a tool opens Properties with that tool's

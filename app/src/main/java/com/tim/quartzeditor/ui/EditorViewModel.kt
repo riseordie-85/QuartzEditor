@@ -962,6 +962,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 tool = t
                 // The tool's settings show in Properties; other unpinned sections fold away
                 openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
+                if (t in TOOLS_WITH_OPTIONS) showInDock(PanelSection.PROPERTIES)
                 brushPickerFor = null
                 if (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
@@ -1046,10 +1047,22 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (s == PanelSection.LAYERS) {
             layersFolded = !open
             prefs.edit().putBoolean("layersFolded", layersFolded).apply()
+            if (open) showInDock(s)
             return
         }
         openedSections = if (open) setOf(s) else openedSections - s
         if (!open && s in pinnedSections) togglePin(s)
+        if (open) showInDock(s)
+    }
+
+    /** A section opened: when it's stacked with others as tabs, its tab is the one shown. */
+    internal fun showInDock(s: PanelSection) {
+        val i = dock.indexOfFirst { s in it.sections }
+        if (i < 0) return
+        val k = dock[i].sections.indexOf(s)
+        if (dock[i].sections.size < 2 || dock[i].active == k) return
+        dock = dock.toMutableList().also { it[i] = it[i].copy(active = k) }
+        DockStore.save(prefs, dock)
     }
 
     fun togglePin(s: PanelSection) {

@@ -521,12 +521,12 @@ private fun RotationStatus(vm: EditorViewModel) {
 
 /** Every step you can go back to, oldest first, with where you are marked. Tap one to go there. */
 @Composable
-fun HistoryList(vm: EditorViewModel) {
+fun HistoryList(vm: EditorViewModel, modifier: Modifier = Modifier.heightIn(max = 280.dp)) {
     val h = vm.history
     @Suppress("UNUSED_VARIABLE") val v = h.version
     val done = h.undoLabels
     val ahead = h.redoLabels
-    Column(Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxWidth().then(modifier).verticalScroll(rememberScrollState())) {
         @Composable
         fun row(label: String, steps: Int, current: Boolean, undone: Boolean) {
             Row(

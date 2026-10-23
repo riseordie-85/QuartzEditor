@@ -381,11 +381,11 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                     }
                 },
         ) {
-            // With only two rows showing, the active layer is kept in sight
+            // The active layer is kept in sight (the list can be short)
             // (Keyed on which layer, not where it is: moving layers around shouldn't scroll the list)
             androidx.compose.runtime.LaunchedEffect(fillList, d.activeId) {
                 val activeIndex = shown.indexOfFirst { it.id == d.activeId }
-                if (fillList || activeIndex < 0 || dragId != null) return@LaunchedEffect
+                if (activeIndex < 0 || dragId != null) return@LaunchedEffect
                 val visible = listState.layoutInfo.visibleItemsInfo
                 val fully = visible.filter { it.offset >= 0 && it.offset + it.size <= listState.layoutInfo.viewportEndOffset }.map { it.index }
                 if (activeIndex !in fully) listState.animateScrollToItem(activeIndex)

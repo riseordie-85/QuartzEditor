@@ -105,7 +105,8 @@ object DockStore {
         val out = ArrayList<DockSlot>()
         for (s in dock) {
             val secs = s.sections.filter { seen.add(it) }
-            if (secs.isNotEmpty()) out.add(s.copy(sections = secs, active = s.active.coerceIn(0, secs.lastIndex)))
+            val h = s.heightDp?.takeIf { it.isFinite() && it > 0f }
+            if (secs.isNotEmpty()) out.add(s.copy(sections = secs, active = s.active.coerceIn(0, secs.lastIndex), heightDp = h))
         }
         PanelSection.entries.filter { it !in seen }.forEach { out.add(DockSlot(listOf(it))) }
         return out
@@ -136,6 +137,12 @@ private class DockDrag(val fromSlot: Int, val section: PanelSection?, val label:
 /** Where a drag would land: before slot [gap] (0..n), or stacked onto slot [stackOn]. */
 private data class DockTarget(val gap: Int = -1, val stackOn: Int = -1)
 
+/** [s] without [sec], still showing the tab it showed (or the first, if that's the one taken). */
+private fun without(s: DockSlot, sec: PanelSection): DockSlot {
+    val rest = s.sections - sec
+    return s.copy(sections = rest, active = rest.indexOf(s.activeSection).coerceAtLeast(0))
+}
+
 /** Moves what's dragged to [t]. */
 private fun EditorViewModel.dropOnDock(drag: DockDrag, t: DockTarget) {
     val list = dock.toMutableList()
@@ -156,7 +163,7 @@ private fun EditorViewModel.dropOnDock(drag: DockDrag, t: DockTarget) {
         val into = list[t.stackOn]
         val merged = into.sections + moving
         list[t.stackOn] = into.copy(sections = merged, active = into.sections.size)
-        if (whole) list.removeAt(from) else list[from] = src.copy(sections = src.sections - moving.toSet(), active = 0)
+        if (whole) list.removeAt(from) else list[from] = without(src, moving.first())
         setDock(list)
         // The one dropped shows (and opens)
         toggleSection(moving.first(), open = true)
@@ -170,7 +177,7 @@ private fun EditorViewModel.dropOnDock(drag: DockDrag, t: DockTarget) {
         if (from < gap) gap--
         list.add(gap.coerceIn(0, list.size), slot)
     } else {
-        list[from] = src.copy(sections = src.sections - moving.toSet(), active = 0)
+        list[from] = without(src, moving.first())
         list.add(gap.coerceIn(0, list.size), DockSlot(moving))
     }
     setDock(list)
@@ -189,30 +196,57 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
     // Where each slot is in the dock, and its header's height (for working out where a drag lands)
     val slotRects = remember { HashMap<Int, Rect>() }
     val headerH = remember { HashMap<Int, Float>() }
+    androidx.compose.runtime.SideEffect {
+        slotRects.keys.removeAll { it >= n }
+        headerH.keys.removeAll { it >= n }
+    }
     // Each slot's height as last laid out (for dragging the lines between them)
     val measured = remember { IntArray(32) }
+    // Heights while a line is being dragged (read only when laying out, so only that redoes)
+    val liveHeights = remember { androidx.compose.runtime.mutableStateMapOf<Int, Float>() }
     var drag by remember { mutableStateOf<DockDrag?>(null) }
     val dockCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val shown = dock.map { vm.shownTab(it) }
     val open = dock.mapIndexed { i, s -> vm.isOpen(s.sections[shown[i]]) }
     val filler = dock.indices.firstOrNull { open[it] && dock[it].sections[shown[it]] == PanelSection.LAYERS } ?: -1
+    val minSlot = with(density) { 96.dp.roundToPx() }
+    val fillerMinFull = with(density) { Q.gap(290.dp, 230.dp).roundToPx() }
+    val headerFloor = with(density) { 52.dp.roundToPx() }
 
     fun target(d: DockDrag): DockTarget {
-        val y = d.at.y
+        val dockH = dockCoords[0]?.takeIf { it.isAttached }?.size?.height?.toFloat() ?: Float.MAX_VALUE
+        val y = d.at.y.coerceIn(0f, dockH)
         for (j in 0 until n) {
             val r = slotRects[j] ?: continue
             val h = headerH[j] ?: continue
-            if (y >= r.top && y <= r.top + h && d.at.x >= r.left && d.at.x <= r.right) {
-                // Onto its own header: nothing (a tab dragged along its own row stays put)
-                return if (j == d.fromSlot) DockTarget() else DockTarget(stackOn = j)
+            // (Slots pushed out of sight aren't targets)
+            if (r.top >= dockH) continue
+            if (y >= r.top && y <= r.top + h) {
+                // The middle of a header: stack onto it; its top or bottom edge: just before or after it
+                val f = (y - r.top) / h.coerceAtLeast(1f)
+                return when {
+                    f < 0.25f -> DockTarget(gap = j)
+                    // (A folded slot is just its header: its bottom edge is the gap after it)
+                    f > 0.75f && r.bottom - r.top <= h + 1f -> DockTarget(gap = j + 1)
+                    j == d.fromSlot -> DockTarget()
+                    else -> DockTarget(stackOn = j)
+                }
             }
         }
         var g = 0
         for (j in 0 until n) {
             val r = slotRects[j] ?: continue
+            if (r.top >= dockH) continue
             if (y > (r.top + r.bottom) / 2f) g = j + 1
         }
         return DockTarget(gap = g)
+    }
+
+    /** The open slots a line between slot [i] and the next resizes: the nearest open one above and below it. */
+    fun pairFor(i: Int): Pair<Int, Int>? {
+        val up = (i downTo 0).firstOrNull { open[it] } ?: return null
+        val lo = (i + 1 until n).firstOrNull { open[it] } ?: return null
+        return up to lo
     }
 
     Box(
@@ -221,8 +255,6 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             .background(Q.panel)
             .onGloballyPositioned { dockCoords[0] = it },
     ) {
-        val minSlot = with(density) { 96.dp.roundToPx() }
-        val fillerMin = with(density) { Q.gap(290.dp, 230.dp).roundToPx() }
         Layout(
             content = {
                 dock.forEachIndexed { i, slot ->
@@ -242,34 +274,50 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                         )
                     }
                     if (i < n - 1) {
+                        val pair = pairFor(i)
                         DockDivider(
-                            active = open[i] && open[i + 1],
+                            active = pair != null,
                             onDrag = { dy, start ->
-                                // Heights in dp from where the drag started
-                                val up = dock[i]
-                                val lo = dock[i + 1]
-                                val minDp = with(density) { minSlot.toDp().value }
-                                val upH = with(density) { start.first.toDp().value }
-                                val loH = with(density) { start.second.toDp().value }
-                                val d = with(density) { dy.toDp().value }
-                                val list = vm.dock.toMutableList()
+                                val (u, l) = pair ?: return@DockDivider
+                                // Heights in px from where the drag started
+                                val (upH, loH, fillH) = start
+                                val spare = (fillH - fillerMinFull).coerceAtLeast(0).toFloat()
                                 when {
-                                    i == filler -> list[i + 1] = lo.copy(heightDp = (loH - d).coerceAtLeast(minDp))
-                                    i + 1 == filler -> list[i] = up.copy(heightDp = (upH + d).coerceAtLeast(minDp))
+                                    u == filler -> {
+                                        val lo = minOf(minSlot, loH).toFloat()
+                                        liveHeights[l] = (loH - dy).coerceIn(lo, loH + spare)
+                                    }
+                                    l == filler -> {
+                                        val lo = minOf(minSlot, upH).toFloat()
+                                        liveHeights[u] = (upH + dy).coerceIn(lo, upH + spare)
+                                    }
                                     else -> {
-                                        val dd = d.coerceIn(minDp - upH, loH - minDp)
-                                        list[i] = up.copy(heightDp = upH + dd)
-                                        list[i + 1] = lo.copy(heightDp = loH - dd)
+                                        val lo = minOf(minSlot, upH) - upH.toFloat()
+                                        val hi = maxOf(loH - minOf(minSlot, loH).toFloat(), lo)
+                                        val dd = dy.coerceIn(lo, hi)
+                                        liveHeights[u] = upH + dd
+                                        liveHeights[l] = loH - dd
                                     }
                                 }
-                                vm.setDock(list, save = false)
                             },
-                            startHeights = { measured[i] to measured[i + 1] },
-                            onDone = { DockStore.save(vm.prefs, vm.dock) },
+                            startHeights = {
+                                val p = pair
+                                if (p == null) Triple(0, 0, 0) else Triple(measured[p.first], measured[p.second], if (filler >= 0) measured[filler] else 0)
+                            },
+                            onDone = {
+                                // Into the dock (in dp), kept
+                                if (liveHeights.isNotEmpty()) {
+                                    val list = vm.dock.toMutableList()
+                                    liveHeights.forEach { (k, px) -> if (k in list.indices) list[k] = list[k].copy(heightDp = with(density) { px.toDp().value }) }
+                                    liveHeights.clear()
+                                    vm.setDock(list)
+                                }
+                            },
                             onReset = {
+                                val p = pair ?: return@DockDivider
                                 val list = vm.dock.toMutableList()
-                                list[i] = list[i].copy(heightDp = null)
-                                list[i + 1] = list[i + 1].copy(heightDp = null)
+                                list[p.first] = list[p.first].copy(heightDp = null)
+                                list[p.second] = list[p.second].copy(heightDp = null)
                                 vm.setDock(list)
                             },
                         )
@@ -288,18 +336,24 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             // Folded slots: just their header
             slotsM.forEachIndexed { i, m ->
                 if (!open.getOrElse(i) { false }) {
-                    places[i] = m.measure(Constraints(minWidth = w, maxWidth = w, maxHeight = avail.coerceAtLeast(0)))
+                    places[i] = m.measure(Constraints(minWidth = w, maxWidth = w, maxHeight = avail))
                     used += places[i]!!.height
                 }
             }
-            // Open ones, top first: the height they were dragged to, or as much as they need (Layers keeps its room)
-            var budget = avail - used - (if (filler >= 0) fillerMin else 0)
+            // Open ones, top first: the height they were dragged to, or as much as they need. Layers
+            // keeps room for a few rows (less on short screens), and nothing goes past the bottom.
+            val fillerMin = if (filler >= 0) minOf(fillerMinFull, ((avail - used) * 0.6f).roundToInt()) else 0
+            var budget = avail - used - fillerMin
+            val openOthers = slotsM.indices.count { open.getOrElse(it) { false } && it != filler }
+            var left = openOthers
             slotsM.forEachIndexed { i, m ->
                 if (open.getOrElse(i) { false } && i != filler) {
-                    val maxH = max(minSlot, budget)
-                    val fixed = dock.getOrNull(i)?.heightDp?.let { with(density) { it.dp.roundToPx() } }
-                    val p = if (fixed != null) {
-                        val h = fixed.coerceIn(minSlot, maxH)
+                    left--
+                    // Leave the ones below at least their header
+                    val maxH = max(headerFloor, budget - left * headerFloor)
+                    val fixedPx = liveHeights[i]?.roundToInt() ?: dock.getOrNull(i)?.heightDp?.let { with(density) { it.dp.roundToPx() } }
+                    val p = if (fixedPx != null) {
+                        val h = fixedPx.coerceIn(minOf(minSlot, maxH), maxH)
                         m.measure(Constraints(minWidth = w, maxWidth = w, minHeight = h, maxHeight = h))
                     } else {
                         m.measure(Constraints(minWidth = w, maxWidth = w, maxHeight = maxH))
@@ -310,7 +364,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                 }
             }
             if (filler >= 0 && filler < slotsM.size) {
-                val h = max(avail - used, minSlot)
+                val h = max(avail - used, headerFloor)
                 places[filler] = slotsM[filler].measure(Constraints(minWidth = w, maxWidth = w, minHeight = h, maxHeight = h))
             }
             places.forEachIndexed { i, p -> if (i < measured.size) measured[i] = p?.height ?: 0 }
@@ -329,59 +383,62 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
             }
         }
 
-        // What's being dragged, and where it would go
-        drag?.let { d ->
-            val t = target(d)
-            val line = when {
-                t.stackOn >= 0 -> null
-                t.gap >= 0 -> {
-                    val rect = slotRects[t.gap] ?: slotRects[n - 1]
-                    if (rect == null) null else if (t.gap < n) rect.top else rect.bottom
-                }
-                else -> null
-            }
-            val whole = d.section == null || dock.getOrNull(d.fromSlot)?.sections?.size == 1
-            val moves = t.stackOn >= 0 || (t.gap >= 0 && (!whole || (t.gap != d.fromSlot && t.gap != d.fromSlot + 1)))
-            if (t.stackOn >= 0) slotRects[t.stackOn]?.let { r ->
-                val hh = headerH[t.stackOn] ?: 0f
-                Box(
-                    Modifier
-                        .offset { IntOffset(r.left.roundToInt(), r.top.roundToInt()) }
-                        .size(with(density) { r.width.toDp() }, with(density) { hh.toDp() })
-                        .border(2.dp, Q.accent, RoundedCornerShape(10.dp)),
-                )
-            }
-            if (line != null && moves) {
-                Box(
-                    Modifier
-                        .offset { IntOffset(0, (line - with(density) { 1.5.dp.toPx() }).roundToInt()) }
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                        .height(3.dp)
-                        .background(Q.accent),
-                )
-            }
-            Text(
-                d.label + if (t.stackOn >= 0) "  → tabs" else "",
-                color = Q.text,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .offset { IntOffset((d.at.x - with(density) { 40.dp.toPx() }).roundToInt(), (d.at.y - with(density) { 34.dp.toPx() }).roundToInt()) }
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Q.panelDark)
-                    .border(1.dp, Q.accent, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-            )
-        }
+        // What's being dragged, and where it would go (only this redraws as it moves)
+        drag?.let { d -> DockDragOverlay(d, dock, slotRects, headerH, ::target) }
     }
 }
 
-/** The line between two slots: drag it to share their room (when both are open); double-tap: automatic again. */
+/** The dragged section's name by the finger, and the line or outline where it would go. */
+@Composable
+private fun DockDragOverlay(d: DockDrag, dock: List<DockSlot>, slotRects: Map<Int, Rect>, headerH: Map<Int, Float>, target: (DockDrag) -> DockTarget) {
+    val density = LocalDensity.current
+    val n = dock.size
+    val t = target(d)
+    val line = when {
+        t.stackOn >= 0 || t.gap < 0 -> null
+        t.gap < n -> slotRects[t.gap]?.top
+        else -> slotRects[n - 1]?.bottom
+    }
+    val whole = d.section == null || dock.getOrNull(d.fromSlot)?.sections?.size == 1
+    val moves = t.stackOn >= 0 || (t.gap >= 0 && (!whole || (t.gap != d.fromSlot && t.gap != d.fromSlot + 1)))
+    if (t.stackOn >= 0) slotRects[t.stackOn]?.let { r ->
+        val hh = headerH[t.stackOn] ?: 0f
+        Box(
+            Modifier
+                .offset { IntOffset(r.left.roundToInt(), r.top.roundToInt()) }
+                .size(with(density) { r.width.toDp() }, with(density) { hh.toDp() })
+                .border(2.dp, Q.accent, RoundedCornerShape(10.dp)),
+        )
+    }
+    if (line != null && moves) {
+        Box(
+            Modifier
+                .offset { IntOffset(0, (line - 1.5f * density.density).roundToInt()) }
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp)
+                .height(3.dp)
+                .background(Q.accent),
+        )
+    }
+    Text(
+        d.label + if (t.stackOn >= 0) "  → tabs" else "",
+        color = Q.text,
+        fontSize = 14.sp,
+        modifier = Modifier
+            .offset { IntOffset((d.at.x - 40 * density.density).roundToInt(), (d.at.y - 34 * density.density).roundToInt()) }
+            .clip(RoundedCornerShape(8.dp))
+            .background(Q.panelDark)
+            .border(1.dp, Q.accent, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    )
+}
+
+/** The line between two slots: drag it to share the room of the open ones above and below it; double-tap: automatic again. */
 @Composable
 private fun DockDivider(
     active: Boolean,
-    onDrag: (dy: Float, start: Pair<Int, Int>) -> Unit,
-    startHeights: () -> Pair<Int, Int>,
+    onDrag: (dy: Float, start: Triple<Int, Int, Int>) -> Unit,
+    startHeights: () -> Triple<Int, Int, Int>,
     onDone: () -> Unit,
     onReset: () -> Unit,
 ) {
@@ -397,7 +454,7 @@ private fun DockDivider(
             .then(
                 if (!active) Modifier else Modifier
                     .pointerInput(Unit) {
-                        var start = 0 to 0
+                        var start = Triple(0, 0, 0)
                         var total = 0f
                         detectVerticalDragGestures(
                             onDragStart = {
@@ -464,14 +521,29 @@ private fun DockSlotView(
         return dc.localPositionOf(c, p)
     }
     /** Dragging [what] (null: the whole slot) from its header or tab. */
-    fun Modifier.draggable(what: PanelSection?, label: String, coords: Array<LayoutCoordinates?>): Modifier = pointerInput(index, what) {
-        detectDragGestures(
-            onDragStart = { p -> start(what, label, toDock(coords[0], p)) },
-            onDragEnd = { end(false) },
-            onDragCancel = { end(true) },
-        ) { change, _ ->
-            change.consume()
-            move(toDock(coords[0], change.position))
+    fun Modifier.draggable(what: PanelSection?, label: String, coords: Array<LayoutCoordinates?>): Modifier = pointerInput(index, what, label) {
+        var dragging = false
+        try {
+            detectDragGestures(
+                onDragStart = { p ->
+                    dragging = true
+                    start(what, label, toDock(coords[0], p))
+                },
+                onDragEnd = {
+                    dragging = false
+                    end(false)
+                },
+                onDragCancel = {
+                    dragging = false
+                    end(true)
+                },
+            ) { change, _ ->
+                change.consume()
+                move(toDock(coords[0], change.position))
+            }
+        } finally {
+            // (Cut short, say the slot moved away: the dragged name doesn't stay on the screen)
+            if (dragging) end(true)
         }
     }
 
@@ -541,8 +613,9 @@ private fun DockSlotView(
                                     if (on) {
                                         vm.toggleSection(s)
                                     } else {
-                                        vm.setDock(vm.dock.map { if (it == slot) it.copy(active = k) else it }, save = true)
                                         vm.toggleSection(s, open = true)
+                                        // (Shown even when it was open already)
+                                        vm.showInDock(s)
                                     }
                                 }
                                 .then(if (on) Modifier.background(Q.field) else Modifier)
@@ -558,8 +631,14 @@ private fun DockSlotView(
         if (open) {
             if (section == PanelSection.LAYERS) {
                 LayersPanel(vm, onPlaceImage, fillList = true, modifier = Modifier.weight(1f).fillMaxWidth(), showHeader = false)
+            } else if (section == PanelSection.HISTORY) {
+                // (It scrolls by itself, in all the room the slot has)
+                Box(Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = Q.gap(12.dp, 8.dp)).padding(bottom = Q.gap(10.dp, 4.dp))) {
+                    HistoryList(vm, Modifier)
+                }
             } else {
-                val scroll = rememberScrollState()
+                // (Each tab keeps its own place)
+                val scroll = key(section) { rememberScrollState() }
                 Column(
                     Modifier
                         .weight(1f, fill = false)
@@ -572,7 +651,7 @@ private fun DockSlotView(
                         PanelSection.COLOR -> ColorPanel(vm)
                         PanelSection.PROPERTIES -> PropertiesPanel(vm)
                         PanelSection.BRUSHES -> BrushesPanel(vm)
-                        PanelSection.HISTORY -> HistoryList(vm)
+                        PanelSection.HISTORY -> Unit
                         PanelSection.LAYERS -> Unit
                     }
                 }
