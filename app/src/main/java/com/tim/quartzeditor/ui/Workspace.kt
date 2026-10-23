@@ -118,6 +118,18 @@ fun Workspace(vm: EditorViewModel) {
             vm.replaceTarget = null
         }
     }
+    // Photoshop brushes (.abr) into the brush library
+    val importAbr = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let { vm.importAbr(it) } }
+    var abrSeen by remember { mutableIntStateOf(vm.abrImportRequest) }
+    LaunchedEffect(vm.abrImportRequest) {
+        if (vm.abrImportRequest != abrSeen) {
+            abrSeen = vm.abrImportRequest
+            try {
+                importAbr.launch(arrayOf("application/octet-stream", "application/x-photoshop", "*/*"))
+            } catch (_: android.content.ActivityNotFoundException) {
+            }
+        }
+    }
     // ComfyUI (the online app): adding a workflow file
     var comfyOpen by remember { mutableStateOf(false) }
     val importWorkflow = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let { vm.importComfyWorkflow(it) } }

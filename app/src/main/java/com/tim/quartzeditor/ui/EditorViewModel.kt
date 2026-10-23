@@ -103,6 +103,8 @@ data class BrushSettings(
     val style: com.tim.quartzeditor.engine.BrushStyle = com.tim.quartzeditor.engine.BrushStyle.PLAIN,
     /** The library brush these settings came from (null = none). */
     val presetId: String? = null,
+    /** An imported tip's picture (for the Imported tip). */
+    val customTip: String? = null,
 )
 
 /**
@@ -111,7 +113,10 @@ data class BrushSettings(
  * files beside this one, as extension functions (see "Where the code is" in the README).
  */
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
-    internal val prefs = app.getSharedPreferences("editor", Context.MODE_PRIVATE)
+    internal val prefs = app.getSharedPreferences("editor", Context.MODE_PRIVATE).also {
+        // Imported brush tips are kept with the app's files
+        com.tim.quartzeditor.engine.TipImages.dir = java.io.File(app.filesDir, "brushtips")
+    }
     internal val ctx: Context get() = getApplication()
 
     // ------------------------------------------------------------ document
@@ -403,6 +408,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Brushes you made (BrushLibrary.kt has the ready-made ones). */
     var userBrushes by mutableStateOf(loadUserBrushes(prefs))
         internal set
+    /** Bumped to ask for a .abr file to import (the workspace opens the file picker). */
+    var abrImportRequest by mutableIntStateOf(0)
     /** Brush Studio open for this tool's brush (null = closed). */
     var brushStudioFor by mutableStateOf<Tool?>(null)
     /** Stroke pictures of brushes, by their settings. */
@@ -1073,6 +1080,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         taperEnd = prefs.getFloat("$key.taperOut", def.taperEnd),
         style = prefs.getString("$key.style", null)?.let { runCatching { com.tim.quartzeditor.engine.BrushStyle.fromJson(org.json.JSONObject(it)) }.getOrNull() } ?: def.style,
         presetId = prefs.getString("$key.preset", def.presetId),
+        customTip = prefs.getString("$key.customTip", def.customTip),
     )
 
     private fun saveBrush(key: String, b: BrushSettings) {
@@ -1088,6 +1096,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("$key.taperOut", b.taperEnd)
             .putString("$key.style", b.style.toJson().toString())
             .putString("$key.preset", b.presetId)
+            .putString("$key.customTip", b.customTip)
             .apply()
     }
 

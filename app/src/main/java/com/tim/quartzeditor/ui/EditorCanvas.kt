@@ -1313,7 +1313,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 val center = Offset(size.width / 2f, size.height / 2f)
                 drawIntoCanvas { c ->
                     val nc = c.nativeCanvas
-                    val dab = com.tim.quartzeditor.engine.Dabs.get(b.tip, b.size.roundToInt().coerceAtLeast(1), b.softness)
+                    val dab = com.tim.quartzeditor.engine.Dabs.get(b.tip, b.size.roundToInt().coerceAtLeast(1), b.softness, b.customTip)
                     val col = if (vm.tool == Tool.ERASER) android.graphics.Color.WHITE else vm.foreground
                     val p = Paint(Paint.FILTER_BITMAP_FLAG).apply {
                         color = col or 0xFF000000.toInt()

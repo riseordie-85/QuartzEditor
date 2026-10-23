@@ -105,8 +105,9 @@ fun BrushStudio(vm: EditorViewModel) {
                             Text("Tip", color = Q.textDim, fontSize = 12.sp)
                             Spacer(Modifier.height(4.dp))
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                BrushTip.entries.forEach { t ->
-                                    val img = remember(t) { tipIcon(t) }
+                                // (The Imported tip only for a brush that has one)
+                                BrushTip.entries.filter { it != BrushTip.SAMPLED || b.customTip != null }.forEach { t ->
+                                    val img = remember(t, b.customTip) { if (t == BrushTip.SAMPLED) customTipIcon(b.customTip) else tipIcon(t) }
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
@@ -232,6 +233,11 @@ fun BrushPresetButton(vm: EditorViewModel, forTool: Tool) {
         androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.widthIn(min = 340.dp, max = 380.dp)) {
             Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Brushes", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                SmallButton("Import .abr…") {
+                    open = false
+                    vm.abrImportRequest++
+                }
+                Spacer(Modifier.size(6.dp))
                 SmallButton("Brush Studio…") {
                     open = false
                     vm.brushStudioFor = forTool
@@ -252,8 +258,19 @@ fun BrushesPanel(vm: EditorViewModel) {
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(if (t == Tool.ERASER) "For the eraser" else "For the brush", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        SmallButton("Import .abr…") { vm.abrImportRequest++ }
+        Spacer(Modifier.size(6.dp))
         SmallButton("Brush Studio…") { vm.brushStudioFor = t }
     }
     BrushLibraryList(vm, t)
 }
 
+
+/** An imported tip's picture, for its button. */
+private fun customTipIcon(id: String?): androidx.compose.ui.graphics.ImageBitmap {
+    val size = 64
+    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+    val dab = com.tim.quartzeditor.engine.Dabs.make(BrushTip.SAMPLED, 52, 0f, id)
+    android.graphics.Canvas(bmp).drawBitmap(dab, 6f, 6f, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply { color = android.graphics.Color.rgb(40, 40, 40) })
+    return bmp.asImageBitmap()
+}

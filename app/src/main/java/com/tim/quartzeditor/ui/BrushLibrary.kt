@@ -93,6 +93,7 @@ fun BrushSettings.toJson(): JSONObject = JSONObject().apply {
     put("taperIn", taperStart.toDouble())
     put("taperOut", taperEnd.toDouble())
     put("style", style.toJson())
+    customTip?.let { put("customTip", it) }
 }
 
 fun brushSettingsFromJson(o: JSONObject): BrushSettings = BrushSettings(
@@ -106,19 +107,20 @@ fun brushSettingsFromJson(o: JSONObject): BrushSettings = BrushSettings(
     taperStart = o.optDouble("taperIn", 0.0).toFloat(),
     taperEnd = o.optDouble("taperOut", 0.0).toFloat(),
     style = BrushStyle.fromJson(o.optJSONObject("style")),
+    customTip = o.optString("customTip", "").ifBlank { null },
 )
 
 internal fun loadUserBrushes(prefs: SharedPreferences): List<BrushPreset> = runCatching {
     val a = JSONArray(prefs.getString("userBrushes", "[]"))
     (0 until a.length()).map { i ->
         val o = a.getJSONObject(i)
-        BrushPreset(o.getString("id"), o.getString("name"), brushSettingsFromJson(o.getJSONObject("settings")), false, "Your brushes")
+        BrushPreset(o.getString("id"), o.getString("name"), brushSettingsFromJson(o.getJSONObject("settings")), false, o.optString("group", "Your brushes"))
     }
 }.getOrDefault(emptyList())
 
 private fun EditorViewModel.saveUserBrushes() {
     val a = JSONArray()
-    userBrushes.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("settings", it.settings.toJson())) }
+    userBrushes.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("group", it.group).put("settings", it.settings.toJson())) }
     prefs.edit().putString("userBrushes", a.toString()).apply()
 }
 
@@ -166,8 +168,43 @@ fun EditorViewModel.renameUserBrush(id: String, name: String) {
 }
 
 fun EditorViewModel.deleteUserBrush(id: String) {
+    val gone = userBrushes.firstOrNull { it.id == id } ?: return
     userBrushes = userBrushes.filter { it.id != id }
     saveUserBrushes()
+    // Its imported tip goes too, when nothing else uses it
+    val tip = gone.settings.customTip ?: return
+    if (userBrushes.none { it.settings.customTip == tip } && brush.customTip != tip && eraser.customTip != tip) com.tim.quartzeditor.engine.TipImages.delete(tip)
+}
+
+/** Brushes from a Photoshop .abr file: each sampled tip becomes one of your brushes, in a group named for the file. */
+fun EditorViewModel.importAbr(uri: android.net.Uri) {
+    runBusy("Importing brushes…") {
+        val name = withContext(Dispatchers.IO) { com.tim.quartzeditor.data.Media.displayName(ctx, uri) }.substringBeforeLast('.').ifBlank { "Brushes" }
+        val tips = withContext(Dispatchers.IO) {
+            val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("Couldn't read that file")
+            com.tim.quartzeditor.engine.Abr.parse(bytes)
+        }
+        if (tips.isEmpty()) throw IllegalStateException("No brush tips in that file the app can read (only sampled tips import)")
+        val stamp = System.currentTimeMillis().toString(36)
+        val made = withContext(Dispatchers.IO) {
+            tips.mapIndexed { i, t ->
+                val tipId = "abr$stamp$i"
+                com.tim.quartzeditor.engine.TipImages.save(tipId, t)
+                val size = maxOf(t.width, t.height).toFloat().coerceIn(4f, 300f)
+                BrushPreset(
+                    "u$stamp$i", t.name ?: "$name ${i + 1}",
+                    BrushSettings(
+                        tip = BrushTip.SAMPLED, customTip = tipId, size = size, softness = 0f, pressureSize = true,
+                        style = BrushStyle(spacing = (t.spacing ?: 0.25f).coerceIn(0.02f, 3f), tiltMode = TiltMode.NONE),
+                    ),
+                    false, "Imported · $name",
+                )
+            }
+        }
+        userBrushes = userBrushes + made
+        saveUserBrushes()
+        toast("Imported ${made.size} brush${if (made.size == 1) "" else "es"} from \"$name\"")
+    }
 }
 
 // ===================================================================== stroke pictures
@@ -188,7 +225,7 @@ fun renderBrushStroke(b: BrushSettings, w: Int, h: Int, color: Int): Bitmap {
     )
     val layer = Layer(1L, LayerProps("Preview"), TileGrid(alphaOnly = false))
     // (The same every time, and its own dab pictures, so the brush in use keeps its)
-    val s = StrokeSession(layer, StrokeTarget.PIXELS, false, color, 0, b.opacity, b.tip, size, b.softness, null, dyn, b.style, seed = 7L, sharedDabs = false)
+    val s = StrokeSession(layer, StrokeTarget.PIXELS, false, color, 0, b.opacity, b.tip, size, b.softness, null, dyn, b.style, seed = 7L, sharedDabs = false, customTip = b.customTip)
     val n = 90
     for (i in 0..n) {
         val t = i / n.toFloat()

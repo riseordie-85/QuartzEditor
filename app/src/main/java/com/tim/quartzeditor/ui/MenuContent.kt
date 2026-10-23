@@ -65,6 +65,7 @@ fun PagedMenuScope.FileMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Export image…") { a.export() }
     Item("Save project file…") { a.saveProject() }
     Item("Place image as layer…") { a.placeImage() }
+    Item("Import brushes (.abr)…") { vm.abrImportRequest++ }
     Divider()
     Item("Close (saves to Projects)") { vm.closeDocument() }
     Item("Close without saving…") { a.discard() }

@@ -30,6 +30,8 @@ enum class BrushTip(val label: String, val spacing: Float, val randomRotation: B
     BLADE("Blade", 0.35f, false),
     /** A row of fine hairs across the dab (fur, hair, dry brush). */
     BRISTLES("Bristles", 0.05f, false),
+    /** A picture (an imported Photoshop brush's tip; which one is the brush's customTip). */
+    SAMPLED("Imported", 0.25f, false),
     ;
 
     companion object {
@@ -42,17 +44,17 @@ enum class BrushTip(val label: String, val spacing: Float, val randomRotation: B
 
 /** Builds the 1-byte coverage image for one dab of a brush. */
 object Dabs {
-    private data class Key(val tip: BrushTip, val size: Int, val softness: Int)
+    private data class Key(val tip: BrushTip, val size: Int, val softness: Int, val custom: String?)
 
     private var lastKey: Key? = null
     private var last: Bitmap? = null
 
     /** A [size]×[size] coverage image. [softness] 0 = hard edge, 1 = fully soft. Cached for the last settings. */
     @Synchronized
-    fun get(tip: BrushTip, size: Int, softness: Float): Bitmap {
-        val key = Key(tip, size.coerceIn(1, MAX_SIZE), (softness.coerceIn(0f, 1f) * 100).roundToInt())
+    fun get(tip: BrushTip, size: Int, softness: Float, custom: String? = null): Bitmap {
+        val key = Key(tip, size.coerceIn(1, MAX_SIZE), (softness.coerceIn(0f, 1f) * 100).roundToInt(), custom)
         last?.let { if (key == lastKey && !it.isRecycled) return it }
-        val bmp = make(key.tip, key.size, key.softness / 100f)
+        val bmp = make(key.tip, key.size, key.softness / 100f, custom)
         lastKey = key
         last = bmp
         return bmp
@@ -60,7 +62,7 @@ object Dabs {
 
     const val MAX_SIZE = 1000
 
-    private data class LevelKey(val tip: BrushTip, val size: Int, val softness: Int, val level: Int)
+    private data class LevelKey(val tip: BrushTip, val size: Int, val softness: Int, val level: Int, val custom: String?)
     private val levels = HashMap<LevelKey, Bitmap>()
 
     /**
@@ -69,25 +71,28 @@ object Dabs {
      * the last brush only.
      */
     @Synchronized
-    fun level(tip: BrushTip, size: Int, softness: Float, level: Int): Bitmap {
-        if (level <= 0) return get(tip, size, softness)
+    fun level(tip: BrushTip, size: Int, softness: Float, level: Int, custom: String? = null): Bitmap {
+        if (level <= 0) return get(tip, size, softness, custom)
         val s = size.coerceIn(1, MAX_SIZE)
         val soft = (softness.coerceIn(0f, 1f) * 100).roundToInt()
-        val key = LevelKey(tip, s, soft, level)
+        val key = LevelKey(tip, s, soft, level, custom)
         levels[key]?.let { if (!it.isRecycled) return it }
-        if (levels.keys.any { it.tip != tip || it.size != s || it.softness != soft }) levels.clear()
-        val bmp = make(tip, max(1, s shr level), soft / 100f)
+        if (levels.keys.any { it.tip != tip || it.size != s || it.softness != soft || it.custom != custom }) levels.clear()
+        val bmp = make(tip, max(1, s shr level), soft / 100f, custom)
         levels[key] = bmp
         return bmp
     }
 
-    fun make(tip: BrushTip, size: Int, softness: Float): Bitmap {
+    fun make(tip: BrushTip, size: Int, softness: Float, custom: String? = null): Bitmap {
         val d = size.coerceAtLeast(1)
         val out = ByteArray(d * d)
         val r = d / 2f
         val c = (d - 1) / 2f
-        when (tip) {
-            BrushTip.ROUND, BrushTip.GRUNGE -> {
+        // An imported tip's picture (a round one if it's gone)
+        val picture = if (tip == BrushTip.SAMPLED && custom != null) TipImages.fitted(custom, d) else null
+        if (picture != null) System.arraycopy(picture, 0, out, 0, out.size)
+        else when (tip) {
+            BrushTip.ROUND, BrushTip.GRUNGE, BrushTip.SAMPLED -> {
                 // Edge fade width: at least 1px so hard brushes are still smooth
                 val w = max(1f, softness * r)
                 for (y in 0 until d) for (x in 0 until d) {
@@ -282,6 +287,8 @@ class StrokeSession(
     val style: BrushStyle = BrushStyle.PLAIN,
     /** What the random variation starts from (null: different every stroke; a number for the same every time). */
     seed: Long? = null,
+    /** The imported tip's picture, for [BrushTip.SAMPLED]. */
+    private val customTip: String? = null,
     /** Shares the app's dab pictures (off for sample strokes drawn in the background, so they don't push out the brush in use). */
     private val sharedDabs: Boolean = true,
 ) {
@@ -289,7 +296,7 @@ class StrokeSession(
     val buffer = TileGrid(alphaOnly = true)
     private val canvases = HashMap<Long, Canvas>()
     private val dabSize = size.roundToInt().coerceAtLeast(1)
-    private val dab = if (sharedDabs) Dabs.get(tip, dabSize, softness) else Dabs.make(tip, dabSize, softness)
+    private val dab = if (sharedDabs) Dabs.get(tip, dabSize, softness, customTip) else Dabs.make(tip, dabSize, softness, customTip)
     /** Smaller dab pictures, for strokes that don't share the app's. */
     private val ownLevels = HashMap<Int, Bitmap>()
     private val dabPaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -545,8 +552,8 @@ class StrokeSession(
         if (k < 0.999f) while (level < 10 && (dabSize shr (level + 1)) >= max(2f, drawn)) level++
         val img = when {
             level == 0 -> dab
-            sharedDabs -> Dabs.level(tip, dabSize, softness, level)
-            else -> ownLevels.getOrPut(level) { Dabs.make(tip, max(1, dabSize shr level), softness) }
+            sharedDabs -> Dabs.level(tip, dabSize, softness, level, customTip)
+            else -> ownLevels.getOrPut(level) { Dabs.make(tip, max(1, dabSize shr level), softness, customTip) }
         }
         val plain = simple
         for (key in grid.keysIn(r)) {
