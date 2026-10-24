@@ -61,6 +61,7 @@ import com.tim.quartzeditor.data.ExportFormat
 import com.tim.quartzeditor.data.Media
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -71,8 +72,19 @@ import kotlin.math.roundToInt
 /** How big the preview may be decoded (bigger pictures are previewed at half size). */
 private const val PREVIEW_MAX = 4096
 
-/** One preview: what's saved, decoded back (so compression shows), and before compression. */
-private class ExportPreview(val shown: Bitmap, val original: Bitmap, val bytes: Long?)
+/** One preview: what's saved, decoded back (so compression shows), and before compression; [outW] is the saved file's width. */
+private class ExportPreview(val shown: Bitmap, val original: Bitmap, val bytes: Long?, val outW: Int)
+
+/** Previews take turns (each holds the picture at its new size in memory). */
+private val PREVIEW_DISPATCHER = Dispatchers.Default.limitedParallelism(1)
+
+/** [b] small enough for the screen to draw (Android won't draw a picture over about 100 MB). */
+private fun screenSized(b: Bitmap): Bitmap {
+    val longest = maxOf(b.width, b.height)
+    if (longest <= PREVIEW_MAX) return b
+    val k = PREVIEW_MAX.toFloat() / longest
+    return Bitmap.createScaledBitmap(b, (b.width * k).roundToInt().coerceAtLeast(1), (b.height * k).roundToInt().coerceAtLeast(1), true)
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -80,21 +92,32 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
     val prefs = vm.prefs
     val docW = vm.rootDoc?.width ?: 1
     val docH = vm.rootDoc?.height ?: 1
-    // The picture flattened once, then sized and compressed for each change
-    var src by remember { mutableStateOf<Bitmap?>(null) }
+    var format by remember { mutableStateOf(ExportFormat.entries.firstOrNull { it.name == prefs.getString("exportFormat", null) } ?: ExportFormat.PNG) }
+    // The picture flattened once (on white too, the first time a format without see-through is
+    // picked), then sized and compressed for each change
+    var clear by remember { mutableStateOf<Bitmap?>(null) }
+    var white by remember { mutableStateOf<Bitmap?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
+    val needWhite = !format.alpha
+    LaunchedEffect(needWhite) {
+        if ((if (needWhite) white else clear) != null) return@LaunchedEffect
         try {
-            src = vm.flattenForExport()
+            val b = vm.flattenForExport(white = needWhite)
+            if (needWhite) white = b else clear = b
+            failed = null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: OutOfMemoryError) {
             failed = "Not enough memory to show the picture"
         } catch (e: Exception) {
             failed = e.message ?: "Couldn't make the picture"
         }
     }
+    val src = if (needWhite) white else clear
     var fileName by remember { mutableStateOf(vm.rootDoc?.name ?: "Untitled") }
-    var format by remember { mutableStateOf(ExportFormat.entries.firstOrNull { it.name == prefs.getString("exportFormat", null) } ?: ExportFormat.PNG) }
-    var quality by remember(format) { mutableIntStateOf(prefs.getInt("exportQ:${format.name}", if (format == ExportFormat.JPEG) 85 else 80)) }
+    // Each format's quality, as last set (here, or when it was last saved)
+    val qualities = remember { androidx.compose.runtime.mutableStateMapOf<ExportFormat, Int>() }
+    val quality = qualities[format] ?: prefs.getInt("exportQ:${format.name}", if (format == ExportFormat.JPEG) 85 else 80)
     var lossless by remember { mutableStateOf(prefs.getBoolean("exportLossless", false)) }
     var width by remember { mutableIntStateOf(docW) }
     var height by remember { mutableIntStateOf(docH) }
@@ -108,15 +131,18 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
     val outH = if (layered) docH else height
     val maxSide = com.tim.quartzeditor.engine.Doc.MAX_SIDE * 2
 
+    // (Linked, the other side has to fit too, so the shape stays)
     fun setWidth(w: Int) {
-        width = w.coerceIn(1, maxSide)
+        val most = if (linked) minOf(maxSide, (maxSide.toFloat() * docW / docH).toInt().coerceAtLeast(1)) else maxSide
+        width = w.coerceIn(1, most)
         if (linked) {
             height = (width.toFloat() * docH / docW).roundToInt().coerceIn(1, maxSide)
             heightText = height.toString()
         }
     }
     fun setHeight(h: Int) {
-        height = h.coerceIn(1, maxSide)
+        val most = if (linked) minOf(maxSide, (maxSide.toFloat() * docH / docW).toInt().coerceAtLeast(1)) else maxSide
+        height = h.coerceIn(1, most)
         if (linked) {
             width = (height.toFloat() * docW / docH).roundToInt().coerceIn(1, maxSide)
             widthText = width.toString()
@@ -129,44 +155,57 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
         heightText = height.toString()
     }
 
-    // The preview, made again a moment after anything changes
+    // The preview, made again a moment after anything changes (one at a time; one overtaken stops)
     var preview by remember { mutableStateOf<ExportPreview?>(null) }
     var working by remember { mutableStateOf(false) }
     var previewError by remember { mutableStateOf<String?>(null) }
+    val previewThread = remember { PREVIEW_DISPATCHER }
     LaunchedEffect(src, format, quality, lossless, outW, outH) {
         val s = src ?: return@LaunchedEffect
         working = true
         delay(280)
         try {
-            val made = withContext(Dispatchers.Default) {
+            val made = withContext(previewThread) {
                 val sized = Media.resized(s, outW, outH, opaque = !format.alpha)
+                ensureActive()
                 if (layered || format == ExportFormat.TIFF) {
                     // (No size to work out before saving: the file is the picture without loss)
-                    ExportPreview(sized, sized, null)
+                    val small = screenSized(sized)
+                    ExportPreview(small, small, null, outW)
                 } else {
                     val data = Media.encode(sized, format, quality, lossless)
+                    ensureActive()
                     val opts = BitmapFactory.Options().apply {
                         inPreferredConfig = Bitmap.Config.ARGB_8888
-                        inSampleSize = if (maxOf(outW, outH) > PREVIEW_MAX) 2 else 1
+                        // (Big ones are shown from half or quarter size: Android can't draw them whole)
+                        var k = 1
+                        while (maxOf(outW, outH) / k > PREVIEW_MAX) k *= 2
+                        inSampleSize = k
                     }
-                    val back = BitmapFactory.decodeByteArray(data, 0, data.size, opts) ?: sized
-                    ExportPreview(back, sized, data.size.toLong())
+                    val back = BitmapFactory.decodeByteArray(data, 0, data.size, opts)
+                    ExportPreview(back ?: screenSized(sized), screenSized(sized), data.size.toLong(), outW)
                 }
             }
             // (Old previews are left to the garbage collector: one may still be on screen this frame)
             preview = made
             previewError = null
+            working = false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: OutOfMemoryError) {
+            preview = null
             previewError = "Too big to preview"
+            working = false
         } catch (e: Exception) {
+            preview = null
             previewError = e.message ?: "Couldn't make the preview"
-        } finally {
             working = false
         }
     }
 
     fun doExport(share: Boolean) {
-        val s = src ?: return
+        // (Photoshop and layered TIFF files are made from the layers, not this picture)
+        val s = src ?: if (layered) Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) else return
         prefs.edit()
             .putString("exportFormat", format.name)
             .putInt("exportQ:${format.name}", quality)
@@ -223,7 +262,7 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                         Spacer(Modifier.height(12.dp))
                         PanelSlider(
                             "Quality", quality.toFloat(), 1f..100f, "$quality%",
-                            onChange = { quality = it.roundToInt().coerceIn(1, 100) },
+                            onChange = { qualities[format] = it.roundToInt().coerceIn(1, 100) },
                         )
                         Text("Lower makes a smaller file; around 70–80% usually looks the same.", color = Q.textDim, fontSize = 12.sp)
                     }
@@ -235,7 +274,11 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                                 widthText,
                                 { t ->
                                     widthText = t.filter { it.isDigit() }.take(5)
-                                    widthText.toIntOrNull()?.takeIf { it > 0 }?.let { setWidth(it) }
+                                    widthText.toIntOrNull()?.takeIf { it > 0 }?.let { v ->
+                                        setWidth(v)
+                                        // (Past what's allowed: shows what it really is)
+                                        if (width != v) widthText = width.toString()
+                                    }
                                 },
                                 label = { Text("Width") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -245,7 +288,13 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier.padding(horizontal = 6.dp).size(40.dp).clip(RoundedCornerShape(10.dp))
                                     .background(if (linked) Q.accent.copy(alpha = 0.25f) else Color.Transparent)
-                                    .pointerInput(Unit) { detectTapGestures { linked = !linked } },
+                                    .pointerInput(Unit) {
+                                        detectTapGestures {
+                                            linked = !linked
+                                            // Linked again: back to the picture's shape
+                                            if (linked) setWidth(width)
+                                        }
+                                    },
                             ) {
                                 Icon(if (linked) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = if (linked) "Proportions kept" else "Proportions free", tint = Q.text)
                             }
@@ -253,7 +302,10 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                                 heightText,
                                 { t ->
                                     heightText = t.filter { it.isDigit() }.take(5)
-                                    heightText.toIntOrNull()?.takeIf { it > 0 }?.let { setHeight(it) }
+                                    heightText.toIntOrNull()?.takeIf { it > 0 }?.let { v ->
+                                        setHeight(v)
+                                        if (height != v) heightText = height.toString()
+                                    }
                                 },
                                 label = { Text("Height") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -291,8 +343,8 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                     }
                     Spacer(Modifier.height(18.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SmallButton("Save & share", enabled = src != null) { doExport(share = true) }
-                        SmallButton("Save", primary = true, enabled = src != null) { doExport(share = false) }
+                        SmallButton("Save & share", enabled = src != null || layered) { doExport(share = true) }
+                        SmallButton("Save", primary = true, enabled = src != null || layered) { doExport(share = false) }
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -355,7 +407,7 @@ private fun PreviewPane(p: ExportPreview?, loading: Boolean, working: Boolean, e
                 Image(image, contentDescription = "Preview", contentScale = ContentScale.Fit, filterQuality = FilterQuality.Medium, modifier = Modifier.fillMaxSize().padding(16.dp))
             } else {
                 // (A preview made at half size is shown twice as big, so 100% is the saved file's pixels)
-                val k = zoom * (p.original.width.toFloat() / bmp.width)
+                val k = zoom * (p.outW.toFloat() / bmp.width)
                 Box(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
                 ) {

@@ -158,7 +158,8 @@ fun Workspace(vm: EditorViewModel) {
     var renameLayerOpen by remember { mutableStateOf(false) }
     val menuActions = MenuActions(
         rename = { renameOpen = true },
-        export = { exportOpen = true },
+        // (A crop, filter, transform or text still open goes in first, so it's in the file)
+        export = { if (!vm.pendingFirst { exportOpen = true }) exportOpen = true },
         saveProject = { saveProject.launch("${vm.rootDoc?.name ?: "Untitled"}.${ProjectIO.EXTENSION}") },
         placeImage = requestPlace,
         discard = { discardOpen = true },

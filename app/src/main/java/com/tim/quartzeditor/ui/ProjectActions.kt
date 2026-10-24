@@ -562,14 +562,18 @@ fun EditorViewModel.renameDocument(name: String) {
     (tabs.firstOrNull()?.history ?: history).record(com.tim.quartzeditor.engine.RenameChange(old, n))
 }
 
-/** The whole picture flattened at full size, see-through where it is (for the Export screen). Null when there's nothing open. */
-internal suspend fun EditorViewModel.flattenForExport(): android.graphics.Bitmap? {
+/**
+ * The whole picture flattened at full size for the Export screen: see-through where it is, or on
+ * [white] for formats that can't be (blend modes and adjustments then blend with the white, as
+ * they always have). Null when there's nothing open.
+ */
+internal suspend fun EditorViewModel.flattenForExport(white: Boolean = false): android.graphics.Bitmap? {
     val sc = saveCopy() ?: return null
     val copy = sc.doc
     return withContext(Dispatchers.Default) {
         sc.finish()
         val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
-        DocRenderer.flatten(copy, Color.TRANSPARENT, effects = { fx[it.id] })
+        DocRenderer.flatten(copy, if (white) Color.WHITE else Color.TRANSPARENT, effects = { fx[it.id] })
     }
 }
 
