@@ -237,6 +237,80 @@ object Media {
         }
     }
 
+    /**
+     * [bitmap] encoded as [format]: JPG and WebP at [quality] (1..100; WebP [lossless] ignores it),
+     * PNG and TIFF without loss.
+     */
+    fun encode(bitmap: Bitmap, format: ExportFormat, quality: Int, lossless: Boolean): ByteArray {
+        val out = java.io.ByteArrayOutputStream(1 shl 16)
+        val q = quality.coerceIn(1, 100)
+        val ok = when (format) {
+            ExportFormat.PNG -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            ExportFormat.JPEG -> bitmap.compress(Bitmap.CompressFormat.JPEG, q, out)
+            ExportFormat.WEBP -> if (lossless) bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, out) else bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, q, out)
+            else -> {
+                writeTiff(bitmap, out)
+                true
+            }
+        }
+        if (!ok) throw IOException("Couldn't encode the picture")
+        return out.toByteArray()
+    }
+
+    /**
+     * [src] at [w]×[h] (made smaller in halves first, so fine detail doesn't break up), on white
+     * when the format can't be see-through.
+     */
+    fun resized(src: Bitmap, w: Int, h: Int, opaque: Boolean): Bitmap {
+        var cur = src
+        // Halve while it's still more than twice as big
+        while (cur.width / 2 >= w && cur.height / 2 >= h && cur.width >= 2 && cur.height >= 2) {
+            val next = Bitmap.createScaledBitmap(cur, cur.width / 2, cur.height / 2, true)
+            if (cur !== src) cur.recycle()
+            cur = next
+        }
+        val sized = if (cur.width == w && cur.height == h) cur else Bitmap.createScaledBitmap(cur, w, h, true).also { if (cur !== src) cur.recycle() }
+        if (!opaque) return if (sized === src) src.copy(Bitmap.Config.ARGB_8888, false) else sized
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(sized, 0f, 0f, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
+        if (sized !== src) sized.recycle()
+        return out
+    }
+
+    /** Saves already-encoded picture [bytes] to Pictures/Quartz Editor as [name] (without extension). */
+    suspend fun saveBytes(context: Context, bytes: ByteArray, name: String, format: ExportFormat): Uri = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.${format.ext}")
+            put(MediaStore.Images.Media.MIME_TYPE, format.mime)
+            put(MediaStore.Images.Media.RELATIVE_PATH, FOLDER_LABEL)
+            put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+            ?: throw IOException("Android didn't allow a new picture")
+        try {
+            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw IOException("Couldn't write the picture")
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            uri
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
+    }
+
+    /** "187 KB", "2.4 MB". */
+    fun sizeLabel(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes bytes"
+        bytes < 1024 * 1024 -> "${(bytes + 512) / 1024} KB"
+        else -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    }
+
     /** Saves a finished image to Pictures/Quartz Editor. Returns its address. */
     suspend fun saveImage(context: Context, bitmap: Bitmap, name: String, format: ExportFormat): Uri = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver

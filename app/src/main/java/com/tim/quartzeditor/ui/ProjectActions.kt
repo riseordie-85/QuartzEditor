@@ -561,3 +561,42 @@ fun EditorViewModel.renameDocument(name: String) {
     d.name = n
     (tabs.firstOrNull()?.history ?: history).record(com.tim.quartzeditor.engine.RenameChange(old, n))
 }
+
+/** The whole picture flattened at full size, see-through where it is (for the Export screen). Null when there's nothing open. */
+internal suspend fun EditorViewModel.flattenForExport(): android.graphics.Bitmap? {
+    val sc = saveCopy() ?: return null
+    val copy = sc.doc
+    return withContext(Dispatchers.Default) {
+        sc.finish()
+        val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
+        DocRenderer.flatten(copy, Color.TRANSPARENT, effects = { fx[it.id] })
+    }
+}
+
+/** What the Export screen saves: the format, its quality, and the size. */
+data class ExportSettings(val format: ExportFormat, val quality: Int, val lossless: Boolean, val width: Int, val height: Int)
+
+/**
+ * Saves [src] (the flattened picture) as [s] says to Pictures/Quartz Editor under [name]; Photoshop
+ * and layered TIFF files are saved whole, with their layers. Calls [onSaved] with its address.
+ */
+fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, name: String, onSaved: (Uri) -> Unit = {}) {
+    if (s.format == ExportFormat.PSD || s.format == ExportFormat.TIFF_LAYERS) {
+        renameDocument(name)
+        export(s.format, onSaved = onSaved)
+        return
+    }
+    runBusy("Exporting…") {
+        val (uri, bytes) = withContext(Dispatchers.Default) {
+            val sized = Media.resized(src, s.width, s.height, opaque = !s.format.alpha)
+            val data = try {
+                Media.encode(sized, s.format, s.quality, s.lossless)
+            } finally {
+                sized.recycle()
+            }
+            Media.saveBytes(ctx, data, name.ifBlank { "Quartz" }, s.format) to data.size
+        }
+        toast("Saved \"${name.ifBlank { "Quartz" }}.${s.format.ext}\" (${Media.sizeLabel(bytes.toLong())}) to Pictures/${Media.FOLDER}")
+        onSaved(uri)
+    }
+}

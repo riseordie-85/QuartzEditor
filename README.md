@@ -552,8 +552,16 @@ in between. With a selection, the mask button makes a mask that shows only what'
   Brushes panel.)
 - **Quick export (.png)** (Menu, under Home) saves a PNG of the whole picture straight to
   `Pictures/Quartz Editor`, named for when it was saved (`Quartz 10-20-26 19-30-05.png`), with no questions.
-- **Export image** saves a flattened PNG, JPG, WebP or TIFF (ZIP-compressed, with transparency) to `Pictures/Quartz Editor` (shows up in Quartz
-  Gallery), optionally sharing it.
+- **Export image** (File menu) opens the Export screen: a **preview** of exactly what will be saved
+  (compression and all; Fit, 100% or 200% to look closely; hold "hold here to compare" to see it before
+  compression) beside the settings:
+  - **File name** (the image takes it too) and **format**: PNG, JPG, WebP, TIFF, Photoshop, TIFF with layers.
+  - **Quality** for JPG and WebP (1–100%; WebP can also be **Lossless**). Each format remembers its own.
+  - **Size**: width and height in pixels (linked, or not), or 100 / 75 / 50 / 33 / 25%. Only the saved file
+    is resized (in halves first, so it stays sharp); the image stays as it is.
+  - The **file size** it comes to, worked out as you change things.
+  - **Save** or **Save & share**, to `Pictures/Quartz Editor` (it shows up in your gallery). Photoshop and
+    layered TIFF files are saved whole, at full size.
 - **Photoshop file**: Export image → Photoshop saves a `.psd` with its layers to `Download/Quartz Editor`:
   - every layer's pixels, mask (on or off), blend mode, opacity, fill, clipping, visibility, locks and
     Blend If (Photoshop files' Blend If comes in too);

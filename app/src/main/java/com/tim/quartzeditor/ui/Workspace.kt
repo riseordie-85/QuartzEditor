@@ -544,23 +544,16 @@ fun Workspace(vm: EditorViewModel) {
         }
     }
     if (exportOpen) {
-        ExportDialog(
-            name = vm.rootDoc?.name ?: "Untitled",
+        ExportScreen(
+            vm,
             onDismiss = { exportOpen = false },
-            onExport = { format, share, fileName ->
-                exportOpen = false
-                // The image takes the name too (its project and project files use it)
-                vm.renameDocument(fileName)
-                vm.export(format) { uri ->
-                    if (share) {
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = format.mime
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(Intent.createChooser(send, "Share image"))
-                    }
+            onShare = { uri, mime ->
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
+                context.startActivity(Intent.createChooser(send, "Share image"))
             },
         )
     }
@@ -678,52 +671,6 @@ private fun RoundButtonFace(icon: ImageVector, label: String, enabled: Boolean, 
     ) {
         Icon(icon, contentDescription = label, tint = if (enabled) Q.text else Q.textDim.copy(alpha = 0.5f), modifier = Modifier.size(24.dp))
     }
-}
-
-@Composable
-private fun ExportDialog(name: String, onDismiss: () -> Unit, onExport: (ExportFormat, Boolean, String) -> Unit) {
-    var format by rememberSaveable { mutableStateOf(ExportFormat.PNG) }
-    var fileName by rememberSaveable { mutableStateOf(name) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Export image") },
-        text = {
-            Column {
-                Text("Saves a flattened copy to Pictures/Quartz Editor (it shows up in Quartz Gallery), or a Photoshop file with its layers.", color = Q.textDim, fontSize = 14.sp)
-                Spacer(Modifier.height(12.dp))
-                androidx.compose.material3.OutlinedTextField(
-                    fileName, { fileName = it.replace("/", "").take(80) }, label = { Text("File name") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                // Wraps onto a second line on a narrow screen
-                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ExportFormat.entries.forEach { f ->
-                        SmallButton(f.label, primary = f == format) { format = f }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    when {
-                        format == ExportFormat.PSD -> "Keeps every layer, mask, style, adjustment, shape, text and smart layer. Saved to Download/${com.tim.quartzeditor.data.Media.FOLDER}."
-                        format == ExportFormat.TIFF_LAYERS -> "A TIFF any app shows, with the layers kept inside it like Photoshop's own (Photoshop and Quartz Editor open them)."
-                        format.alpha -> "Keeps see-through areas."
-                        else -> "See-through areas become white."
-                    },
-                    color = Q.textDim,
-                    fontSize = 13.sp,
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = { onExport(format, false, fileName) }) { Text("Save") } },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                TextButton(onClick = { onExport(format, true, fileName) }) { Text("Save & share") }
-            }
-        },
-    )
 }
 
 /**
