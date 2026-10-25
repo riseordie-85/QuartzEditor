@@ -649,6 +649,13 @@ one, while you keep editing. A chip
 at the bottom of the picture shows what it's doing (loading models, step 12 / 25…) with ComfyUI's live
 preview, and **Cancel** (which stops it on the server too). If something goes wrong (the computer's
 off, a model is missing) the chip says what ComfyUI said.
+- **FLUX 3 box edits** (workflows with Create Bounding Boxes, like FLUX 3 Klein image edit): select the
+  part to change first. The whole picture is sent, the selection's box becomes `<obj_1>` in the prompt
+  ("change the dress <obj_1> to red"), and the result is kept to the selection (the rest stays at full
+  resolution). With nothing selected, the box the workflow was saved with is taken out (it was drawn on
+  another picture), so leave `<obj_1>` out of the prompt.
+- **Improve the prompt first** also works for workflows whose If/Else switch is wired the other way round
+  (the language model on its "false" side, as in FLUX 3's), and through Preview Any nodes on the way.
 - **Upscales**: "A bigger result makes the image bigger" (for workflows that send a picture; on at first
   for ones named "upscale") enlarges the whole image to the result's size when it comes back bigger, so
   the new layer keeps every pixel (Image Size, one more undo step). Only when the whole picture was sent

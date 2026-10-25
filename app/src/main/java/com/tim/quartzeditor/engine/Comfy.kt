@@ -531,16 +531,38 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         return listOf("value", "string", "text").firstOrNull { inp.opt(it) is String }
     }
 
-    /** Where [v] (an input) takes its text from: the input itself when it's typed in, or the text node it's linked to. */
-    private fun textSource(owner: String, key: String, v: Any?): Pair<String, String>? = when {
-        v is String -> owner to key
-        else -> link(v)?.first?.let { n -> textKey(n)?.let { n to it } }
+    /**
+     * Where [v] (an input) takes its text from: the input itself when it's typed in, or the node it's
+     * linked to that holds the typed text (a text node, or one with its own typed prompt, like FLUX 3's
+     * layout prompt), looking through Preview Any nodes on the way.
+     */
+    private fun textSource(owner: String, key: String, v: Any?, depth: Int = 0): Pair<String, String>? {
+        if (v is String) return owner to key
+        val n = link(v)?.first ?: return null
+        val o = json.optJSONObject(n) ?: return null
+        textKey(n)?.let { return n to it }
+        if (depth < 6 && cls(o) == "PreviewAny") return textSource(n, "source", inputs(o).opt("source"), depth + 1)
+        if (cls(o) != "TextGenerate" && inputs(o).opt("prompt") is String) return n to "prompt"
+        return null
     }
 
-    /** An If/Else switch choosing between the plain prompt ("false") and a prompt enhancer's ("true"). */
+    /** [v] links to a prompt enhancer (a language model), maybe through Preview Any nodes. */
+    private fun leadsToEnhancer(v: Any?, depth: Int = 0): Boolean {
+        val n = link(v)?.first ?: return false
+        val o = json.optJSONObject(n) ?: return false
+        return cls(o) == "TextGenerate" || (depth < 6 && cls(o) == "PreviewAny" && leadsToEnhancer(inputs(o).opt("source"), depth + 1))
+    }
+
+    /** An If/Else switch choosing between the plain prompt and a prompt enhancer's (either way round). */
     private val promptSwitch: String? = nodes().firstOrNull { (_, o) ->
-        cls(o) == "ComfySwitchNode" && link(inputs(o).opt("on_true"))?.first?.let { json.optJSONObject(it)?.let { t -> cls(t) == "TextGenerate" } } == true
+        cls(o) == "ComfySwitchNode" && (leadsToEnhancer(inputs(o).opt("on_true")) || leadsToEnhancer(inputs(o).opt("on_false")))
     }?.first
+
+    /** The switch's enhancer is on its "true" side (most are; some workflows wire it the other way). */
+    private val enhancerOnTrue: Boolean = promptSwitch?.let { leadsToEnhancer(inputs(json.getJSONObject(it)).opt("on_true")) } ?: true
+
+    /** The switch's side with the plain prompt. */
+    private val plainSide: String get() = if (enhancerOnTrue) "on_false" else "on_true"
 
     /** Prompt enhancers (a language model rewriting the prompt). */
     private val enhancers: List<String> = nodes().filter { (_, o) -> cls(o) == "TextGenerate" }.map { it.first }
@@ -548,7 +570,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     /** Where the prompt goes: (node, input). */
     private val promptTargets: List<Pair<String, String>> = run {
         val out = LinkedHashSet<Pair<String, String>>()
-        promptSwitch?.let { sw -> textSource(sw, "on_false", inputs(json.getJSONObject(sw)).opt("on_false"))?.let { out.add(it) } }
+        promptSwitch?.let { sw -> textSource(sw, plainSide, inputs(json.getJSONObject(sw)).opt(plainSide))?.let { out.add(it) } }
         for (e in enhancers) textSource(e, "prompt", inputs(json.getJSONObject(e)).opt("prompt"))?.let { out.add(it) }
         if (out.isEmpty()) {
             val texts = nodes().filter { (_, o) -> cls(o) == "CLIPTextEncode" && !title(o).contains("negative", ignoreCase = true) }
@@ -578,7 +600,8 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     val savedEnhance: Boolean = promptSwitch?.let { sw ->
         val v = json.optJSONObject(sw)?.optJSONObject("inputs")?.opt("switch")
         // The switch can be set by a Boolean node linked to it
-        (v as? Boolean) ?: link(v)?.first?.let { json.optJSONObject(it)?.optJSONObject("inputs")?.opt("value") as? Boolean }
+        val on = (v as? Boolean) ?: link(v)?.first?.let { json.optJSONObject(it)?.optJSONObject("inputs")?.opt("value") as? Boolean }
+        on?.let { it == enhancerOnTrue }
     } ?: false
 
     /** Megapixels of a new picture: from a Resolution Selector feeding its size, if there is one, else 1. */
@@ -668,7 +691,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     }
 
     /** [batch]: pictures in one run (the empty latent's batch size), when it [canBatch]. */
-    fun prepared(image: String?, prompt: String?, enhance: Boolean, width: Int, height: Int, overrides: ComfyOverrides = ComfyOverrides(), batch: Int = 1): JSONObject {
+    fun prepared(image: String?, prompt: String?, enhance: Boolean, width: Int, height: Int, overrides: ComfyOverrides = ComfyOverrides(), batch: Int = 1, boxes: ComfyBoxes? = null): JSONObject {
         val p = JSONObject(json.toString())
         overrides.applyTo(p)
         val drop = p.keys().asSequence().filter { k -> p.optJSONObject(k)?.optString("class_type") == "ImageCompare" }.toList()
@@ -692,11 +715,34 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         }
         if (prompt != null) for ((n, key) in promptTargets) p.optJSONObject(n)?.optJSONObject("inputs")?.put(key, prompt)
         if (canEnhance) promptSwitch?.let { sw ->
-            if (enhance) p.optJSONObject(sw)?.optJSONObject("inputs")?.put("switch", true)
+            if (enhance) p.optJSONObject(sw)?.optJSONObject("inputs")?.put("switch", enhancerOnTrue)
             else withoutEnhancer(p, sw)
+        }
+        // Boxes it aims at (FLUX 3's Create Bounding Boxes): the selection's, in the picture sent, or
+        // none (not the ones it was saved with, drawn on another picture). A new picture keeps its own.
+        if (boxes != null) for (id in boxNodes) {
+            val inp = p.optJSONObject(id)?.optJSONObject("inputs") ?: continue
+            val list = JSONArray()
+            run {
+                inp.put("width", boxes.width)
+                inp.put("height", boxes.height)
+                for (r in boxes.rects) list.put(
+                    JSONObject()
+                        .put("x", r.left.toInt()).put("y", r.top.toInt())
+                        .put("width", r.width().toInt().coerceAtLeast(1)).put("height", r.height().toInt().coerceAtLeast(1))
+                        .put("metadata", JSONObject().put("type", "obj").put("text", "").put("desc", "").put("palette", JSONArray()))
+                )
+            }
+            inp.put("editor_state", JSONObject().put("__value__", list))
         }
         return p
     }
+
+    /** FLUX 3's Create Bounding Boxes nodes: where in the picture an edit is aimed (<obj_1>, <obj_2>…). */
+    val boxNodes: List<String> = nodes().filter { cls(it.second) == "CreateBoundingBoxes" }.map { it.first }
+
+    /** It aims at boxes: a selection becomes them. */
+    val usesBoxes: Boolean get() = boxNodes.isNotEmpty()
 
     /**
      * The prompt typed straight in where the prompt switch's output went, and the switch taken out,
@@ -705,7 +751,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
      */
     private fun withoutEnhancer(p: JSONObject, sw: String) {
         // The plain side: typed text, or a link to where it's typed
-        val plain = p.optJSONObject(sw)?.optJSONObject("inputs")?.opt("on_false") ?: return
+        val plain = p.optJSONObject(sw)?.optJSONObject("inputs")?.opt(plainSide) ?: return
         fun fresh(): Any = if (plain is JSONArray) JSONArray().put(plain.opt(0)).put(plain.opt(1)) else plain
         val gone = ArrayDeque(listOf(sw))
         while (gone.isNotEmpty()) {
@@ -742,6 +788,9 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         fun nameFrom(file: String): String = file.substringBeforeLast('.').removePrefix("Quartz-").replace('-', ' ').replace('_', ' ').trim()
     }
 }
+
+/** Boxes for a workflow that aims at them: [rects] in a picture [width]×[height] (the one sent). */
+class ComfyBoxes(val width: Int, val height: Int, val rects: List<android.graphics.RectF>)
 
 /** One choice on a node that can be changed here: node [node]'s input [input] ([value] as saved). */
 class ComfySetting(val node: String, val cls: String, val input: String, val nodeTitle: String, val value: String) {

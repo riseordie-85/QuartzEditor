@@ -345,6 +345,8 @@ fun EditorViewModel.runComfy(
             val area = if (useLayer) Transformer.contentBounds(a!!.tiles.tiles)?.apply { offset(a.x, a.y) }?.takeIf { it.intersect(canvas) } else Rect(canvas)
             val r = when {
                 area == null -> null
+                // Aiming at a box (FLUX 3): the whole picture goes, and the selection is the box
+                selBox != null && w.usesBoxes -> Rect(area).takeIf { Rect.intersects(it, selBox) }
                 selBox != null -> Rect(area).takeIf { it.intersect(selBox) }
                 else -> area
             }
@@ -357,6 +359,17 @@ fun EditorViewModel.runComfy(
     }
     input.docW = d.width
     input.docH = d.height
+    // The selection's box in the picture as it's sent (its size and place there)
+    val boxes = if (w.usesBoxes && w.kind != ComfyKind.GENERATE) {
+        val (uw, uh) = uploadSize(input.region)
+        val sx = uw / input.region.width().toFloat()
+        val sy = uh / input.region.height().toFloat()
+        val rects = selBox?.let { b ->
+            val c = Rect(b).apply { if (!intersect(input.region)) setEmpty() }
+            if (c.isEmpty) emptyList() else listOf(android.graphics.RectF((c.left - input.region.left) * sx, (c.top - input.region.top) * sy, (c.right - input.region.left) * sx, (c.bottom - input.region.top) * sy))
+        }.orEmpty()
+        com.tim.quartzeditor.engine.ComfyBoxes(uw, uh, rects)
+    } else null
     prefs.edit().putString("comfyPrompt:" + w.fileName, prompt).apply()
     val job = ComfyJob(w.name)
     comfyJob = job
@@ -384,7 +397,7 @@ fun EditorViewModel.runComfy(
                 }
             }
             // Progress and live previews come over the WebSocket; if that doesn't connect, asking now and then still works
-            var current: JSONObject = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch)
+            var current: JSONObject = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch, boxes)
             if (cloud == null) socket = ComfySocket(
                 client.socketUrl(clientId),
                 onText = { t -> comfyMessage(job, current, t) },
@@ -399,7 +412,7 @@ fun EditorViewModel.runComfy(
                 job.run = run
                 job.runs = runs
                 // Each run gets new seeds
-                if (run > 1) current = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch)
+                if (run > 1) current = w.prepared(uploaded, promptForRun, enhance, input.genW, input.genH, overrides, batch, boxes)
                 val prepared = current
                 val results = if (cloud != null) withContext(Dispatchers.IO) { cloudRun(cloud, prepared, job, w) } else withContext(Dispatchers.IO) {
                     // Cancelled while sending: don't queue it
@@ -600,12 +613,16 @@ private fun snap16(v: Float): Int = max(16, ((v + 8f) / 16f).toInt() * 16)
  * white (Load Image drops see-through, which would make them black); for an edit, how see-through
  * the source was comes back too, so the result can be too.
  */
+/** The size the picture of [r] is sent at (smaller when it's big, in steps of 16). */
+private fun uploadSize(r: Rect): Pair<Int, Int> {
+    val s = minOf(1f, sqrt(UPLOAD_PIXELS.toFloat() / (r.width().toLong() * r.height())))
+    return snap16(r.width() * s) to snap16(r.height() * s)
+}
+
 private fun comfyPicture(kind: ComfyKind, input: ComfyInput): ComfyUpload? {
     val copy = input.copy ?: return null
     val r = input.region
-    val s = minOf(1f, sqrt(UPLOAD_PIXELS.toFloat() / (r.width().toLong() * r.height())))
-    val w = snap16(r.width() * s)
-    val h = snap16(r.height() * s)
+    val (w, h) = uploadSize(r)
     val src = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val c = Canvas(src)
     c.scale(w / r.width().toFloat(), h / r.height().toFloat())
@@ -1240,7 +1257,9 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                 ComfyKind.GENERATE -> "Makes a new picture the shape of the canvas, as a new layer."
                                 ComfyKind.INPAINT -> if (hasSel) "Fills in what's selected (looking at everything you see around it), as a new layer shaped like the selection."
                                 else "Fills in a selection: select the part to fill in first."
-                                ComfyKind.EDIT -> "Sends ${if (merged) "everything you see" else "the active layer"}${if (hasSel) " (just what's selected)" else ""} and brings back the result as a new layer on top."
+                                ComfyKind.EDIT -> if (w.usesBoxes) "Sends ${if (merged) "everything you see" else "the active layer"} and brings back the result as a new layer on top. " +
+                                    (if (hasSel) "It aims at the selection: its box is <obj_1> in the prompt, and the result is kept to it." else "It aims at a box: select the part to change first (it becomes <obj_1> in the prompt), or leave <obj_1> out of the prompt.")
+                                else "Sends ${if (merged) "everything you see" else "the active layer"}${if (hasSel) " (just what's selected)" else ""} and brings back the result as a new layer on top."
                             },
                             color = if (w.kind == ComfyKind.INPAINT && !hasSel) Q.accent else Q.text,
                             fontSize = 14.sp,
