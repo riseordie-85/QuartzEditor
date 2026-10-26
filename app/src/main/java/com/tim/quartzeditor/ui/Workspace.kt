@@ -157,6 +157,8 @@ fun Workspace(vm: EditorViewModel) {
     var renameOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var renameLayerOpen by remember { mutableStateOf(false) }
+    var canvasSizeOpen by remember { mutableStateOf(false) }
+    var featherOpen by remember { mutableStateOf(false) }
     val menuActions = MenuActions(
         rename = { renameOpen = true },
         // (A crop, filter, transform or text still open goes in first, so it's in the file)
@@ -178,6 +180,30 @@ fun Workspace(vm: EditorViewModel) {
         renameLayer = { renameLayerOpen = true },
     )
 
+    // Dialogs keyboard shortcuts ask for (Ctrl+N, Ctrl+O, Ctrl+Alt+I…)
+    LaunchedEffect(vm.dialogRequest) {
+        val r = vm.dialogRequest ?: return@LaunchedEffect
+        vm.dialogRequest = null
+        when (r) {
+            "new" -> menuActions.newDoc()
+            "open" -> menuActions.openFile()
+            "export" -> menuActions.export()
+            "saveCopy" -> menuActions.saveProject()
+            "settings" -> settingsOpen = true
+            "imageSize" -> imageSizeOpen = true
+            "canvasSize" -> if (!vm.pendingFirst { canvasSizeOpen = true }) canvasSizeOpen = true
+            "feather" -> if (vm.doc?.selection == null) vm.toast("Select something first") else featherOpen = true
+        }
+    }
+    // Select and mask from a selection (Ctrl+Alt+R): opens once the mask made from it is there
+    LaunchedEffect(vm.history.version, vm.pendingMaskRefine) {
+        val id = vm.pendingMaskRefine ?: return@LaunchedEffect
+        if (vm.busy == null && vm.doc?.layer(id)?.mask != null) {
+            vm.pendingMaskRefine = null
+            vm.maskRefineFor = id
+        }
+    }
+
     // Hover tips are drawn over everything, in a layer touches go straight through
     val tipHost = remember { TipHostState() }
     androidx.compose.runtime.CompositionLocalProvider(LocalTipHost provides tipHost) {
@@ -197,6 +223,14 @@ fun Workspace(vm: EditorViewModel) {
         val wide = maxWidth >= 760.dp || desktop
         val compact = !desktop && (maxWidth < 600.dp || maxHeight < 480.dp)
         var panelsOpen by rememberSaveable { mutableStateOf(wide) }
+        // F: panels hidden, then only the picture, then everything again
+        val full = vm.screenMode == 2
+        LaunchedEffect(vm.screenMode) {
+            when (vm.screenMode) {
+                1, 2 -> panelsOpen = false
+                else -> panelsOpen = wide
+            }
+        }
         val docked = wide && panelsOpen
         // Tab on a keyboard shows or hides the panels
         var seenToggle by remember { mutableIntStateOf(vm.panelsToggle) }
@@ -219,14 +253,14 @@ fun Workspace(vm: EditorViewModel) {
 
         val pad = if (compact || Q.compact || desktop) (if (desktop && !Q.compact) 6.dp else 4.dp) else 12.dp
         Column(Modifier.fillMaxSize().padding(pad)) {
-        if (desktop) {
+        if (desktop && !full) {
             MenuBar(vm, menuActions, panelsOpen, togglePanels = { panelsOpen = !panelsOpen })
             Spacer(Modifier.height(pad))
             ToolOptionsBar(vm)
             Spacer(Modifier.height(pad))
         }
         Row(Modifier.weight(1f).fillMaxWidth()) {
-            Toolbar(
+            if (!full) Toolbar(
                 vm,
                 compact = compact,
                 slim = desktop,
@@ -266,7 +300,7 @@ fun Workspace(vm: EditorViewModel) {
                     }
                 },
             )
-            Spacer(Modifier.width(if (compact || Q.compact) 4.dp else 12.dp))
+            if (!full) Spacer(Modifier.width(if (compact || Q.compact) 4.dp else 12.dp))
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 EditorCanvas(vm, Modifier.fillMaxSize().clip(RoundedCornerShape(Q.corner(12.dp))))
 
@@ -340,6 +374,35 @@ fun Workspace(vm: EditorViewModel) {
                     ) { vm.deselect() }
                 }
 
+                // A mode a key turned on: what it is, and how to leave it
+                val modeNote = when {
+                    vm.viewTool == ViewTool.ROTATE -> "Rotate view: drag to turn · Esc straightens · R to stop"
+                    vm.viewTool == ViewTool.ZOOM -> "Zoom: click to zoom in (Alt: out), drag sideways · Z to stop"
+                    vm.quickMaskId != null -> "Quick Mask: white selects, black takes away · Q to finish"
+                    vm.viewMaskOf != null -> "Showing the mask · Alt-click it or Esc to go back"
+                    full -> "Only the picture · F for everything"
+                    else -> null
+                }
+                if (modeNote != null && !vm.tempPan) {
+                    Text(
+                        modeNote, color = Color.White, fontSize = 13.sp,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = if (desktop || full) 10.dp else 56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black.copy(alpha = 0.65f))
+                            .clickable {
+                                when {
+                                    vm.viewTool != null -> vm.viewTool = null
+                                    vm.quickMaskId != null -> vm.toggleQuickMask()
+                                    vm.viewMaskOf != null -> vm.viewMaskOf = null
+                                    full -> vm.screenMode = 0
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+
                 // Space held: a hand (for the pen and fingers, which have no pointer to show it)
                 if (vm.tempPan) {
                     Row(
@@ -398,7 +461,7 @@ fun Workspace(vm: EditorViewModel) {
               }
             }
         }
-        if (desktop) {
+        if (desktop && !full) {
             Spacer(Modifier.height(pad))
             StatusBar(vm, panelsOpen, togglePanels = { panelsOpen = !panelsOpen })
         }
@@ -517,6 +580,8 @@ fun Workspace(vm: EditorViewModel) {
         )
     }
     if (imageSizeOpen) ImageSizeDialog(vm) { imageSizeOpen = false }
+    if (canvasSizeOpen) CanvasSizeDialog(vm) { canvasSizeOpen = false }
+    if (featherOpen) FeatherDialog(vm) { featherOpen = false }
     if (upscaleOpen) {
         val room = vm.upscaleRoom()
         val d = vm.doc

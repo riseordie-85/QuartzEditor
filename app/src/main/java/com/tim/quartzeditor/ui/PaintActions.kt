@@ -70,7 +70,8 @@ fun EditorViewModel.beginStroke(x: Float, y: Float, pen: PenSample? = null): Boo
     val b = if (erase) eraser else brush
     // Folders and adjustment layers have no pixels of their own: brushes paint their mask
     val target = if ((d.editMask || layer.isGroup || layer.isAdjustment) && layer.mask != null) StrokeTarget.MASK else StrokeTarget.PIXELS
-    val fg = foreground
+    // Quick Mask: white selects (shows less red), black takes away, as in Photoshop: the reverse of a mask
+    val fg = if (layer.id == quickMaskId && target == StrokeTarget.MASK) (foreground xor 0x00FFFFFF) else foreground
     val bg = background
     val sel = d.selection
     val dyn = strokeDynamics(b, pen != null)

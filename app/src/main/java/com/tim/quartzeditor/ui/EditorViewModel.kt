@@ -387,6 +387,30 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Shift or Alt held on a keyboard. */
     var keyShift by mutableStateOf(false)
     var keyAlt by mutableStateOf(false)
+    /** Ctrl (or Cmd) held on a keyboard: Ctrl-click a layer's thumbnail or the picture. */
+    var keyCtrl by mutableStateOf(false)
+    /** The selection before the last Deselect (Ctrl+Shift+D brings it back). */
+    var lastSelection: com.tim.quartzeditor.engine.Selection? = null
+    /** Alt-click on an eye showed only that layer: each layer's visibility before, to put back. */
+    internal var soloRestore: Map<Long, Boolean>? = null
+    /** Alt-click on a mask: the picture shows that layer's mask (black hides, white shows). */
+    var viewMaskOf by mutableStateOf<Long?>(null)
+    /** Caps Lock: brushes show a small crosshair instead of their outline. */
+    var preciseCursor by mutableStateOf(false)
+    /** F: 0 everything, 1 panels hidden, 2 only the picture. */
+    var screenMode by mutableStateOf(0)
+    /** A dialog a keyboard shortcut asked for (the workspace opens it). */
+    var dialogRequest by mutableStateOf<String?>(null)
+    /** R or Z: the view tool in use (drags turn or zoom the view), until pressed again or another tool. */
+    var viewTool by mutableStateOf<ViewTool?>(null)
+    /** The last transform applied, canvas to canvas (Ctrl+Shift+T does it again). */
+    internal var lastTransform: android.graphics.Matrix? = null
+    /** Quick Mask (Q): the temporary layer being painted to make a selection. */
+    var quickMaskId by mutableStateOf<Long?>(null)
+    /** The layer that was picked before Quick Mask (it's picked again after). */
+    internal var quickMaskPrev: Long? = null
+    /** Select and mask waits for this layer's mask, being made from the selection. */
+    internal var pendingMaskRefine: Long? = null
     val shiftOn: Boolean get() = (modShift && !modAlt) || keyShift
     val altOn: Boolean get() = modAlt || keyAlt
     var showModifier by mutableStateOf(prefs.getBoolean("showModifier", true))
@@ -937,6 +961,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tapping a tool's button. Tapping the move button again switches to panning; brushes show their picker. */
     fun onToolButton(t: Tool) {
+        // (Rotate view and Zoom end when another tool is picked)
+        viewTool = null
         // Picking Color Range's color: picking a tool stops (the window comes back)
         if (pickingForRange) pickingForRange = false
         if (t == Tool.TRANSFORM && transform != null) return

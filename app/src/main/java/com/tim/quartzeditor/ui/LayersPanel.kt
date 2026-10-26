@@ -628,7 +628,8 @@ private fun LayerRow(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(36.dp)
-                .clickable { vm.setProps(layer.id, if (p.visible) "Hide layer" else "Show layer") { it.copy(visible = !it.visible) } },
+                // (Alt-click: only this layer shows; again: the others come back)
+                .clickable { if (vm.altOn) vm.toggleSolo(layer.id) else vm.setProps(layer.id, if (p.visible) "Hide layer" else "Show layer") { it.copy(visible = !it.visible) } },
         ) {
             Icon(if (p.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, contentDescription = if (p.visible) "Hide" else "Show", tint = if (p.visible) Q.text else Q.textDim, modifier = Modifier.size(20.dp))
         }
@@ -654,7 +655,7 @@ private fun LayerRow(
                 ) {
                     Icon(if (layer.collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown, contentDescription = if (layer.collapsed) "Open folder" else "Fold folder", tint = Q.text)
                 }
-                IconThumb(if (layer.collapsed) Icons.Outlined.Folder else Icons.Outlined.FolderOpen, selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+                IconThumb(if (layer.collapsed) Icons.Outlined.Folder else Icons.Outlined.FolderOpen, selected && !maskSelected) { thumbClick(vm, layer) }
             }
             layer.isAdjustment -> {
                 val kind = p.adjust?.kind ?: FxKind.ADJUST
@@ -665,23 +666,35 @@ private fun LayerRow(
             }
             // Text layers show a T like Photoshop; tapping it on the selected layer edits the text
             layer.isText -> IconThumb(Icons.Outlined.Title, selected && !maskSelected) {
-                if (selected && !maskSelected) vm.beginTextEdit(layer) else vm.selectLayer(layer.id, mask = false)
+                if (vm.keyCtrl) thumbClick(vm, layer) else if (selected && !maskSelected) vm.beginTextEdit(layer) else vm.selectLayer(layer.id, mask = false)
             }
             layer.isSmart -> Box {
-                Thumb(layer.thumb, outlined = selected && !maskSelected, onDoubleTap = { vm.openSmartContents(layer.id) }) { vm.selectLayer(layer.id, mask = false) }
+                Thumb(layer.thumb, outlined = selected && !maskSelected, onDoubleTap = { vm.openSmartContents(layer.id) }) { thumbClick(vm, layer) }
                 // The smart layer badge
                 Icon(
                     Icons.Outlined.FilterNone, contentDescription = "Smart layer (double-tap to edit)", tint = Color.White,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp).size(14.dp).clip(RoundedCornerShape(3.dp)).background(Color.Black.copy(alpha = 0.65f)).padding(1.dp),
                 )
             }
-            else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { vm.selectLayer(layer.id, mask = false) }
+            else -> Thumb(layer.thumb, outlined = selected && !maskSelected) { thumbClick(vm, layer) }
         }
         if (layer.hasMask) {
             Spacer(Modifier.width(4.dp))
             Box(Modifier.onGloballyPositioned { c -> maskBounds[0] = c.boundsInParent() }) {
                 // Hold the mask (or right-click it) for what you can do with it
-                Thumb(layer.maskThumb, outlined = maskSelected, plain = true, onLongPress = { maskMenu = true }) { vm.selectLayer(layer.id, mask = true) }
+                // Ctrl-click: the mask as a selection (Shift adds, Alt takes away); Alt-click: see the mask;
+                // Shift-click: the mask off or on
+                Thumb(layer.maskThumb, outlined = maskSelected, plain = true, onLongPress = { maskMenu = true }) {
+                    when {
+                        vm.keyCtrl -> vm.selectionFromMask(layer.id, if (vm.shiftOn) com.tim.quartzeditor.engine.SelectMode.ADD else if (vm.altOn) com.tim.quartzeditor.engine.SelectMode.SUBTRACT else com.tim.quartzeditor.engine.SelectMode.NEW)
+                        vm.altOn -> vm.toggleViewMask(layer.id)
+                        vm.shiftOn -> {
+                            vm.selectLayer(layer.id, mask = true)
+                            vm.toggleMaskEnabled()
+                        }
+                        else -> vm.selectLayer(layer.id, mask = true)
+                    }
+                }
                 if (p.maskDisabled) {
                     Text("✕", color = Color(0xFFE53935), fontSize = 18.sp, modifier = Modifier.align(Alignment.Center))
                 }
@@ -1058,4 +1071,10 @@ fun RenameDialog(current: String, title: String = "Rename layer", onDismiss: () 
         confirmButton = { TextButton(onClick = { if (text.isNotBlank()) onRename(text.trim()) }) { Text("Rename") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+
+/** A layer's thumbnail clicked: Ctrl-click selects its pixels (Shift adds, Alt takes away), like Photoshop; otherwise it's picked. */
+private fun thumbClick(vm: EditorViewModel, layer: Layer) {
+    if (vm.keyCtrl) vm.selectLayerPixels(layer.id) else vm.selectLayer(layer.id, mask = false)
 }

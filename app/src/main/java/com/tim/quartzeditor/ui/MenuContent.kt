@@ -106,6 +106,7 @@ fun PagedMenuScope.EditMenuItems(vm: EditorViewModel, a: MenuActions) {
 fun PagedMenuScope.ImageMenuItems(vm: EditorViewModel, a: MenuActions, withEnhance: Boolean = true) {
     Label("${vm.doc?.width ?: 0} × ${vm.doc?.height ?: 0} px")
     Item("Image size…") { a.imageSize() }
+    Item("Canvas size…") { vm.dialogRequest = "canvasSize" }
     Item("Crop") { vm.onToolButton(Tool.CROP) }
     Divider()
     Item("Rotate 90° right") { vm.rotateImage(clockwise = true) }
@@ -151,7 +152,11 @@ fun PagedMenuScope.LayerMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Rename layer…", enabled = active != null) { a.renameLayer() }
     Divider()
     if (active?.isGroup == true) Item("Merge folder") { vm.mergeFolder() } else Item("Merge down") { vm.mergeDown() }
+    Item("Merge visible") { vm.mergeVisible() }
+    Item("Stamp visible (onto a new layer)") { vm.stampVisible() }
     Item("Put in a new folder") { vm.groupActive() }
+    if (active?.isGroup == true) Item("Ungroup folder") { vm.ungroupActive() }
+    if (active != null) Item(if (active.props.locked) "Unlock layer" else "Lock layer") { vm.toggleLayerLock() }
     if (active != null && !active.isGroup) Item(if (active.props.clip) "Release clipping mask" else "Clip to layer below") { vm.toggleClip() }
     Divider()
     Item("Layer style…") { vm.openPopup(PopupKind.STYLE) }
@@ -184,6 +189,10 @@ fun PagedMenuScope.SelectMenuItems(vm: EditorViewModel) {
     Item("Select all") { vm.selectAll() }
     Item("Deselect", enabled = sel) { vm.deselect() }
     Item("Invert", enabled = sel) { vm.invertSelection() }
+    Item("Reselect", enabled = !sel && vm.lastSelection != null) { vm.reselect() }
+    Item("Feather…", enabled = sel) { vm.dialogRequest = "feather" }
+    Item("Select and mask…", enabled = sel || d.active?.mask != null) { vm.selectAndMaskShortcut() }
+    Item(if (vm.quickMaskId != null) "Leave quick mask" else "Quick mask", checked = vm.quickMaskId != null) { vm.toggleQuickMask() }
     Divider()
     Item("Select subject", Icons.Outlined.PersonOutline) { vm.selectSubject(background = false) }
     Item("Select background", Icons.Outlined.Landscape) { vm.selectSubject(background = true) }
@@ -259,6 +268,15 @@ fun PagedMenuScope.ViewMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Actual pixels (100%)") { vm.zoomTo(1f) }
     Item("Zoom in") { vm.zoomTo(vm.scale * 1.5f) }
     Item("Zoom out") { vm.zoomTo(vm.scale / 1.5f) }
+    Item("Rotate view tool", checked = vm.viewTool == ViewTool.ROTATE) { vm.toggleViewTool(ViewTool.ROTATE) }
+    Item("Zoom tool", checked = vm.viewTool == ViewTool.ZOOM) { vm.toggleViewTool(ViewTool.ZOOM) }
+    Item(
+        when (vm.screenMode) {
+            0 -> "Screen mode: hide panels"
+            1 -> "Screen mode: full screen"
+            else -> "Screen mode: normal"
+        },
+    ) { vm.cycleScreenMode() }
     Divider()
     if (vm.online) {
         Item("ComfyUI bar", checked = vm.showComfyBar) { vm.showComfyBar = !vm.showComfyBar }

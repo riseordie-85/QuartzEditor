@@ -60,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -573,6 +574,15 @@ fun TextBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 // Up, down, Home and End go by the lines on the picture (this field is too small to have any)
                 .onPreviewKeyEvent { e ->
                     if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // Ctrl+Enter: done; Ctrl+Shift+> / <: a size bigger or smaller
+                    if (e.isCtrlPressed && (e.key == androidx.compose.ui.input.key.Key.Enter || e.key == androidx.compose.ui.input.key.Key.NumPadEnter)) {
+                        vm.finishText()
+                        return@onPreviewKeyEvent true
+                    }
+                    if (e.isCtrlPressed && e.isShiftPressed && (e.key == androidx.compose.ui.input.key.Key.Period || e.key == androidx.compose.ui.input.key.Key.Comma)) {
+                        vm.changeTextSize(bigger = e.key == androidx.compose.ui.input.key.Key.Period)
+                        return@onPreviewKeyEvent true
+                    }
                     val move = when (e.key) {
                         androidx.compose.ui.input.key.Key.DirectionUp -> CaretMove.UP
                         androidx.compose.ui.input.key.Key.DirectionDown -> CaretMove.DOWN

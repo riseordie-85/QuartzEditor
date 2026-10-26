@@ -52,6 +52,8 @@ class MainActivity : ComponentActivity() {
         if (typing || event.action != KeyEvent.ACTION_DOWN) return false
         return when (event.keyCode) {
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_ESCAPE -> vm.onKeyDown(event)
+            // Ctrl+Tab: the next open file (before focus moving takes it)
+            KeyEvent.KEYCODE_TAB -> if (event.isCtrlPressed) vm.onKeyDown(event) else false
             else -> false
         }
     }

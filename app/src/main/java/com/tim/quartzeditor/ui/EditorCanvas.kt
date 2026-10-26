@@ -87,7 +87,7 @@ import kotlin.math.roundToInt
 private const val ROTATE_START = 10f
 private const val ROTATE_SNAP = 5f
 
-private enum class GestureMode { PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, PEN_MOVE, WARP, GUIDE, DEPTH, DONE }
+private enum class GestureMode { VIEW, PENDING, STROKE, BLOCKED, MOVE, PAN, NAV, EYEDROP, TRANSFORM, SELECTING, GRADIENT, CROP, SHAPING, PEN, PEN_EDIT, PEN_MOVE, WARP, GUIDE, DEPTH, DONE }
 
 /** A touch starting a gesture, and the ones already down then (a resting hand), which it leaves out. */
 private class TouchStart(val down: PointerInputChange, val resting: Set<PointerId>)
@@ -603,8 +603,27 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             vm.setCloneSource(startCx, startCy)
                             mode = GestureMode.DONE
                         }
+                        // R / Z: the view tools take the drag (or the click)
+                        if (mode == GestureMode.PENDING && vm.viewTool != null) mode = GestureMode.VIEW
+                        // Ctrl-click: the layer under the pointer is picked, whatever the tool (like Photoshop)
+                        if (mode == GestureMode.PENDING && vm.keyCtrl && vm.textEdit == null && vm.isOnCanvas(start.x, start.y)) {
+                            vm.selectLayerAt(startCx, startCy)
+                            mode = GestureMode.DONE
+                        }
+                        // The view tool's turn: where the pointer started, around the middle of the view, on the screen
+                        fun screenAngle(p: Offset): Double {
+                            val th = Math.toRadians(vm.rotation.toDouble())
+                            val vx = p.x - vm.viewW / 2f
+                            val vy = p.y - vm.viewH / 2f
+                            return Math.toDegrees(kotlin.math.atan2(vx * kotlin.math.sin(th) + vy * kotlin.math.cos(th), vx * kotlin.math.cos(th) - vy * kotlin.math.sin(th)))
+                        }
+                        val viewAngle0 = screenAngle(start)
                         if (mode == GestureMode.PENDING) when (tool) {
-                            Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.isOnCanvas(start.x, start.y) && !fingerNav) {
+                            // Alt with a brush: pick a color (like Photoshop), except the clone stamp, whose Alt draws straight
+                            Tool.BRUSH, Tool.ERASER, Tool.RETOUCH -> if (vm.altOn && !cloning && tool != Tool.ERASER && vm.isOnCanvas(start.x, start.y)) {
+                                loupe = start to vm.sampleAt(startCx, startCy, commit = false)
+                                mode = GestureMode.EYEDROP
+                            } else if (vm.isOnCanvas(start.x, start.y) && !fingerNav) {
                                 val (cx, cy) = vm.screenToCanvas(start.x, start.y)
                                 // Shift and a tap: a straight line from where the last stroke ended (like Photoshop)
                                 val join = vm.lastStrokeEnd?.takeIf { straightOn() && it.first == vm.doc?.activeId }
@@ -760,6 +779,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             }
 
                             when (mode) {
+                                GestureMode.VIEW -> if (main != null) {
+                                    if ((main.position - start).getDistance() > slop) moved = true
+                                    if (moved) when (vm.viewTool) {
+                                        ViewTool.ROTATE -> {
+                                            var target = rot0 + (screenAngle(main.position) - viewAngle0).toFloat()
+                                            // Shift: 15° steps
+                                            if (vm.shiftOn) target = Math.round(target / 15f) * 15f
+                                            vm.rotateView(target - vm.rotation, vm.viewW / 2f, vm.viewH / 2f)
+                                        }
+                                        // Right zooms in, left out, around where it started
+                                        ViewTool.ZOOM -> vm.transformView(kotlin.math.exp((main.position.x - lastPos.x) / 220f), start.x, start.y, 0f, 0f)
+                                        null -> Unit
+                                    }
+                                    lastPos = main.position
+                                }
                                 GestureMode.NAV -> {
                                     val zoom = ev.calculateZoom()
                                     val pan = ev.calculatePan()
@@ -1095,6 +1129,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         cursor = null
                         vm.clearSnapGuides()
                         when (mode) {
+                            // Zoom: a click zooms in there (Alt: out)
+                            GestureMode.VIEW -> if (!moved && vm.viewTool == ViewTool.ZOOM) vm.transformView(if (vm.altOn) 1f / 1.6f else 1.6f, start.x, start.y, 0f, 0f)
                             GestureMode.STROKE -> vm.endStroke()
                             GestureMode.BLOCKED -> vm.onBlockedStroke()
                             GestureMode.MOVE -> vm.endMove()
@@ -1421,6 +1457,23 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 }
             }
 
+            // Alt-click on a mask: the mask itself (white shows, black hides) over the picture
+            vm.viewMaskOf?.let { id ->
+                val l = vm.doc?.layer(id)
+                val m = l?.mask
+                val dd = vm.doc
+                if (l != null && m != null && dd != null) drawIntoCanvas { c ->
+                    val nc = c.nativeCanvas
+                    nc.save()
+                    nc.translate(ox, oy)
+                    nc.scale(s, s)
+                    nc.clipRect(0f, 0f, dd.width.toFloat(), dd.height.toFloat())
+                    nc.drawColor(android.graphics.Color.WHITE)
+                    m.drawTo(nc, l.x.toFloat(), l.y.toFloat(), Paint(Paint.FILTER_BITMAP_FLAG).apply { color = android.graphics.Color.BLACK })
+                    nc.restore()
+                }
+            }
+
             // Text being typed: a box around it
             vm.editingText?.let { l ->
                 com.tim.quartzeditor.engine.VectorArt.bounds(l.props)?.let { b ->
@@ -1492,9 +1545,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
 
             // Brush outline while painting
+            // (Caps Lock: a small crosshair instead of the outline)
+            fun crosshair(p: Offset) {
+                val a = 7.dp.toPx()
+                drawLine(Color.Black.copy(alpha = 0.6f), Offset(p.x - a, p.y), Offset(p.x + a, p.y), 3f)
+                drawLine(Color.Black.copy(alpha = 0.6f), Offset(p.x, p.y - a), Offset(p.x, p.y + a), 3f)
+                drawLine(Color.White, Offset(p.x - a, p.y), Offset(p.x + a, p.y), 1.2f)
+                drawLine(Color.White, Offset(p.x, p.y - a), Offset(p.x, p.y + a), 1.2f)
+            }
             cursor?.let { p ->
                 val r = vm.currentBrush.size * s / 2f
-                if (r > 3f) {
+                if (vm.preciseCursor) crosshair(p)
+                else if (r > 3f) {
                     drawCircle(Color.Black.copy(alpha = 0.5f), r + 1f, p, style = Stroke(1.5f))
                     drawCircle(Color.White.copy(alpha = 0.8f), r, p, style = Stroke(1f))
                 }
@@ -1504,7 +1566,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             if (cursor == null && hp != null && (vm.penHover || hoverMouse)) {
                 val eraserEnd = !hoverMouse && vm.penEraserEnd && vm.pen.eraserEnd && vm.penCanErase()
                 val painting = vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH
-                if (eraserEnd || painting) {
+                if ((eraserEnd || painting) && vm.preciseCursor) {
+                    crosshair(hp)
+                } else if (eraserEnd || painting) {
                     val r = (if (eraserEnd) vm.eraser.size else vm.currentBrush.size) * s / 2f
                     if (r > 3f) {
                         drawCircle(Color.Black.copy(alpha = 0.45f), r + 1f, hp, style = Stroke(1.5f))

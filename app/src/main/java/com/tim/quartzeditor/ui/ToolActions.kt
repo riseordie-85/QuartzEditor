@@ -318,6 +318,7 @@ fun EditorViewModel.selectTap() {
 fun EditorViewModel.deselect() {
     val d = doc ?: return
     if (d.selection == null) return
+    lastSelection = d.selection
     setSelection("Deselect", null)
 }
 

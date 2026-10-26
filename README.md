@@ -141,7 +141,7 @@ Top to bottom: ☰ Menu, Move, Select, Transform (and the warps), Crop (and Pers
 Eyedropper, then the colors. Buttons with a dot in the corner hold more than one tool: **long-press** for
 the list; the button shows the one you used last.
 - **☰ Menu** — Home, then pages: **File** (New…, Open file…, Open image…, Save project, Export image…,
-  **Quick export** (the big colored one), Rename, Save a copy as a project file…, Close project), **Image** (its size in pixels, **Image size…**, Rotate, Flip, Flatten), **Enhance** (see
+  **Quick export** (the big colored one), Rename, Save a copy as a project file…, Close project), **Image** (its size in pixels, **Image size…**, **Canvas size…**, Rotate, Flip, Flatten), **Enhance** (see
   below), **View** (Snap, Checkerboard, Modifier button, **Grid** and
   **Rulers and guides** pages), and Settings. Tap a page to open it; ← goes back.
 - **Move** — drag the selected layer (a folder moves everything in it); tap the picture to select the top
@@ -180,6 +180,8 @@ the list; the button shows the one you used last.
   and **deselect** (the dotted square) drops the selection, whatever tool you're on.
 - **Crop** (its own button; hold it for Perspective crop) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
+- **Canvas size** (Menu → Image → Canvas size…, Ctrl+Alt+C) — makes the canvas bigger or smaller without
+  scaling anything; the 3×3 anchor picks which side stays put (center: grows evenly on all sides).
 - **Image size** (Menu → Image → Image size…) — shows the picture's size, layer count and memory, and
   scales everything to a new size: width and height (linked or not), 25/50/75% or a long side of
   2048/2560/3000 px. Every layer, mask, shape, text (still editable), smart layer and guide scales; "Scale
@@ -614,23 +616,45 @@ in between. With a selection, the mask button makes a mask that shows only what'
 
 ## Keyboard shortcuts
 With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd):
-- Tools: **V** move, **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
+- Tools: **V** transform (again: move), **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
   (Shift+M switches), **L** lasso/polygonal (Shift+L), **W** magic wand, **C** crop, **Ctrl+T** transform, **Ctrl+Shift+X** liquify,
   **I** eyedropper, **G** gradient/bucket (Shift+G), **U** shape (Shift+U next shape), **P** pen, **A** edit
-  points, **T** text, **B** brush, **E** eraser.
-- Brush: **[ ]** size, **Shift+[ ]** softer/harder, **1…0** opacity 10…100% (with Move: the layer's opacity).
+  points, **T** text, **B** brush, **E** eraser, **J** spot healing / AI remove (again switches), **S** clone,
+  **O** dodge / burn / sponge (again switches).
+- View tools: **R** rotate view (drag to turn, Shift snaps to 15°, **Esc** straightens), **Z** zoom (drag right
+  to zoom in, click ×1.6, Alt+click out). Press the key again or pick another tool to leave.
+- **F** screen modes: everything → panels hidden → only the picture (Esc comes back).
+- **Q** quick mask: the selection becomes a red overlay you paint with the brush (black adds red = not
+  selected, white removes it); **Q** again turns it back into a selection.
+- Brush: **[ ]** size, **Shift+[ ]** softer/harder, **1…0** opacity 10…100% (with Move: the layer's opacity),
+  **Shift+1…0** flow. Hold **Alt** with the brush (or a retouch brush) to pick a color. **Caps Lock** swaps the
+  brush outline for a precise crosshair.
 - Colors: **X** swap, **D** black and white.
 - Undo **Ctrl+Z**, redo **Ctrl+Shift+Z** or **Ctrl+Y**. **Enter** applies and **Esc** cancels a transform, warp or crop.
-- Selections: **Ctrl+A** all, **Ctrl+D** deselect, **Ctrl+Shift+I** invert, **Delete** delete selected
-  pixels (no selection: delete the layer), **Alt+Delete** fill foreground, **Ctrl+Delete** fill background.
+  **Ctrl+Shift+T** repeats the last transform on the picked layer.
+- Selections: **Ctrl+A** all, **Ctrl+D** deselect, **Ctrl+Shift+D** reselect, **Ctrl+Shift+I** invert,
+  **Shift+F6** feather…, **Ctrl+Alt+R** select and mask (makes a mask from the selection if needed), **Delete**
+  delete selected pixels (no selection: delete the layer), **Alt+Delete** fill foreground, **Ctrl+Delete** fill background.
 - Layers: **Ctrl+J** duplicate (copy the selection to a new layer; **Ctrl+Shift+J** cut it),
-  **Ctrl+Shift+N** new layer, **Ctrl+G** put in a folder, **Ctrl+Alt+G** clip to the layer below,
-  **Ctrl+E** merge down.
-- **Ctrl+L** Levels, **Ctrl+M** Curves, **Ctrl+U** Adjustments.
+  **Ctrl+Shift+N** new layer, **Ctrl+G** put in a folder (**Ctrl+Shift+G** ungroup), **Ctrl+Alt+G** clip to the layer below,
+  **Ctrl+E** merge down, **Ctrl+Shift+E** merge visible, **Ctrl+Shift+Alt+E** stamp visible onto a new layer,
+  **Ctrl+/** lock. **Ctrl+[ / ]** move the layer down/up, **Ctrl+Shift+[ / ]** to the bottom/top,
+  **Alt+[ / ]** pick the layer below/above.
+- Image: **Ctrl+L** Levels, **Ctrl+M** Curves, **Ctrl+U** Hue/Saturation, **Ctrl+B** Color balance,
+  **Ctrl+Shift+Alt+B** Black & white, **Ctrl+I** invert, **Ctrl+Shift+U** desaturate, **Ctrl+Alt+I** image size…,
+  **Ctrl+Alt+C** canvas size… (with an anchor).
+- Files: **Ctrl+N** new, **Ctrl+O** open, **Ctrl+S** save the project, **Ctrl+Shift+S** save a copy as a project
+  file, **Ctrl+Alt+Shift+W** export…, **Ctrl+W** close, **Ctrl+Tab / Ctrl+Shift+Tab** next/previous open file,
+  **Ctrl+K** settings.
+- Text (while typing on the canvas): **Ctrl+Enter** done, **Ctrl+Shift+> / <** bigger/smaller.
 - View: **Ctrl+0** fit, **Ctrl+1** 100%, **Ctrl++ / Ctrl+−** zoom, **Tab** show/hide panels, **Ctrl+'** grid,
   **Ctrl+R** rulers, **Ctrl+;** guides (**Ctrl+Alt+;** lock them). **Shift** and **Alt** work like the
   modifier button.
-- **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels. **Ctrl+S** saves the project.
+- Mouse with keys: **Ctrl+click** the picture picks the layer under the pointer; **Ctrl+click** a layer's
+  thumbnail selects its pixels (on a mask: the mask as a selection, Shift adds, Alt subtracts);
+  **Alt+click** an eye shows only that layer (again: all back); **Alt+click** a mask shows the mask itself;
+  **Shift+click** a mask turns it off/on.
+- **Enter** applies (transform, crop, pen shape, adjustments), **Esc** cancels.
 
 ## How it works
 - Layers are stored as 512 px tiles that only exist where there are pixels, so empty layers cost nothing

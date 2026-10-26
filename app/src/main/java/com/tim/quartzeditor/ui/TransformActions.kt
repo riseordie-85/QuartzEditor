@@ -167,6 +167,7 @@ fun EditorViewModel.applyTransform(onDone: () -> Unit = {}) {
     val d = doc ?: return
     val t = transform ?: return
     if (busy != null) return
+    rememberTransform(t)
     // Text is redrawn in its own font: wait for it if it's still loading
     val fonts = t.parts.filter { it.layer.props.text?.psdFont == null }.flatMap { it.layer.props.text?.fonts.orEmpty() }.distinct().filter { !fontReady(it) }
     if (fonts.isNotEmpty()) {

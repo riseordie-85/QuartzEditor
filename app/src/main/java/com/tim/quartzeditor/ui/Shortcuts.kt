@@ -35,6 +35,16 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             keyAlt = true
             return false
         }
+        KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT, KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> {
+            keyCtrl = true
+            return false
+        }
+        // Caps Lock: a small crosshair instead of the brush's outline (and back)
+        KeyEvent.KEYCODE_CAPS_LOCK -> {
+            preciseCursor = !preciseCursor
+            toast(if (preciseCursor) "Precise cursor" else "Brush outline cursor")
+            return false
+        }
     }
     // Hold Space to move the view with one finger (whatever tool is picked)
     if (e.keyCode == KeyEvent.KEYCODE_SPACE && !cmd) {
@@ -47,8 +57,16 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
     // Keys that may repeat while held
     when (e.keyCode) {
         KeyEvent.KEYCODE_LEFT_BRACKET, KeyEvent.KEYCODE_RIGHT_BRACKET -> {
-            if (cmd) return false
             val bigger = e.keyCode == KeyEvent.KEYCODE_RIGHT_BRACKET
+            // Ctrl+] / [: the layer up or down (with Shift: to the top or bottom); Alt+] / [: the layer above or below
+            if (cmd) {
+                if (shift) moveLayerToEdge(top = bigger) else moveLayerStep(up = bigger)
+                return true
+            }
+            if (alt) {
+                selectLayerStep(up = bigger)
+                return true
+            }
             if (tool == Tool.WARP && warpKind == com.tim.quartzeditor.engine.WarpKind.LIQUIFY) {
                 liquifySize = (liquifySize * if (bigger) 1.15f else 1f / 1.15f).coerceIn(8f, 2000f)
                 saveLiquifyPrefs()
@@ -91,33 +109,67 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         when (e.keyCode) {
             KeyEvent.KEYCODE_Z -> if (shift) redo() else undo()
             KeyEvent.KEYCODE_Y -> redo()
-            KeyEvent.KEYCODE_T -> onToolButton(Tool.TRANSFORM)
+            // Ctrl+Shift+T: the last transform again
+            KeyEvent.KEYCODE_T -> if (shift) transformAgain() else onToolButton(Tool.TRANSFORM)
             // Ctrl+Shift+X: Liquify (like Photoshop)
             KeyEvent.KEYCODE_X -> if (shift) chooseWarp(com.tim.quartzeditor.engine.WarpKind.LIQUIFY) else cutPixels()
             // Ctrl+C copy (Ctrl+Shift+C: copy merged), Ctrl+V paste
-            KeyEvent.KEYCODE_C -> copyPixels(merged = shift)
+            // Ctrl+Alt+C: canvas size
+            KeyEvent.KEYCODE_C -> if (alt) dialogRequest = "canvasSize" else copyPixels(merged = shift)
             KeyEvent.KEYCODE_V -> pastePixels()
-            KeyEvent.KEYCODE_D -> deselect()
+            // Ctrl+Shift+D: reselect
+            KeyEvent.KEYCODE_D -> if (shift) reselect() else deselect()
             KeyEvent.KEYCODE_A -> selectAll()
-            KeyEvent.KEYCODE_I -> if (shift) invertSelection() else return false
+            // Ctrl+I invert the layer, Ctrl+Shift+I invert the selection, Ctrl+Alt+I image size
+            KeyEvent.KEYCODE_I -> when {
+                shift -> invertSelection()
+                alt -> dialogRequest = "imageSize"
+                else -> invertLayer()
+            }
             KeyEvent.KEYCODE_J -> when {
                 // With a selection: copy (or with Shift, cut) it to a new layer; otherwise duplicate the layer
                 doc?.selection != null -> selectionToLayer(cut = shift)
                 else -> duplicateLayer()
             }
-            KeyEvent.KEYCODE_E -> if (shift) return false else mergeDown()
-            KeyEvent.KEYCODE_N -> if (shift) addLayer() else return false
-            // Ctrl+Alt+G: clipping mask (Ctrl+G: put in a folder)
-            KeyEvent.KEYCODE_G -> if (alt) toggleClip() else groupActive()
+            // Ctrl+E merge down, Ctrl+Shift+E merge visible, Ctrl+Shift+Alt+E stamp visible
+            KeyEvent.KEYCODE_E -> when {
+                shift && alt -> stampVisible()
+                shift -> mergeVisible()
+                else -> mergeDown()
+            }
+            // Ctrl+Shift+N new layer, Ctrl+N new image
+            KeyEvent.KEYCODE_N -> if (shift) addLayer() else dialogRequest = "new"
+            KeyEvent.KEYCODE_O -> dialogRequest = "open"
+            // Ctrl+W close, Ctrl+Alt+Shift+W export
+            KeyEvent.KEYCODE_W -> if (alt && shift) dialogRequest = "export" else requestClose()
+            KeyEvent.KEYCODE_K -> dialogRequest = "settings"
+            KeyEvent.KEYCODE_TAB -> nextFile(forward = !shift)
+            // Ctrl+/: lock the layer
+            KeyEvent.KEYCODE_SLASH -> toggleLayerLock()
+            // Ctrl+Shift+> / <: text size
+            KeyEvent.KEYCODE_PERIOD -> if (shift) changeTextSize(bigger = true) else return false
+            KeyEvent.KEYCODE_COMMA -> if (shift) changeTextSize(bigger = false) else return false
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> if (textEdit != null) finishText() else return false
+            // Ctrl+Alt+G: clipping mask, Ctrl+Shift+G: ungroup (Ctrl+G: put in a folder)
+            KeyEvent.KEYCODE_G -> when {
+                alt -> toggleClip()
+                shift -> ungroupActive()
+                else -> groupActive()
+            }
+            // Ctrl+B color balance, Ctrl+Shift+Alt+B black & white
+            KeyEvent.KEYCODE_B -> openPopup(if (shift && alt) PopupKind.BLACK_WHITE else PopupKind.COLOR_BALANCE)
             KeyEvent.KEYCODE_L -> openPopup(PopupKind.LEVELS)
             KeyEvent.KEYCODE_M -> openPopup(PopupKind.CURVES)
-            KeyEvent.KEYCODE_U -> openPopup(PopupKind.ADJUSTMENTS)
-            KeyEvent.KEYCODE_S -> saveToProjects(quiet = false)
+            // Ctrl+U hue/saturation, Ctrl+Shift+U desaturate
+            KeyEvent.KEYCODE_U -> if (shift) desaturateLayer() else openPopup(PopupKind.HUE_SAT)
+            // Ctrl+S save, Ctrl+Shift+S save a copy as a file
+            KeyEvent.KEYCODE_S -> if (shift) dialogRequest = "saveCopy" else saveToProjects(quiet = false)
             KeyEvent.KEYCODE_0 -> fit()
             // Ctrl+' shows or hides the grid (like Photoshop)
             KeyEvent.KEYCODE_APOSTROPHE -> toggleGrid()
             // Ctrl+R rulers, Ctrl+; guides (like Photoshop)
-            KeyEvent.KEYCODE_R -> toggleRulers()
+            // Ctrl+Alt+R: Select and mask
+            KeyEvent.KEYCODE_R -> if (alt) selectAndMaskShortcut() else toggleRulers()
             KeyEvent.KEYCODE_SEMICOLON -> if (alt) toggleGuidesLocked() else toggleGuides()
             KeyEvent.KEYCODE_1 -> zoomTo(1f)
             KeyEvent.KEYCODE_DEL -> fillWithColor(background)
@@ -130,6 +182,25 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         // Transform (like Photoshop's Move tool with its transform controls); V again: plain Move
         KeyEvent.KEYCODE_V -> if (tool == Tool.TRANSFORM) chooseMove(pan = false) else onToolButton(Tool.TRANSFORM)
         KeyEvent.KEYCODE_H -> chooseMove(pan = true)
+        // J: healing (Shift+J: spot healing / AI remove); S: clone stamp; O: dodge, burn… (Shift+O: the next)
+        KeyEvent.KEYCODE_J -> {
+            val heals = listOf(com.tim.quartzeditor.engine.RetouchKind.SPOT_HEAL, com.tim.quartzeditor.engine.RetouchKind.AI_REMOVE)
+            val cur = retouchKind.takeIf { tool == Tool.RETOUCH && it in heals }
+            chooseRetouch(if (shift && cur != null) heals[(heals.indexOf(cur) + 1) % heals.size] else cur ?: com.tim.quartzeditor.engine.RetouchKind.byName(prefs.getString("lastHeal", null)).takeIf { it in heals } ?: heals[0])
+        }
+        KeyEvent.KEYCODE_S -> chooseRetouch(com.tim.quartzeditor.engine.RetouchKind.CLONE)
+        KeyEvent.KEYCODE_O -> {
+            val tones = com.tim.quartzeditor.engine.RetouchKind.entries.filter { !it.heals }
+            val cur = retouchKind.takeIf { tool == Tool.RETOUCH && it in tones }
+            chooseRetouch(if (shift && cur != null) tones[(tones.indexOf(cur) + 1) % tones.size] else cur ?: com.tim.quartzeditor.engine.RetouchKind.byName(prefs.getString("lastTone", null)).takeIf { it in tones } ?: tones[0])
+        }
+        // R: rotate view, Z: zoom (press again, or Esc, to stop)
+        KeyEvent.KEYCODE_R -> toggleViewTool(ViewTool.ROTATE)
+        KeyEvent.KEYCODE_Z -> toggleViewTool(ViewTool.ZOOM)
+        KeyEvent.KEYCODE_Q -> toggleQuickMask()
+        KeyEvent.KEYCODE_F -> cycleScreenMode()
+        // Shift+F6: feather
+        KeyEvent.KEYCODE_F6 -> if (shift) dialogRequest = "feather" else return false
         KeyEvent.KEYCODE_M -> chooseSelectShape(
             if (shift && tool == Tool.SELECT) (if (selectShape == SelectShape.RECT) SelectShape.ELLIPSE else SelectShape.RECT)
             else if (selectShape == SelectShape.ELLIPSE) SelectShape.ELLIPSE else SelectShape.RECT
@@ -169,6 +240,11 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         }
         KeyEvent.KEYCODE_ESCAPE -> when {
             textEdit != null -> cancelText()
+            // Rotate view: Esc straightens the canvas; then (or with Zoom) it leaves the view tool
+            viewTool == ViewTool.ROTATE && rotation % 360f != 0f -> straightenView()
+            viewTool != null -> viewTool = null
+            viewMaskOf != null -> viewMaskOf = null
+            screenMode == 2 -> screenMode = 0
             transform != null -> cancelTransform()
             warp != null -> cancelWarp()
             cropBox != null -> cancelCrop()
@@ -186,6 +262,11 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             // 1 … 9, 0: opacity 10% … 90%, 100% (brush with Brush/Eraser, the layer with Move)
             val n = numberKey(e.keyCode) ?: return false
             val o = if (n == 0) 1f else n / 10f
+            // Shift+1 … 0: the brush's flow
+            if (shift && (tool == Tool.BRUSH || tool == Tool.ERASER)) {
+                setBrushFlow(o)
+                return true
+            }
             when (tool) {
                 Tool.BRUSH, Tool.ERASER -> {
                     updateBrush(tool) { it.copy(opacity = o) }
@@ -232,12 +313,14 @@ fun EditorViewModel.releaseKeys() {
     tempPan = false
     keyShift = false
     keyAlt = false
+    keyCtrl = false
 }
 
 fun EditorViewModel.onKeyUp(e: KeyEvent): Boolean {
     when (e.keyCode) {
         KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> keyShift = false
         KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> keyAlt = false
+        KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT, KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> keyCtrl = false
     }
     if (e.keyCode == KeyEvent.KEYCODE_SPACE && tempPan) {
         tempPan = false
