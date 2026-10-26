@@ -640,6 +640,16 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
         }.toList()
     }
 
+    /** KSampler settings, changeable here: seed, steps, CFG, sampler, scheduler, denoise. */
+    val samplerSettings: List<ComfySetting> = nodes().flatMap { (id, o) ->
+        val c = cls(o)
+        if (!c.startsWith("KSampler")) return@flatMap emptyList()
+        val inp = inputs(o)
+        listOf("seed", "noise_seed", "steps", "cfg", "sampler_name", "scheduler", "denoise")
+            .filter { k -> inp.opt(k) is Number || (inp.opt(k) is String && (k == "sampler_name" || k == "scheduler")) }
+            .map { k -> ComfySetting(id, c, k, title(o).ifBlank { c }, inp.get(k).toString()) }
+    }
+
     /** Numbers on LoRA loaders (their strengths), changeable here too. */
     val loraStrengths: List<ComfySetting> = nodes().flatMap { (id, o) ->
         val c = cls(o)
@@ -731,7 +741,8 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
                     }
             }
             for (s in listOf("seed", "noise_seed", "sampling_mode.seed")) {
-                if (inp.opt(s) is Number) inp.put(s, rnd.nextLong(0L, 1L shl 50))
+                // (A seed set here stays; the rest are new each run)
+                if (inp.opt(s) is Number && overrides.values[k]?.containsKey(s) != true) inp.put(s, rnd.nextLong(0L, 1L shl 50))
             }
         }
         routeLoras(p, overrides)
@@ -866,6 +877,12 @@ class ComfySetting(val node: String, val cls: String, val input: String, val nod
             "strength_model" -> "LoRA strength"
             "strength_clip" -> "LoRA text strength"
             "strength" -> "Strength"
+            "seed", "noise_seed" -> "Seed"
+            "steps" -> "Steps"
+            "cfg" -> "CFG"
+            "sampler_name" -> "Sampler"
+            "scheduler" -> "Scheduler"
+            "denoise" -> "Denoise"
             else -> input.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
 

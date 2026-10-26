@@ -739,6 +739,9 @@ off, a model is missing) the chip says what ComfyUI said.
   upscale model) shows the file it uses; tap it for the list of what your ComfyUI has (with a search box)
   to pick another. Weight type, device and the like are under More options. LoRA loaders' strengths are
   sliders. Changed ones are tinted and have Reset.
+- **Sampler**: each KSampler's settings: **seed** (new each run by default; switch it off to keep one seed and
+  type it), **steps**, **CFG** and **denoise** as sliders, and **sampler** and **scheduler** picked from your
+  ComfyUI's lists. Changed ones have Reset, and they're kept per workflow like the models.
 - **LoRA Manager**: its Lora Loader's list, with the ones switched on shown first (On only switches to
   all of them; Find searches): switch each on or off, set its strength and its **CLIP strength** (the text
   encoder's; it follows the strength until set apart), take it out (×), or **Add…** any LoRA your ComfyUI has.

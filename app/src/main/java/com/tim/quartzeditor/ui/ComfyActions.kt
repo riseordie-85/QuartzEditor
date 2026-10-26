@@ -1045,7 +1045,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var infoDone by remember(file, source) { mutableStateOf(false) }
     LaunchedEffect(file, source, fetchAgain) {
         val w = picked ?: return@LaunchedEffect
-        val classes = (w.modelSettings.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
+        val classes = (w.modelSettings.map { it.cls } + w.samplerSettings.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
         if (classes.isEmpty() || (if (w.cloud) cloudKey.isBlank() else server.isBlank())) return@LaunchedEffect
         // Not while the address or key is still being typed
         delay(600)
@@ -1356,6 +1356,18 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                     modifier = Modifier.padding(vertical = 6.dp).clickable { more = !more },
                                 )
                                 if (more) for (s in minor) ModelRow(s, overrides, info[s.cls], loaded = infoDone) { v -> pick(s, v) }
+                            }
+                        }
+
+                        // KSampler: seed, steps, CFG, sampler, scheduler, denoise
+                        if (w.samplerSettings.isNotEmpty()) {
+                            Spacer(Modifier.height(16.dp))
+                            SectionTitle("Sampler")
+                            val nodesWith = w.samplerSettings.map { it.node }.distinct()
+                            for (node in nodesWith) {
+                                val list = w.samplerSettings.filter { it.node == node }
+                                if (nodesWith.size > 1) Text(list.first().nodeTitle, color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+                                SamplerSettings(list, overrides, info, infoDone, base = { s -> w.baseOf(s.node, s.input).orEmpty() }, onDone = { saveOverrides() }) { o, save -> setOverrides(o, save) }
                             }
                         }
 
@@ -1671,6 +1683,76 @@ private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.qua
             picking = false
             set(v)
         }
+    }
+}
+
+/**
+ * One KSampler's settings: the seed (new each run, or this one), steps, CFG and denoise as sliders,
+ * sampler and scheduler from ComfyUI's lists. Changed ones have Reset.
+ */
+@Composable
+private fun SamplerSettings(
+    list: List<com.tim.quartzeditor.engine.ComfySetting>,
+    o: com.tim.quartzeditor.engine.ComfyOverrides,
+    info: Map<String, JSONObject?>,
+    loaded: Boolean,
+    base: (com.tim.quartzeditor.engine.ComfySetting) -> String,
+    onDone: () -> Unit,
+    set: (com.tim.quartzeditor.engine.ComfyOverrides, Boolean) -> Unit,
+) {
+    fun num(s: com.tim.quartzeditor.engine.ComfySetting): Double = (o.values[s.node]?.get(s.input) as? Number)?.toDouble() ?: s.value.toDoubleOrNull() ?: 0.0
+    fun changed(s: com.tim.quartzeditor.engine.ComfySetting) = o.values[s.node]?.containsKey(s.input) == true
+    @Composable
+    fun resetFor(s: com.tim.quartzeditor.engine.ComfySetting) {
+        if (changed(s)) Text("Reset ${s.label.lowercase()}", color = Q.accent, fontSize = 12.sp, modifier = Modifier.clickable { set(o.without(s.node, s.input), true) }.padding(bottom = 4.dp))
+    }
+    for (s in list) when (s.input) {
+        "seed", "noise_seed" -> {
+            val fixed = changed(s)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                androidx.compose.material3.Switch(
+                    checked = !fixed,
+                    onCheckedChange = { random ->
+                        set(if (random) o.without(s.node, s.input) else o.with(s.node, s.input, s.value.toLongOrNull() ?: 0L, base(s)), true)
+                    },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Q.accent),
+                )
+                Text(if (fixed) "Seed" else "New seed each run", color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(start = 10.dp, end = 10.dp))
+                if (fixed) PanelField(
+                    num(s).toLong().toString(),
+                    onCommit = { t -> t.trim().toLongOrNull()?.let { v -> set(o.with(s.node, s.input, v.coerceAtLeast(0L), base(s)), true) } },
+                    numeric = true, modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        "steps" -> {
+            val v = num(s).toInt()
+            PanelSlider(
+                "Steps", v.toFloat().coerceIn(1f, 100f), 1f..100f, "$v",
+                onChange = { x -> set(o.with(s.node, s.input, x.roundToInt().coerceIn(1, 100), base(s)), false) },
+                onDone = onDone,
+            )
+            resetFor(s)
+        }
+        "cfg" -> {
+            val v = num(s)
+            PanelSlider(
+                "CFG", v.toFloat().coerceIn(0f, 20f), 0f..20f, "%.1f".format(java.util.Locale.US, v),
+                onChange = { x -> set(o.with(s.node, s.input, (x * 10).roundToInt() / 10.0, base(s)), false) },
+                onDone = onDone,
+            )
+            resetFor(s)
+        }
+        "denoise" -> {
+            val v = num(s)
+            PanelSlider(
+                "Denoise", v.toFloat().coerceIn(0f, 1f), 0f..1f, "%.2f".format(java.util.Locale.US, v),
+                onChange = { x -> set(o.with(s.node, s.input, (x * 100).roundToInt() / 100.0, base(s)), false) },
+                onDone = onDone,
+            )
+            resetFor(s)
+        }
+        else -> ModelRow(s, o, info[s.cls], loaded) { v -> set(if (v == null || v == s.value) o.without(s.node, s.input) else o.with(s.node, s.input, v, base(s)), true) }
     }
 }
 
