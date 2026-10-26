@@ -291,9 +291,6 @@ class Doc(width: Int, height: Int, name: String) {
         return "$base $n"
     }
 
-    /** Layers that count toward [maxLayers]: everything with pixels of its own (not folders, adjustment layers or Quick Mask). */
-    val countedLayers: Int get() = layers.count { !it.isGroup && !it.isAdjustment && !it.props.quickMask }
-
     fun snapshot(): DocSnap = DocSnap(
         layers.filter { it.id != previewLayerId || previewLayerId == 0L }.map { LayerSnap(it, it.props, it.tiles, it.x, it.y, it.mask) },
         activeId,
@@ -453,36 +450,15 @@ class Doc(width: Int, height: Int, name: String) {
     }
 
     companion object {
-        /** Longest side allowed for a canvas (panoramas can be long and thin). */
-        const val MAX_SIDE = 16384
-
         /**
-         * Most pixels a canvas can have: 4096 × 4096 (about 17 MP), more on devices with the memory for
-         * it ([configure]). Like Procreate, a bigger canvas allows fewer layers ([maxLayers]).
+         * Longest side allowed for a canvas: long and thin panoramas keep every pixel. As big as the
+         * GPU's biggest texture allows (its effects and blends work on whole layers), less room for a
+         * blur to spread past the edges, and under WebP's 16383; at least the old 4096.
          */
-        @Volatile
-        var MAX_PIXELS: Long = 4096L * 4096L
-            private set
+        val MAX_SIDE: Int by lazy { (minOf(16383, Gpu.maxTexture - 1024)).coerceAtLeast(4096) }
 
-        /** Memory the layers' pixels may use in all (bytes), for [maxLayers]. */
-        @Volatile
-        var LAYER_BUDGET: Long = 1L shl 30
-            private set
-
-        /** Sets the limits for a device with [totalMem] bytes of memory. */
-        fun configure(totalMem: Long) {
-            val gb = totalMem / (1024.0 * 1024 * 1024)
-            val side = when {
-                gb >= 7.0 -> 8192L
-                gb >= 5.0 -> 6144L
-                else -> 4096L
-            }
-            MAX_PIXELS = side * side
-            LAYER_BUDGET = (totalMem * 0.35).toLong().coerceAtLeast(512L shl 20)
-        }
-
-        /** How many layers a [w]×[h] canvas can have (each could fill it): fewer the bigger it is. */
-        fun maxLayers(w: Int, h: Int): Int = (LAYER_BUDGET / (w.toLong().coerceAtLeast(1) * h.coerceAtLeast(1) * 4)).coerceIn(8L, 999L).toInt()
+        /** Most pixels a canvas can have: 4096 × 4096, about 17 MP (what keeps memory safe on every device). */
+        const val MAX_PIXELS = 4096L * 4096L
 
         /** [w]×[h] fits the limits (side and pixels). */
         fun fits(w: Int, h: Int): Boolean = w in 1..MAX_SIDE && h in 1..MAX_SIDE && w.toLong() * h <= MAX_PIXELS

@@ -495,7 +495,8 @@ private fun SampleAllRow(vm: EditorViewModel) {
 /** The size a perspective crop comes out at: the average length of opposite sides. */
 internal fun quadOutputSize(q: List<android.graphics.PointF>): Pair<Int, Int> {
     fun len(a: android.graphics.PointF, b: android.graphics.PointF) = kotlin.math.hypot(b.x - a.x, b.y - a.y)
-    val w = ((len(q[0], q[1]) + len(q[3], q[2])) / 2f).roundToInt().coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
-    val h = ((len(q[0], q[3]) + len(q[1], q[2])) / 2f).roundToInt().coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
-    return w to h
+    val w = ((len(q[0], q[1]) + len(q[3], q[2])) / 2f).roundToInt().coerceAtLeast(1)
+    val h = ((len(q[0], q[3]) + len(q[1], q[2])) / 2f).roundToInt().coerceAtLeast(1)
+    // (Within the size limits, shape kept)
+    return com.tim.quartzeditor.engine.Doc.fitted(w, h)
 }

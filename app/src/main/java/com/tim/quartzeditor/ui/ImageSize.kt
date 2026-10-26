@@ -50,17 +50,21 @@ fun ImageSizeDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
     var styles by remember { mutableStateOf(true) }
     // (Kept within the limits: linked, the shape stays; unlinked, the other side shrinks to fit)
     fun setW(v: Int) {
-        w = v.coerceIn(1, Doc.MAX_SIDE)
-        if (linked) h = (w.toFloat() * oh / ow).roundToInt().coerceIn(1, Doc.MAX_SIDE)
-        if (!Doc.fits(w, h)) {
-            if (linked) Doc.fitted(w, h).let { (a, b) -> w = a; h = b } else h = (Doc.MAX_PIXELS / w).toInt().coerceIn(1, Doc.MAX_SIDE)
+        if (linked) {
+            val nw = v.coerceAtLeast(1)
+            Doc.fitted(nw, (nw.toFloat() * oh / ow).roundToInt().coerceAtLeast(1)).let { (a, b) -> w = a; h = b }
+        } else {
+            w = v.coerceIn(1, Doc.MAX_SIDE)
+            if (!Doc.fits(w, h)) h = (Doc.MAX_PIXELS / w).toInt().coerceIn(1, Doc.MAX_SIDE)
         }
     }
     fun setH(v: Int) {
-        h = v.coerceIn(1, Doc.MAX_SIDE)
-        if (linked) w = (h.toFloat() * ow / oh).roundToInt().coerceIn(1, Doc.MAX_SIDE)
-        if (!Doc.fits(w, h)) {
-            if (linked) Doc.fitted(w, h).let { (a, b) -> w = a; h = b } else w = (Doc.MAX_PIXELS / h).toInt().coerceIn(1, Doc.MAX_SIDE)
+        if (linked) {
+            val nh = v.coerceAtLeast(1)
+            Doc.fitted((nh.toFloat() * ow / oh).roundToInt().coerceAtLeast(1), nh).let { (a, b) -> w = a; h = b }
+        } else {
+            h = v.coerceIn(1, Doc.MAX_SIDE)
+            if (!Doc.fits(w, h)) w = (Doc.MAX_PIXELS / h).toInt().coerceIn(1, Doc.MAX_SIDE)
         }
     }
     fun scaleTo(k: Float) {
@@ -78,7 +82,7 @@ fun ImageSizeDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
         ) {
             Text("Image size", color = Q.text, fontSize = 18.sp)
             Text(
-                "Now $ow × $oh px · ${d.countedLayers} of ${Doc.maxLayers(ow, oh)} layers · about ${d.memoryMb()} MB",
+                "Now $ow × $oh px · ${d.layers.size} layers · about ${d.memoryMb()} MB",
                 color = Q.textDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp),
             )
             Spacer(Modifier.height(12.dp))
@@ -105,12 +109,7 @@ fun ImageSizeDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                 if (it) setW(w)
             }
             ToggleRow("Scale layer styles (strokes, shadows, glows)", styles) { styles = it }
-            // (Bigger canvases allow fewer layers)
-            val room = Doc.maxLayers(w, h)
-            if (room < d.countedLayers) Text(
-                "At $w × $h px the picture can have $room layers, and it has ${d.countedLayers}. Merge or delete some first.",
-                color = androidx.compose.ui.graphics.Color(0xFFFF8A80), fontSize = 12.sp,
-            )
+
             Spacer(Modifier.height(8.dp))
             Text("Quick sizes", color = Q.textDim, fontSize = 12.sp)
             Spacer(Modifier.height(4.dp))

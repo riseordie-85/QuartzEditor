@@ -25,12 +25,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // How big a canvas can be, and how many layers it can have, from the device's memory
-        runCatching {
-            val mi = android.app.ActivityManager.MemoryInfo()
-            (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
-            com.tim.quartzeditor.engine.Doc.configure(mi.totalMem)
-        }
         enableEdgeToEdge()
         // Opened with a photo from another app ("Open with", "Edit with", "Share")
         if (savedInstanceState == null) vm.handleIntent(intent)

@@ -907,7 +907,7 @@ object PsdImport {
             android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
-            while (!Doc.fits(bounds.outWidth / sample, bounds.outHeight / sample)) sample *= 2
+            while (sample < (1 shl 16) && !Doc.fits((bounds.outWidth / sample).coerceAtLeast(1), (bounds.outHeight / sample).coerceAtLeast(1))) sample *= 2
             var bmp = android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888

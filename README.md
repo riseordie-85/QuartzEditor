@@ -17,12 +17,9 @@ from the build). Background removal's model is fetched by Google Play services i
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
   portrait / landscape, background White, Black or Transparent. Up to the **size limits** below.
-- **Size limits** (like Procreate): up to 16384 px on a side, so long panoramas keep every pixel, and a
-  total of 4096 × 4096 (17 MP) — 6144 × 6144 on devices with 5 GB of memory or more, 8192 × 8192 (67 MP)
-  with 7 GB or more. Bigger images allow fewer layers: the app works out how many from the device's memory
-  and the canvas size (Image size shows "n of max layers"). Adding a layer past that, or making the image
-  bigger than its layers allow, is refused with a note to merge or delete some. Folders, adjustment layers
-  and Quick Mask don't count.
+- **Size limits**: long panoramas keep every pixel, up to 16383 px on a side (less on a GPU whose biggest
+  texture is smaller: the app asks it), and 4096 × 4096 (17 MP) in all, which keeps memory safe. Images past
+  that are shrunk to fit; Image size, Canvas size, crops and exports stay within it.
 - **Open File Picker**: any image, a `.qedit` project file, a **Photoshop file** (`.psd`, `.psb`) or a
   **TIFF** (`.tif`, `.tiff`).
 - **TIFFs** open whatever saved them: no compression, LZW, ZIP, PackBits or JPEG; 1 to 32 bits (including

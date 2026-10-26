@@ -84,10 +84,15 @@ fun CanvasSizeDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                     }
                 }
             }
+            val fits = Doc.fits(w, h)
+            if (!fits) Text(
+                "Too big: up to ${Doc.MAX_SIDE} px a side and ${Doc.MAX_PIXELS / 1_000_000} megapixels in all (like ${Doc.SQUARE_TEXT}).",
+                color = androidx.compose.ui.graphics.Color(0xFFFF8A80), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),
+            )
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmallButton("Cancel") { onDismiss() }
-                SmallButton("OK", primary = true, enabled = w != d.width || h != d.height) {
+                SmallButton("OK", primary = true, enabled = fits && (w != d.width || h != d.height)) {
                     onDismiss()
                     vm.resizeCanvas(w, h, ax, ay)
                 }

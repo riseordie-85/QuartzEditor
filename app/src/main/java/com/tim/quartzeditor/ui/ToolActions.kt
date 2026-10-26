@@ -690,16 +690,9 @@ fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float, ke
         val oy = start.centerY() - (t + b) / 2f
         l += ox; r += ox; t += oy; b += oy
     }
+    // (A crop bigger than the canvas stops growing at the size limits: the box stays as it last was)
     val maxSide = Doc.MAX_SIDE.toFloat()
-    if (r - l > maxSide) r = l + maxSide
-    if (b - t > maxSide) b = t + maxSide
-    // (A crop bigger than the canvas can't go past the pixel limit either)
-    val area = (r - l) * (b - t)
-    if (area > Doc.MAX_PIXELS) {
-        val k = kotlin.math.sqrt(Doc.MAX_PIXELS / area.toDouble()).toFloat()
-        r = l + (r - l) * k
-        b = t + (b - t) * k
-    }
+    if (r - l > maxSide || b - t > maxSide || (r - l) * (b - t) > Doc.MAX_PIXELS) return
     cropBox = RectF(l, t, r, b)
 }
 

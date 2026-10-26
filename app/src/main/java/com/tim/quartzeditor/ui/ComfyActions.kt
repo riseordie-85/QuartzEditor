@@ -493,7 +493,7 @@ fun EditorViewModel.runComfy(
             if (placed > 0 && growBy > 1.05f && doc === d && d.width == input.docW && d.height == input.docH) {
                 val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.maxScale(d.width, d.height))
                 if (k <= 1.05f) toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.LIMIT_TEXT}), so the result is fitted to it")
-                else growImage(ComfyGrow(d, w.name, d.width, d.height, (d.width * k).roundToInt(), (d.height * k).roundToInt(), capped = k < growBy - 0.01f))
+                else growImage(ComfyGrow(d, w.name, d.width, d.height, (d.width * k).toInt(), (d.height * k).toInt(), capped = k < growBy - 0.01f))
             }
         } catch (e: CancellationException) {
             socket?.close()

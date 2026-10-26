@@ -181,6 +181,40 @@ data class FxParams(
 
 /** GPU work that runs off-screen and comes back as a normal bitmap. */
 object Gpu {
+    /** The GPU's biggest texture side (asked once; 4096 when it can't be found out). */
+    val maxTexture: Int by lazy { queryMaxTexture().coerceIn(4096, 16384) }
+
+    private fun queryMaxTexture(): Int = runCatching {
+        val display = android.opengl.EGL14.eglGetDisplay(android.opengl.EGL14.EGL_DEFAULT_DISPLAY)
+        val version = IntArray(2)
+        if (!android.opengl.EGL14.eglInitialize(display, version, 0, version, 1)) return@runCatching 4096
+        try {
+            val attribs = intArrayOf(
+                android.opengl.EGL14.EGL_RENDERABLE_TYPE, android.opengl.EGL14.EGL_OPENGL_ES2_BIT,
+                android.opengl.EGL14.EGL_SURFACE_TYPE, android.opengl.EGL14.EGL_PBUFFER_BIT,
+                android.opengl.EGL14.EGL_NONE,
+            )
+            val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
+            val count = IntArray(1)
+            if (!android.opengl.EGL14.eglChooseConfig(display, attribs, 0, configs, 0, 1, count, 0) || count[0] == 0) return@runCatching 4096
+            val config = configs[0]
+            val ctx = android.opengl.EGL14.eglCreateContext(display, config, android.opengl.EGL14.EGL_NO_CONTEXT, intArrayOf(android.opengl.EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, android.opengl.EGL14.EGL_NONE), 0)
+            val surface = android.opengl.EGL14.eglCreatePbufferSurface(display, config, intArrayOf(android.opengl.EGL14.EGL_WIDTH, 1, android.opengl.EGL14.EGL_HEIGHT, 1, android.opengl.EGL14.EGL_NONE), 0)
+            try {
+                android.opengl.EGL14.eglMakeCurrent(display, surface, surface, ctx)
+                val out = IntArray(1)
+                android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_MAX_TEXTURE_SIZE, out, 0)
+                if (out[0] > 0) out[0] else 4096
+            } finally {
+                android.opengl.EGL14.eglMakeCurrent(display, android.opengl.EGL14.EGL_NO_SURFACE, android.opengl.EGL14.EGL_NO_SURFACE, android.opengl.EGL14.EGL_NO_CONTEXT)
+                android.opengl.EGL14.eglDestroySurface(display, surface)
+                android.opengl.EGL14.eglDestroyContext(display, ctx)
+            }
+        } finally {
+            android.opengl.EGL14.eglTerminate(display)
+        }
+    }.getOrDefault(4096)
+
     /**
      * Applies [fx] to [src] at full size. [docW]/[docH] and [left]/[top] place it on the canvas for
      * the vignette. [pixelScale] is [src]'s pixels per canvas pixel (for the blur radius).

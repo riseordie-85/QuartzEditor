@@ -373,8 +373,7 @@ internal fun EditorViewModel.canvasTransform(
  */
 fun EditorViewModel.resizeImage(w: Int, h: Int, scaleStyles: Boolean, onDone: (() -> Unit)? = null) {
     val d = doc ?: return
-    val nw = w.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
-    val nh = h.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    val (nw, nh) = com.tim.quartzeditor.engine.Doc.fitted(w.coerceAtLeast(1), h.coerceAtLeast(1))
     if (nw == d.width && nh == d.height) return
     val sx = nw.toFloat() / d.width
     val sy = nh.toFloat() / d.height

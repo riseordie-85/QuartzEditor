@@ -130,7 +130,17 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
     // (Layered files are saved whole, at full size)
     val outW = if (layered) docW else width
     val outH = if (layered) docH else height
-    val maxSide = com.tim.quartzeditor.engine.Doc.MAX_SIDE * 2
+    // (Up to twice the canvas limits: 16383 px a side, WebP's most, and 4× the canvas's pixels)
+    val maxSide = 16383
+    val maxPixels = com.tim.quartzeditor.engine.Doc.MAX_PIXELS * 4
+    fun fitPixels() {
+        if (width.toLong() * height <= maxPixels) return
+        val k = kotlin.math.sqrt(maxPixels.toDouble() / (width.toLong() * height)).toFloat()
+        width = (width * k).toInt().coerceAtLeast(1)
+        height = (height * k).toInt().coerceAtLeast(1)
+        widthText = width.toString()
+        heightText = height.toString()
+    }
 
     // (Linked, the other side has to fit too, so the shape stays)
     fun setWidth(w: Int) {
@@ -140,6 +150,7 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
             height = (width.toFloat() * docH / docW).roundToInt().coerceIn(1, maxSide)
             heightText = height.toString()
         }
+        fitPixels()
     }
     fun setHeight(h: Int) {
         val most = if (linked) minOf(maxSide, (maxSide.toFloat() * docH / docW).toInt().coerceAtLeast(1)) else maxSide
@@ -148,12 +159,14 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
             width = (height.toFloat() * docW / docH).roundToInt().coerceIn(1, maxSide)
             widthText = width.toString()
         }
+        fitPixels()
     }
     fun setPercent(p: Int) {
-        width = (docW * p / 100f).roundToInt().coerceAtLeast(1)
-        height = (docH * p / 100f).roundToInt().coerceAtLeast(1)
+        width = (docW * p / 100f).roundToInt().coerceIn(1, maxSide)
+        height = (docH * p / 100f).roundToInt().coerceIn(1, maxSide)
         widthText = width.toString()
         heightText = height.toString()
+        fitPixels()
     }
 
     // The preview, made again a moment after anything changes (one at a time; one overtaken stops)
