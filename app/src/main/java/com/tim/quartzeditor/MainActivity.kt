@@ -40,7 +40,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        vm.onSpaceKey(event) || vm.onTabKey(event) || super.dispatchKeyEvent(event)
+        // (A text field in the panels being typed in keeps its spaces)
+        vm.onSpaceKey(event, typingInField = currentFocus?.onCheckIsTextEditor() == true) || vm.onTabKey(event) || super.dispatchKeyEvent(event)
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)

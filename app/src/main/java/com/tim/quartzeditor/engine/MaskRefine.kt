@@ -29,11 +29,12 @@ object MaskRefine {
      * [mask] (how much is hidden) refined as [p] says; [gray] is the picture's brightness (0..1), both
      * [w]×[h]. [scale]: these pixels per picture pixel (pixel amounts are in picture pixels).
      */
-    fun apply(mask: FloatArray, gray: FloatArray, w: Int, h: Int, p: Params, scale: Float): FloatArray {
+    fun apply(mask: FloatArray, gray: FloatArray, w: Int, h: Int, p: Params, scale: Float, check: () -> Unit = {}): FloatArray {
         // Worked out on what's shown (1 = shown), the way the edge is thought of
         var a = FloatArray(mask.size) { 1f - mask[it] }
         // Edge detection: within the edge band, the edge follows the picture's
-        val r = (p.radius * scale).roundToInt()
+        // (At least a pixel when it's on, so a small preview shows it too)
+        val r = if (p.radius > 0f) (p.radius * scale).roundToInt().coerceAtLeast(1) else 0
         if (r >= 1) {
             val refined = Cutout.guidedFilter(gray, a, w, h, r, 1e-3f)
             val band = Cutout.boxMean(a, w, h, r)
@@ -42,6 +43,7 @@ object MaskRefine {
                 if (b > 0.01f && b < 0.99f) a[i] = refined[i].coerceIn(0f, 1f)
             }
         }
+        check()
         // Smooth: blurred, then brought back to an edge as crisp as it was
         if (p.smooth > 0f) {
             val sr = (p.smooth / 100f * 6f * scale).coerceAtLeast(0.5f)
@@ -49,6 +51,7 @@ object MaskRefine {
             val k = 1f + sr * 0.9f
             for (i in a.indices) a[i] = ((a[i] - 0.5f) * k + 0.5f).coerceIn(0f, 1f)
         }
+        check()
         // Shift edge: softened a little, then moved in or out
         if (p.shift != 0f) {
             val sr = max(1f, abs(p.shift) / 100f * 8f * scale)
@@ -67,7 +70,8 @@ object MaskRefine {
             for (i in a.indices) a[i] = ((a[i] - 0.5f) * k + 0.5f).coerceIn(0f, 1f)
         }
         // Feather: a softer one
-        if (p.feather > 0f) a = blur(a, w, h, p.feather * scale)
+        check()
+        if (p.feather > 0f && p.feather * scale >= 0.5f) a = blur(a, w, h, p.feather * scale)
         for (i in a.indices) a[i] = 1f - a[i]
         return a
     }

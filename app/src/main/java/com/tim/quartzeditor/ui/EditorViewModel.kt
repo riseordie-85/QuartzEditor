@@ -290,6 +290,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Text being typed (null = none). */
     var textEdit by mutableStateOf<TextEditSession?>(null)
+        internal set
     /** The text being typed on the picture, with where the cursor is (or what's selected). */
     var textValue by mutableStateOf(androidx.compose.ui.text.input.TextFieldValue())
     /** Bumped when the keyboard should come (back) up for the text being typed. */

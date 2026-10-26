@@ -18,6 +18,12 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
     val shift = e.isShiftPressed
     val alt = e.isAltPressed
     val repeat = e.repeatCount > 0
+    // Typing on the picture, but the keyboard lost its place (a field in the panels was used): it
+    // goes back to the text, and the key isn't taken as a shortcut (H, E, Backspace…)
+    if (textEdit != null && !cmd && e.keyCode != KeyEvent.KEYCODE_ESCAPE && e.keyCode !in setOf(KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT)) {
+        textFocusTick++
+        return true
+    }
 
     // Shift and Alt held: the same as the modifier button
     when (e.keyCode) {
@@ -206,8 +212,12 @@ fun EditorViewModel.onTabKey(e: KeyEvent): Boolean {
  * otherwise take it, and the view wouldn't move): held, one finger, the pen or the mouse moves the
  * view. Not while typing text on the picture.
  */
-fun EditorViewModel.onSpaceKey(e: KeyEvent): Boolean {
-    if (e.keyCode != KeyEvent.KEYCODE_SPACE || doc == null || showHome || textEdit != null) return false
+fun EditorViewModel.onSpaceKey(e: KeyEvent, typingInField: Boolean = false): Boolean {
+    if (e.keyCode != KeyEvent.KEYCODE_SPACE || doc == null || showHome || textEdit != null || typingInField) {
+        // (Let go even then, so it can't stay held)
+        if (e.keyCode == KeyEvent.KEYCODE_SPACE && e.action == KeyEvent.ACTION_UP) tempPan = false
+        return false
+    }
     if (e.isCtrlPressed || e.isMetaPressed || e.isAltPressed) return false
     when (e.action) {
         KeyEvent.ACTION_DOWN -> tempPan = true

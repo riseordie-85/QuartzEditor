@@ -192,16 +192,16 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     var movingGuide by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
     // Typing on the picture: the cursor blinks, and the words' layout is kept while they don't change
     val textBuilt = remember { arrayOfNulls<Pair<com.tim.quartzeditor.engine.TextSpec, com.tim.quartzeditor.engine.TextBuilt>>(1) }
-    val caretOn = if (vm.textEdit != null) {
-        val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "caret")
-        val v = t.animateFloat(
-            0f, 1f,
-            androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1060, easing = androidx.compose.animation.core.LinearEasing)),
-            label = "blink",
-        )
-        // (Only on and off count: the canvas isn't drawn again every frame)
-        remember(v) { derivedStateOf { v.value < 0.55f } }.value
-    } else false
+    // (Read only where it's drawn, so a blink redraws the overlay and nothing else; shown while typing)
+    val caretState = remember { mutableStateOf(true) }
+    androidx.compose.runtime.LaunchedEffect(vm.textEdit, vm.textValue) {
+        caretState.value = true
+        if (vm.textEdit == null) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(530)
+            caretState.value = !caretState.value
+        }
+    }
     val checker = remember { checkerShader(with(density) { 8.dp.toPx() }.roundToInt().coerceAtLeast(4)) }
 
     fun animateFit() {
@@ -317,10 +317,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         )
         // Holding Space (or with Pan): a hand, so it's clear dragging moves the view
         val handIcon = vm.tempPan || vm.tool == Tool.PAN
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val grabIcon = remember { PointerIcon(android.view.PointerIcon.getSystemIcon(ctx, android.view.PointerIcon.TYPE_GRAB)) }
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerHoverIcon(if (handIcon) PointerIcon.Hand else PointerIcon.Default)
+                .pointerHoverIcon(if (handIcon) grabIcon else PointerIcon.Default)
                 // The mouse wheel: up and down moves the view up and down; with Ctrl, left and right
                 // (Ctrl+Shift: faster); a sideways wheel or trackpad, sideways; Alt: zoom
                 .pointerInput(Unit) {
@@ -334,11 +336,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             val ctrl = mods.isCtrlPressed || mods.isMetaPressed
                             val step = 72.dp.toPx() * (if (ctrl && mods.isShiftPressed) 4f else 1f)
                             if (mods.isAltPressed) {
-                                vm.transformView(if (delta.y < 0f) 1.15f else 1f / 1.15f, c.position.x, c.position.y, 0f, 0f)
+                                if (delta.y != 0f) vm.transformView(if (delta.y < 0f) 1.15f else 1f / 1.15f, c.position.x, c.position.y, 0f, 0f)
                             } else {
-                                // On the screen: down the screen, or across it with Ctrl (the view may be turned)
-                                val sx = if (ctrl) -delta.y * step else -delta.x * step
-                                val sy = if (ctrl) -delta.x * step else -delta.y * step
+                                // On the screen: down the screen, or across it with Ctrl (the view may be turned).
+                                // (With Ctrl, whichever way the wheel turned: Shift may make it a sideways scroll)
+                                val main = if (abs(delta.y) >= abs(delta.x)) delta.y else delta.x
+                                val sx = if (ctrl) -main * step else -delta.x * step
+                                val sy = if (ctrl) 0f else -delta.y * step
                                 val th = Math.toRadians(-vm.rotation.toDouble())
                                 val dx = (sx * kotlin.math.cos(th) - sy * kotlin.math.sin(th)).toFloat()
                                 val dy = (sx * kotlin.math.sin(th) + sy * kotlin.math.cos(th)).toFloat()
@@ -1417,7 +1421,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             path.transform(m)
                             drawPath(path.asComposePath(), Q.accent.copy(alpha = 0.35f))
                         }
-                        if (caretOn) {
+                        if (caretState.value) {
                             val i = sel.end.coerceIn(0, if (spec.text.isEmpty()) 0 else n)
                             val line = layout.getLineForOffset(i)
                             val x = layout.getPrimaryHorizontal(i) + built.left

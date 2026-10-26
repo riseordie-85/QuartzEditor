@@ -813,6 +813,34 @@ fun EditorViewModel.textOffsetAt(l: Layer, x: Float, y: Float): Int? {
     return layout.getOffsetForHorizontal(line, p[0] - b.left).coerceIn(0, spec.text.length)
 }
 
+/** Where the cursor goes for a key that moves by lines: up, down, start or end of the line. */
+enum class CaretMove { UP, DOWN, LINE_START, LINE_END }
+
+/**
+ * Moves the cursor in the text being typed by lines as it's laid out on the picture ([extend]:
+ * Shift held, so it selects). True when it moved (straight text; bent text leaves it to the keyboard).
+ */
+fun EditorViewModel.moveTextCaret(move: CaretMove, extend: Boolean): Boolean {
+    val l = editingText ?: return false
+    val spec = l.props.text ?: return false
+    val b = VectorArt.buildText(spec)
+    val layout = b.layout ?: return false
+    if (b.warp != null) return false
+    val n = spec.text.length
+    val v = textValue
+    val at = v.selection.end.coerceIn(0, n)
+    val line = layout.getLineForOffset(at)
+    val to = when (move) {
+        CaretMove.UP -> if (line == 0) 0 else layout.getOffsetForHorizontal(line - 1, layout.getPrimaryHorizontal(at))
+        CaretMove.DOWN -> if (line >= layout.lineCount - 1) n else layout.getOffsetForHorizontal(line + 1, layout.getPrimaryHorizontal(at))
+        CaretMove.LINE_START -> layout.getLineStart(line)
+        // (Before the line break, not after it)
+        CaretMove.LINE_END -> layout.getLineEnd(line).let { e -> if (e > layout.getLineStart(line) && e <= n && e > 0 && spec.text.getOrNull(e - 1) == '\n') e - 1 else e }
+    }.coerceIn(0, n)
+    textValue = v.copy(selection = if (extend) androidx.compose.ui.text.TextRange(v.selection.start, to) else androidx.compose.ui.text.TextRange(to))
+    return true
+}
+
 /** The text being typed changed. */
 fun EditorViewModel.typeText(s: String) {
     val t = textEdit ?: return

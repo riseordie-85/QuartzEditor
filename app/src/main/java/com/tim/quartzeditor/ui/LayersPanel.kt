@@ -289,6 +289,8 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                 if (dragId == null) break
                 if (!edgeArmed && abs(fingerY - startY) > rowPx / 2f) edgeArmed = true
                 if (!edgeArmed) continue
+                // (Not while it's over the New layer button, or below the list on its way there)
+                if (overNew || fingerY > listH + rowPx / 2f) continue
                 val y = fingerY
                 val speed = when {
                     y < edgePx -> -((edgePx - y) / edgePx).coerceIn(0f, 1.5f) * rowPx * 0.35f
@@ -370,6 +372,8 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                                     cancelled = c.isConsumed
                                     break
                                 }
+                                // (Sideways first with a mouse or pen is a swipe to pick it, not a drag)
+                                if (!started && anywhere && abs(c.position.x - down.position.x) >= viewConfiguration.touchSlop && abs(c.position.x - down.position.x) > abs(c.position.y - down.position.y)) break
                                 if (!started && abs(c.position.y - down.position.y) >= viewConfiguration.touchSlop) {
                                     started = true
                                     dragId = id
@@ -386,7 +390,7 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                                     if (!overNew) {
                                         dragOffset += c.position.y - lastY
                                         fingerY = c.position.y
-                                    } else fingerY = listH / 2f
+                                    }
                                     lastY = c.position.y
                                     c.consume()
                                 }

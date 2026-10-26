@@ -84,7 +84,8 @@ fun MaskRefineScreen(vm: EditorViewModel) {
         working = true
         delay(120)
         preview = withContext(Dispatchers.Default) {
-            val m = if (params.isEmpty) wk.mask else MaskRefine.apply(wk.mask, wk.gray, wk.w, wk.h, params, wk.scale)
+            val job = coroutineContext
+            val m = if (params.isEmpty) wk.mask else MaskRefine.apply(wk.mask, wk.gray, wk.w, wk.h, params, wk.scale) { job.ensureActive() }
             ensureActive()
             refinePreview(wk, m, view)
         }

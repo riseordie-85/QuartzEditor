@@ -666,7 +666,8 @@ object VectorArt {
             textSkewX = if (t.fauxItalic) -0.22f else 0f
             isUnderlineText = t.underline
         }
-        val text = (if (t.allCaps) t.text.uppercase() else t.text).ifEmpty { " " }
+        // (Capitals letter by letter, so the text keeps its length: the cursor's place lines up)
+        val text = (if (t.allCaps) String(CharArray(t.text.length) { t.text[it].uppercaseChar() }) else t.text).ifEmpty { " " }
         val fm = paint.fontMetrics
         val slack = size * 0.35f
         val curve = t.curve.coerceIn(-1f, 1f)

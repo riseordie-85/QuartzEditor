@@ -59,6 +59,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -565,7 +569,19 @@ fun TextBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
             modifier = Modifier
                 .size(1.dp)
                 .alpha(0f)
-                .focusRequester(focus),
+                .focusRequester(focus)
+                // Up, down, Home and End go by the lines on the picture (this field is too small to have any)
+                .onPreviewKeyEvent { e ->
+                    if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val move = when (e.key) {
+                        androidx.compose.ui.input.key.Key.DirectionUp -> CaretMove.UP
+                        androidx.compose.ui.input.key.Key.DirectionDown -> CaretMove.DOWN
+                        androidx.compose.ui.input.key.Key.MoveHome -> CaretMove.LINE_START
+                        androidx.compose.ui.input.key.Key.MoveEnd -> CaretMove.LINE_END
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    vm.moveTextCaret(move, e.isShiftPressed)
+                },
         )
         Spacer(Modifier.width(4.dp))
         Box(

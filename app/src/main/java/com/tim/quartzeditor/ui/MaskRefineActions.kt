@@ -11,6 +11,7 @@ import com.tim.quartzeditor.engine.MaskRefine
 import com.tim.quartzeditor.engine.TileGrid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -45,9 +46,12 @@ internal fun maskWork(d: Doc, l: Layer, maxSide: Int): MaskWork {
     val h = (d.height * s).roundToInt().coerceAtLeast(1)
     val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     // The mask (canvas pixels: the layer's own, moved by where it is)
+    // (Scaled to exactly this size, so it lines up with the full-size mask)
+    val sx = w / d.width.toFloat()
+    val sy = h / d.height.toFloat()
     val mb = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
     Canvas(mb).apply {
-        scale(s, s)
+        scale(sx, sy)
         l.mask?.drawTo(this, l.x.toFloat(), l.y.toFloat(), paint)
     }
     val mbytes = ByteArray(w * h)
@@ -58,11 +62,12 @@ internal fun maskWork(d: Doc, l: Layer, maxSide: Int): MaskWork {
     val color = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     if (l.hasContent && !l.isGroup && !l.isAdjustment) {
         Canvas(color).apply {
-            scale(s, s)
+            scale(sx, sy)
             l.tiles.drawTo(this, l.x.toFloat(), l.y.toFloat(), paint)
         }
     } else {
-        val flat = DocRenderer.flatten(d.shallowCopy())
+        // (Only as big as it's needed: a huge picture flattened whole wouldn't fit in memory)
+        val flat = DocRenderer.thumbnail(d.shallowCopy(), max(w, h))
         Canvas(color).drawBitmap(flat, null, RectF(0f, 0f, w.toFloat(), h.toFloat()), paint)
         flat.recycle()
     }
@@ -91,46 +96,7 @@ fun EditorViewModel.applyMaskRefine(id: Long, p: MaskRefine.Params, label: Strin
             val work = maskWork(d, l, REFINE_MAX)
             val refined = MaskRefine.apply(work.mask, work.gray, work.w, work.h, p, work.scale)
             work.color.recycle()
-            // The change, laid over the full-size mask (where nothing changed, it stays exactly as it was)
-            val diff = FloatArray(refined.size) { refined[it] - work.mask[it] }
-            val fw = d.width
-            val fh = d.height
-            val full = Bitmap.createBitmap(fw, fh, Bitmap.Config.ALPHA_8)
-            Canvas(full).let { c -> old.drawTo(c, l.x.toFloat(), l.y.toFloat(), null) }
-            val bytes = ByteArray(fw * fh)
-            full.copyPixelsToBuffer(java.nio.ByteBuffer.wrap(bytes))
-            val sx = work.w / fw.toFloat()
-            val sy = work.h / fh.toFloat()
-            for (y in 0 until fh) {
-                val fy = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, (work.h - 1).toFloat())
-                val iy = fy.toInt()
-                val iy1 = min(iy + 1, work.h - 1)
-                val ty = fy - iy
-                val row = y * fw
-                for (x in 0 until fw) {
-                    val fx = ((x + 0.5f) * sx - 0.5f).coerceIn(0f, (work.w - 1).toFloat())
-                    val ix = fx.toInt()
-                    val ix1 = min(ix + 1, work.w - 1)
-                    val tx = fx - ix
-                    val a = diff[iy * work.w + ix] * (1 - tx) + diff[iy * work.w + ix1] * tx
-                    val b = diff[iy1 * work.w + ix] * (1 - tx) + diff[iy1 * work.w + ix1] * tx
-                    val dv = a * (1 - ty) + b * ty
-                    if (dv > 0.002f || dv < -0.002f) {
-                        val v = (bytes[row + x].toInt() and 0xFF) + dv * 255f
-                        bytes[row + x] = v.roundToInt().coerceIn(0, 255).toByte()
-                    }
-                }
-            }
-            full.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
-            // Back into the layer's own pixels: the canvas's tiles replaced, the rest kept
-            val fresh = TileGrid.fromBitmap(full, -l.x, -l.y, alphaOnly = true)
-            full.recycle()
-            val out = TileGrid(alphaOnly = true)
-            out.tiles.putAll(old.tiles)
-            val area = RectF(-l.x.toFloat(), -l.y.toFloat(), (fw - l.x).toFloat(), (fh - l.y).toFloat())
-            for (k in out.keysIn(area)) out.tiles.remove(k)
-            out.tiles.putAll(fresh.tiles)
-            out
+            refinedMask(d, l, old, work, refined)
         }
         if (doc !== d || d.layer(id) !== l) return@runBusy
         stackEdit(label) { l.mask = grid }
@@ -146,4 +112,80 @@ fun EditorViewModel.enhanceMaskEdge() {
         return
     }
     applyMaskRefine(l.id, MaskRefine.Params(radius = MaskRefine.autoRadius(d.width, d.height)), "Enhance edge")
+}
+
+/**
+ * [old] (layer [l]'s mask) with [refined] (worked out at [work]'s size) laid over the canvas part,
+ * tile by tile: where it changed, the refined edge (smoothly enlarged); where it didn't, the mask
+ * exactly as it was; and off the canvas, untouched.
+ */
+private fun refinedMask(d: Doc, l: Layer, old: TileGrid, work: MaskWork, refined: FloatArray): TileGrid {
+    val ww = work.w
+    val wh = work.h
+    val fx = ww / d.width.toFloat()
+    val fy = wh / d.height.toFloat()
+    // The refined mask at canvas pixel ([cx], [cy]), and how much it changed there
+    fun sample(arr: FloatArray, cx: Int, cy: Int): Float {
+        val x = ((cx + 0.5f) * fx - 0.5f).coerceIn(0f, (ww - 1).toFloat())
+        val y = ((cy + 0.5f) * fy - 0.5f).coerceIn(0f, (wh - 1).toFloat())
+        val ix = x.toInt()
+        val iy = y.toInt()
+        val ix1 = min(ix + 1, ww - 1)
+        val iy1 = min(iy + 1, wh - 1)
+        val tx = x - ix
+        val ty = y - iy
+        val a = arr[iy * ww + ix] * (1 - tx) + arr[iy * ww + ix1] * tx
+        val b = arr[iy1 * ww + ix] * (1 - tx) + arr[iy1 * ww + ix1] * tx
+        return a * (1 - ty) + b * ty
+    }
+    val diff = FloatArray(refined.size) { refined[it] - work.mask[it] }
+    val out = TileGrid(alphaOnly = true)
+    out.tiles.putAll(old.tiles)
+    val size = TileGrid.SIZE
+    // The canvas, in the layer's own pixels
+    val area = RectF(-l.x.toFloat(), -l.y.toFloat(), (d.width - l.x).toFloat(), (d.height - l.y).toFloat())
+    for (k in out.keysIn(area)) {
+        val tx0 = TileGrid.tx(k) * size
+        val ty0 = TileGrid.ty(k) * size
+        // The tile's pixels on the canvas
+        val x0 = max(0, area.left.toInt() - tx0)
+        val y0 = max(0, area.top.toInt() - ty0)
+        val x1 = min(size, area.right.toInt() - tx0)
+        val y1 = min(size, area.bottom.toInt() - ty0)
+        if (x0 >= x1 || y0 >= y1) continue
+        val had = old.tiles[k]
+        val tile = had?.copy(Bitmap.Config.ALPHA_8, true) ?: Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
+        val bytes = ByteArray(size * size)
+        tile.copyPixelsToBuffer(java.nio.ByteBuffer.wrap(bytes))
+        var changed = false
+        var any = false
+        for (y in y0 until y1) {
+            val cy = ty0 + y + l.y
+            for (x in x0 until x1) {
+                val cx = tx0 + x + l.x
+                if (abs(sample(diff, cx, cy)) < 0.004f) continue
+                val v = (sample(refined, cx, cy) * 255f).roundToInt().coerceIn(0, 255).toByte()
+                if (bytes[y * size + x] != v) {
+                    bytes[y * size + x] = v
+                    changed = true
+                }
+            }
+        }
+        if (!changed) {
+            tile.recycle()
+            continue
+        }
+        for (b in bytes) if (b.toInt() != 0) {
+            any = true
+            break
+        }
+        if (!any) {
+            tile.recycle()
+            out.tiles.remove(k)
+            continue
+        }
+        tile.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
+        out.tiles[k] = tile
+    }
+    return out
 }
