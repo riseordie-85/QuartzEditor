@@ -59,7 +59,7 @@ class TransformSession(val parts: List<TransformPart>, state: TransformState) {
 }
 
 /** Starts transforming the selected layer(s) (when the Transform tool is picked). */
-fun EditorViewModel.beginTransform() {
+fun EditorViewModel.beginTransform(onReady: (() -> Unit)? = null) {
     val d = doc ?: return
     if (transform != null) return
     // Several picked: every one of them with pixels (a picked folder brings everything in it,
@@ -123,6 +123,7 @@ fun EditorViewModel.beginTransform() {
         val session = TransformSession(prepared, TransformState.start(box, 0, 0))
         transform = session
         showTransform(session)
+        onReady?.invoke()
     }
 }
 

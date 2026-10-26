@@ -392,7 +392,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The selection before the last Deselect (Ctrl+Shift+D brings it back). */
     var lastSelection: com.tim.quartzeditor.engine.Selection? = null
     /** Alt-click on an eye showed only that layer: each layer's visibility before, to put back. */
-    internal var soloRestore: Map<Long, Boolean>? = null
+    internal var soloRestore: SoloRestore? = null
     /** Alt-click on a mask: the picture shows that layer's mask (black hides, white shows). */
     var viewMaskOf by mutableStateOf<Long?>(null)
     /** Caps Lock: brushes show a small crosshair instead of their outline. */
@@ -406,11 +406,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The last transform applied, canvas to canvas (Ctrl+Shift+T does it again). */
     internal var lastTransform: android.graphics.Matrix? = null
     /** Quick Mask (Q): the temporary layer being painted to make a selection. */
-    var quickMaskId by mutableStateOf<Long?>(null)
+    val quickMaskId: Long?
+        get() {
+            history.version
+            return doc?.layers?.lastOrNull { it.props.quickMask }?.id
+        }
     /** The layer that was picked before Quick Mask (it's picked again after). */
     internal var quickMaskPrev: Long? = null
     /** Select and mask waits for this layer's mask, being made from the selection. */
-    internal var pendingMaskRefine: Long? = null
+    internal var pendingMaskRefine by mutableStateOf<Long?>(null)
     val shiftOn: Boolean get() = (modShift && !modAlt) || keyShift
     val altOn: Boolean get() = modAlt || keyAlt
     var showModifier by mutableStateOf(prefs.getBoolean("showModifier", true))
@@ -1392,3 +1396,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         const val THUMB_PX = 96
     }
 }
+
+/** Alt-click solo: the document, each layer's visibility before, and which layers showed right after (to know it's still in place). */
+internal class SoloRestore(val doc: com.tim.quartzeditor.engine.Doc, val before: Map<Long, Boolean>, val shown: Set<Long>)

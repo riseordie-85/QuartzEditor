@@ -161,7 +161,7 @@ object ProjectIO {
     private fun writeDoc(zip: ZipOutputStream, doc: Doc, prefix: String, canvasColor: Int, buf: ByteBuffer) {
         val layers = JSONArray()
         // (Not a layer put in only for a preview)
-        val saved = doc.layers.filter { it.id != doc.previewLayerId || doc.previewLayerId == 0L }
+        val saved = doc.layers.filter { (it.id != doc.previewLayerId || doc.previewLayerId == 0L) && !it.props.quickMask }
         // Linked smart layers: the contents are written once, with the first of them
         val firstWith = java.util.IdentityHashMap<Doc, Long>()
         for (l in saved) l.props.smart?.let { sp -> firstWith.putIfAbsent(sp.contents, l.id) }

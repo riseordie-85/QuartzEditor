@@ -509,6 +509,10 @@ internal fun EditorViewModel.saveView() {
 internal fun EditorViewModel.enterTab(i: Int, force: Boolean = false) {
     val t = tabs.getOrNull(i) ?: return
     if (!force && i == tabIndex && doc === t.doc) return
+    // (What belongs to the picture left behind: mask view, reselect, waiting Select and mask)
+    viewMaskOf = null
+    lastSelection = null
+    pendingMaskRefine = null
     // A smart layer that was deleted (or undone away) meanwhile: its tab goes
     val p = t.parent
     if (p != null && p.doc.layers.none { it.props.smart?.contents === t.doc }) {

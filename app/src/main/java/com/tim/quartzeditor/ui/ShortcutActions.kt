@@ -91,7 +91,7 @@ fun EditorViewModel.selectLayerStep(up: Boolean) {
 /** The layers on top (not in folders) that show. */
 private fun EditorViewModel.visibleTops(): List<Layer> {
     val d = doc ?: return emptyList()
-    return d.children(0L).filter { d.effectivelyVisible(it) }
+    return d.children(0L).filter { d.effectivelyVisible(it) && !it.props.quickMask }
 }
 
 /** Ctrl+Shift+E: every visible layer merged into one (hidden layers stay as they are). */
@@ -115,7 +115,10 @@ fun EditorViewModel.mergeVisible() {
         }
         stackEdit("Merge visible") {
             // They and everything in them go; the merged layer takes the topmost one's place
-            val gone = d.layers.filter { x -> tops.any { t -> t === x || d.isInside(x, t) } }.toSet()
+            val within = d.layers.filter { x -> tops.any { t -> t === x || d.isInside(x, t) } }
+            // (What's hidden inside them wasn't merged: it stays, out of the folder that goes)
+            val gone = within.filter { x -> d.effectivelyVisible(x) }.toSet()
+            for (x in within) if (x !in gone && d.layers.none { it.id == x.props.parent && it !in gone }) x.props = x.props.copy(parent = 0L)
             val topIndex = d.layers.indexOfLast { it in gone }
             val kept = d.layers.filter { it !in gone }
             val at = d.layers.subList(0, topIndex + 1).count { it !in gone }
@@ -194,10 +197,11 @@ fun EditorViewModel.selectAndMaskShortcut() {
         l.mask != null -> openMaskRefine()
         d.selection != null -> {
             maskFromSelection()
-            toast("Made a mask from the selection: refine it here")
             // (The mask is made in the background; Select and mask opens once it's there)
-            maskRefineFor = null
-            pendingMaskRefine = l.id
+            if (busy != null || l.mask != null) {
+                maskRefineFor = null
+                pendingMaskRefine = l.id
+            }
         }
         else -> toast("Select something, or add a mask, first")
     }
@@ -208,7 +212,11 @@ fun EditorViewModel.selectAndMaskShortcut() {
 /** An adjustment applied straight away to the active layer (a smart filter on a smart layer). */
 fun EditorViewModel.quickFx(fx: FxParams) {
     if (pendingFirst { quickFx(fx) }) return
-    doc?.active ?: return
+    val l = doc?.active ?: return
+    if (l.needsRaster && !l.isSmart) {
+        askRasterize(l) { quickFx(fx) }
+        return
+    }
     updateFx(fx)
     if (pendingFx != null) applyFx { popup = null }
 }
@@ -268,16 +276,17 @@ fun EditorViewModel.changeTextSize(bigger: Boolean) {
 /** Alt-click on an eye: only that layer shows; Alt-click again puts the others back. */
 fun EditorViewModel.toggleSolo(id: Long) {
     val d = doc ?: return
-    val before = soloRestore
-    if (before != null) {
-        soloRestore = null
+    val r = soloRestore
+    soloRestore = null
+    // (Only while the solo is still as it was left: same file, nothing shown or hidden since, not undone)
+    if (r != null && r.doc === d && d.layers.filter { it.props.visible }.map { it.id }.toSet() == r.shown) {
         stackEdit("Show all layers") {
-            for (x in d.layers) before[x.id]?.let { v -> if (x.props.visible != v) x.props = x.props.copy(visible = v) }
+            for (x in d.layers) r.before[x.id]?.let { v -> if (x.props.visible != v) x.props = x.props.copy(visible = v) }
         }
         return
     }
     val l = d.layer(id) ?: return
-    soloRestore = d.layers.associate { it.id to it.props.visible }
+    val before = d.layers.associate { it.id to it.props.visible }
     stackEdit("Show only this layer") {
         for (x in d.layers) {
             // It, the folders it's in, and what's in it (if it's a folder) stay as they are
@@ -286,6 +295,7 @@ fun EditorViewModel.toggleSolo(id: Long) {
             if (x.props.visible != v) x.props = x.props.copy(visible = v)
         }
     }
+    soloRestore = SoloRestore(d, before, d.layers.filter { it.props.visible }.map { it.id }.toSet())
 }
 
 /** Alt-click on a mask: the picture shows the mask (Alt-click again, or Esc, to go back). */
@@ -303,7 +313,15 @@ fun EditorViewModel.transformAgain() {
         return
     }
     if (pendingFirst { transformAgain() }) return
-    if (transform == null) beginTransform()
+    // (The layer is prepared in the background first)
+    if (transform == null) {
+        beginTransform { transformAgainNow(m) }
+        return
+    }
+    transformAgainNow(m)
+}
+
+private fun EditorViewModel.transformAgainNow(m: Matrix) {
     val t = transform ?: return
     val c = t.start.corners()
     val pts = FloatArray(8)
@@ -348,12 +366,11 @@ fun EditorViewModel.toggleQuickMask() {
         }
         val red = withContext(Dispatchers.Default) { solidGrid(d.width, d.height, 0xFFFF1E1E.toInt()) }
         stackEdit("Quick Mask") {
-            val l = Layer(d.newId(), LayerProps("Quick Mask", opacity = 0.5f), red, 0, 0, mask)
+            val l = Layer(d.newId(), LayerProps("Quick Mask", opacity = 0.5f, quickMask = true), red, 0, 0, mask)
             d.layers.add(l)
             d.activeId = l.id
             d.editMask = true
             d.selection = null
-            quickMaskId = l.id
             quickMaskPrev = prevActive
         }
         if (tool != Tool.BRUSH) onToolButton(Tool.BRUSH)
@@ -365,7 +382,7 @@ fun EditorViewModel.toggleQuickMask() {
 internal fun EditorViewModel.leaveQuickMask() {
     val d = doc ?: return
     val id = quickMaskId ?: return
-    quickMaskId = null
+    if (busy != null) return
     val l = d.layer(id) ?: return
     val m = l.mask ?: TileGrid(alphaOnly = true)
     val prev = quickMaskPrev

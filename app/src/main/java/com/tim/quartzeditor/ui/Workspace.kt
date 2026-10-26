@@ -225,10 +225,11 @@ fun Workspace(vm: EditorViewModel) {
         var panelsOpen by rememberSaveable { mutableStateOf(wide) }
         // F: panels hidden, then only the picture, then everything again
         val full = vm.screenMode == 2
+        var seenScreenMode by rememberSaveable { mutableIntStateOf(vm.screenMode) }
         LaunchedEffect(vm.screenMode) {
-            when (vm.screenMode) {
-                1, 2 -> panelsOpen = false
-                else -> panelsOpen = wide
+            if (vm.screenMode != seenScreenMode) {
+                seenScreenMode = vm.screenMode
+                panelsOpen = vm.screenMode == 0 && wide
             }
         }
         val docked = wide && panelsOpen

@@ -18,6 +18,15 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
     val shift = e.isShiftPressed
     val alt = e.isAltPressed
     val repeat = e.repeatCount > 0
+    // Caps Lock: a small crosshair instead of the brush's outline (follows the key's own light)
+    if (e.keyCode == KeyEvent.KEYCODE_CAPS_LOCK) {
+        if (!repeat) {
+            preciseCursor = !preciseCursor
+            toast(if (preciseCursor) "Precise cursor" else "Brush outline cursor")
+        }
+        return false
+    }
+    if (preciseCursor != e.isCapsLockOn) preciseCursor = e.isCapsLockOn
     // Typing on the picture, but the keyboard lost its place (a field in the panels was used): it
     // goes back to the text, and the key isn't taken as a shortcut (H, E, Backspace…)
     if (textEdit != null && !cmd && e.keyCode != KeyEvent.KEYCODE_ESCAPE && e.keyCode !in setOf(KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT)) {
@@ -37,12 +46,6 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         }
         KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT, KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> {
             keyCtrl = true
-            return false
-        }
-        // Caps Lock: a small crosshair instead of the brush's outline (and back)
-        KeyEvent.KEYCODE_CAPS_LOCK -> {
-            preciseCursor = !preciseCursor
-            toast(if (preciseCursor) "Precise cursor" else "Brush outline cursor")
             return false
         }
     }
@@ -240,17 +243,17 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
         }
         KeyEvent.KEYCODE_ESCAPE -> when {
             textEdit != null -> cancelText()
-            // Rotate view: Esc straightens the canvas; then (or with Zoom) it leaves the view tool
-            viewTool == ViewTool.ROTATE && rotation % 360f != 0f -> straightenView()
-            viewTool != null -> viewTool = null
-            viewMaskOf != null -> viewMaskOf = null
-            screenMode == 2 -> screenMode = 0
             transform != null -> cancelTransform()
             warp != null -> cancelWarp()
             cropBox != null -> cancelCrop()
             penPoints.isNotEmpty() -> cancelPen()
             polygonPoints.isNotEmpty() -> cancelPolygon()
             popup != null -> closePopup()
+            // Rotate view: Esc straightens the canvas; then (or with Zoom) it leaves the view tool
+            viewTool == ViewTool.ROTATE && rotation % 360f != 0f -> straightenView()
+            viewTool != null -> viewTool = null
+            viewMaskOf != null -> viewMaskOf = null
+            screenMode == 2 -> screenMode = 0
             else -> return false
         }
         KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL -> when {

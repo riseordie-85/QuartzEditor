@@ -101,6 +101,8 @@ data class LayerProps(
     val passThrough: Boolean = true,
     /** Blending Options → Blend If: shows the layer only where it, and what's below it, are in these ranges of gray. */
     val blendIf: BlendIf = BlendIf(),
+    /** Quick Mask's temporary red layer (never saved, exported or sampled; leaving Quick Mask removes it). */
+    val quickMask: Boolean = false,
 )
 
 /**
@@ -427,6 +429,7 @@ class Doc(width: Int, height: Int, name: String) {
         // Linked smart layers (sharing contents) share them in the copy too
         val contentsCopies = java.util.IdentityHashMap<Doc, Doc>()
         for (l in layers) {
+            if (l.props.quickMask) continue
             val t = TileGrid(alphaOnly = false).also { it.tiles.putAll(l.tiles.tiles) }
             val m = l.mask?.let { src -> TileGrid(alphaOnly = true).also { it.tiles.putAll(src.tiles) } }
             // A smart layer's contents are copied the same way (they may be edited meanwhile)
@@ -435,7 +438,7 @@ class Doc(width: Int, height: Int, name: String) {
             } ?: l.props
             d.layers.add(Layer(l.id, props, t, l.x, l.y, m, l.kind).also { it.collapsed = l.collapsed })
         }
-        d.activeId = activeId
+        d.activeId = if (d.layers.any { it.id == activeId }) activeId else d.layers.lastOrNull()?.id ?: -1L
         d.selection = selection
         d.guidesX.addAll(guidesX)
         d.guidesY.addAll(guidesY)
