@@ -901,8 +901,12 @@ data class ComfyLora(val name: String, val strength: Float, val clipStrength: Fl
             return out
         }
 
-        /** LoRA Manager's text: one <lora:name:strength> per LoRA in the list. */
-        fun text(list: List<ComfyLora>): String = list.joinToString(" ") { "<lora:${it.name}:${"%.2f".format(java.util.Locale.US, it.strength)}>" }
+        /** LoRA Manager's text: one <lora:name:strength> per LoRA in the list (<lora:name:strength:clip> when the CLIP strength differs). */
+        fun text(list: List<ComfyLora>): String = list.joinToString(" ") {
+            val s = "%.2f".format(java.util.Locale.US, it.strength)
+            val c = "%.2f".format(java.util.Locale.US, it.clipStrength)
+            if (s == c) "<lora:${it.name}:$s>" else "<lora:${it.name}:$s:$c>"
+        }
 
         /** A LoRA file's name as LoRA Manager names it (no folder, no extension). */
         fun nameOf(file: String): String = file.replace('\\', '/').substringAfterLast('/').substringBeforeLast('.')

@@ -1773,8 +1773,24 @@ private fun LoraManagerSection(
                     },
                     onDone = onDone,
                 )
+                // The text encoder's own strength (Moss and other models without a LoRA'd encoder want 0)
+                PanelSlider(
+                    "CLIP strength", l.clipStrength.coerceIn(-2f, 2f), -2f..2f, "%.2f".format(java.util.Locale.US, l.clipStrength),
+                    onChange = { v -> put(l.copy(clipStrength = (v * 100).roundToInt() / 100f), save = false) },
+                    onDone = onDone,
+                )
             }
         }
+    }
+    if (loras.isNotEmpty()) {
+        val allZero = loras.all { abs(it.clipStrength) < 0.001f }
+        Text(
+            if (allZero) "CLIP strength back to each LoRA's strength" else "CLIP strength 0 for every LoRA (Moss)",
+            color = Q.accent, fontSize = 13.sp,
+            modifier = Modifier.clickable {
+                set(loras.map { it.copy(clipStrength = if (allZero) it.strength else 0f) }, true)
+            }.padding(vertical = 8.dp),
+        )
     }
     if (adding) {
         val files = com.tim.quartzeditor.engine.ComfyOverrides.choices(info, "lora_name")
@@ -1782,7 +1798,9 @@ private fun LoraManagerSection(
             adding = false
             val name = com.tim.quartzeditor.engine.ComfyLora.nameOf(f)
             val at = loras.indexOfFirst { it.name == name }
-            set(if (at >= 0) loras.toMutableList().also { it[at] = it[at].copy(active = true) } else loras + com.tim.quartzeditor.engine.ComfyLora(name, 1f, 1f, true), true)
+            // (A list whose CLIP strengths are all 0 gets one more the same way)
+            val clip = if (loras.isNotEmpty() && loras.all { abs(it.clipStrength) < 0.001f }) 0f else 1f
+            set(if (at >= 0) loras.toMutableList().also { it[at] = it[at].copy(active = true) } else loras + com.tim.quartzeditor.engine.ComfyLora(name, 1f, clip, true), true)
         }
     }
 }

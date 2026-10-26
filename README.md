@@ -740,8 +740,10 @@ off, a model is missing) the chip says what ComfyUI said.
   to pick another. Weight type, device and the like are under More options. LoRA loaders' strengths are
   sliders. Changed ones are tinted and have Reset.
 - **LoRA Manager**: its Lora Loader's list, with the ones switched on shown first (On only switches to
-  all of them; Find searches): switch each on or off, set its strength, take it out (×), or **Add…** any
-  LoRA your ComfyUI has. Its trigger words node gets the trigger words as LoRA Manager works them out.
+  all of them; Find searches): switch each on or off, set its strength and its **CLIP strength** (the text
+  encoder's; it follows the strength until set apart), take it out (×), or **Add…** any LoRA your ComfyUI has.
+  **CLIP strength 0 for every LoRA** (under the list) sets them all for models like Moss that want it at 0;
+  LoRAs added after that get 0 too. Its trigger words node gets the trigger words as LoRA Manager works them out.
   When LoRAs are switched on but the loader only reaches the picture through an If/Else switch set the other
   way (a "Use External Model?" / "Use External CLIP?" left off), that switch is turned to the loader so the
   LoRAs apply (shown under Switches; switch it off there to send it as saved).
