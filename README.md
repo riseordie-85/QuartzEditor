@@ -616,7 +616,7 @@ in between. With a selection, the mask button makes a mask that shows only what'
 
 ## Keyboard shortcuts
 With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd):
-- Tools: **V** transform (again: move), **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
+- Tools: **V** move, **H** pan (or hold **Space** with any tool), **M** rectangle/ellipse select
   (Shift+M switches), **L** lasso/polygonal (Shift+L), **W** magic wand / object select (Shift+W switches), **C** crop, **Ctrl+T** transform, **Ctrl+Shift+X** liquify,
   **I** eyedropper, **G** gradient/bucket (Shift+G; G alone brings back the one used last), **U** shape (Shift+U next shape), **P** pen, **A** edit
   points, **T** text, **B** brush, **E** eraser, **J** spot healing / AI remove (again switches), **S** clone,
