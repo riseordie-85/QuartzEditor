@@ -233,8 +233,7 @@ fun EditorViewModel.desaturateLayer() = quickFx(FxParams(adjust = mapOf(Adjust.S
  */
 fun EditorViewModel.resizeCanvas(w: Int, h: Int, ax: Float, ay: Float) {
     val d = doc ?: return
-    val nw = w.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
-    val nh = h.coerceIn(1, com.tim.quartzeditor.engine.Doc.MAX_SIDE)
+    val (nw, nh) = com.tim.quartzeditor.engine.Doc.fitted(w.coerceAtLeast(1), h.coerceAtLeast(1))
     if (nw == d.width && nh == d.height) return
     val dx = ((nw - d.width) * ax).roundToInt().toFloat()
     val dy = ((nh - d.height) * ay).roundToInt().toFloat()

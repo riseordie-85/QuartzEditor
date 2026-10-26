@@ -591,7 +591,7 @@ fun Workspace(vm: EditorViewModel) {
             title = { Text("Upscale") },
             text = {
                 Text(
-                    if (room == 0) "This picture is already as big as the app can upscale (the result would be over ${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px). Crop it or use Image size to make it smaller first."
+                    if (room == 0) "This picture is already as big as the app can upscale (the result would be over ${com.tim.quartzeditor.engine.Doc.LIMIT_TEXT}). Crop it or use Image size to make it smaller first."
                     else "Makes the whole picture bigger, with new detail from the on-device AI for photo layers (shapes and text are redrawn sharp). " +
                         "It's ${d?.width ?: 0} × ${d?.height ?: 0} px now. This can take a minute or two."
                 )

@@ -35,8 +35,7 @@ internal fun EditorViewModel.resetVectorState() {
 }
 
 fun EditorViewModel.newDocument(name: String, width: Int, height: Int, bg: NewBackground) {
-    val w = width.coerceIn(1, Doc.MAX_SIDE)
-    val h = height.coerceIn(1, Doc.MAX_SIDE)
+    val (w, h) = Doc.fitted(width.coerceAtLeast(1), height.coerceAtLeast(1))
     val d = Doc(w, h, name.ifBlank { "Untitled" })
     val layer = when (bg) {
         NewBackground.TRANSPARENT -> Layer(d.newId(), LayerProps("Layer 1"), TileGrid(alphaOnly = false))
@@ -51,7 +50,7 @@ fun EditorViewModel.newDocument(name: String, width: Int, height: Int, bg: NewBa
 /** Opens a photo as a new document. */
 fun EditorViewModel.openImage(uri: Uri) {
     runBusy("Opening…") {
-        val bmp = withContext(Dispatchers.IO) { Media.decodeUpright(ctx, uri, Doc.MAX_SIDE) }
+        val bmp = withContext(Dispatchers.IO) { Media.decodeForCanvas(ctx, uri) }
         val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
         val d = Doc(bmp.width, bmp.height, name)
         val grid = withContext(Dispatchers.Default) { TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false) }

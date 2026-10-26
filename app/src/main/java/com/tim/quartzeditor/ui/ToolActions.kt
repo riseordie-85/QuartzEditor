@@ -693,6 +693,13 @@ fun EditorViewModel.dragCrop(start: RectF, handle: Int, dx: Float, dy: Float, ke
     val maxSide = Doc.MAX_SIDE.toFloat()
     if (r - l > maxSide) r = l + maxSide
     if (b - t > maxSide) b = t + maxSide
+    // (A crop bigger than the canvas can't go past the pixel limit either)
+    val area = (r - l) * (b - t)
+    if (area > Doc.MAX_PIXELS) {
+        val k = kotlin.math.sqrt(Doc.MAX_PIXELS / area.toDouble()).toFloat()
+        r = l + (r - l) * k
+        b = t + (b - t) * k
+    }
     cropBox = RectF(l, t, r, b)
 }
 
@@ -727,8 +734,7 @@ fun EditorViewModel.applyCrop(onDone: () -> Unit = {}) {
 /** Makes the canvas cover [r] (canvas pixels) by moving every layer. */
 internal fun EditorViewModel.cropTo(r: Rect) {
     val d = doc ?: return
-    val w = r.width().coerceIn(1, Doc.MAX_SIDE)
-    val h = r.height().coerceIn(1, Doc.MAX_SIDE)
+    val (w, h) = Doc.fitted(r.width().coerceAtLeast(1), r.height().coerceAtLeast(1))
     stackEdit("Crop") {
         val oldW = d.width
         val oldH = d.height

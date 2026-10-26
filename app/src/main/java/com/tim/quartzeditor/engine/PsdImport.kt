@@ -110,8 +110,8 @@ object PsdImport {
     private class Builder(val f: PsdFile, name: String, val depth: Int = 0, val tiff: TiffSource? = null) {
         val notes = ArrayList<String>()
         /** Shrinks pictures bigger than the app's limit. */
-        val s: Float = min(1f, Doc.MAX_SIDE.toFloat() / max(f.width, f.height))
-        val doc = Doc((f.width * s).roundToInt().coerceIn(1, Doc.MAX_SIDE), (f.height * s).roundToInt().coerceIn(1, Doc.MAX_SIDE), name)
+        val s: Float = Doc.fitScale(f.width, f.height)
+        val doc = Doc.fitted(f.width, f.height).let { (w, h) -> Doc(w, h, name) }
 
         // What to tell the person afterwards
         val skippedAdjustments = ArrayList<String>()
@@ -907,7 +907,7 @@ object PsdImport {
             android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
-            while (max(bounds.outWidth, bounds.outHeight) / sample > Doc.MAX_SIDE) sample *= 2
+            while (!Doc.fits(bounds.outWidth / sample, bounds.outHeight / sample)) sample *= 2
             var bmp = android.graphics.BitmapFactory.decodeStream(BufferStream(data.duplicate()), null, android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -935,9 +935,9 @@ object PsdImport {
                 bmp = upright
             }
             // Exactly within the limit (the decoder rounds sizes up)
-            if (max(bmp.width, bmp.height) > Doc.MAX_SIDE) {
-                val k = Doc.MAX_SIDE.toFloat() / max(bmp.width, bmp.height)
-                val fit = Bitmap.createScaledBitmap(bmp, (bmp.width * k).roundToInt().coerceIn(1, Doc.MAX_SIDE), (bmp.height * k).roundToInt().coerceIn(1, Doc.MAX_SIDE), true)
+            if (!Doc.fits(bmp.width, bmp.height)) {
+                val (fw, fh) = Doc.fitted(bmp.width, bmp.height)
+                val fit = Bitmap.createScaledBitmap(bmp, fw, fh, true)
                 if (fit !== bmp) bmp.recycle()
                 bmp = fit
             }

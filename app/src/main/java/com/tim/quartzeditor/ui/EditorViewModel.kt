@@ -1221,7 +1221,22 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // A slider change to a shape or text layer that never heard its finger lift
         if (vectorBefore != null) commitVector("Change layer")
         val before = d.snapshot()
+        val countBefore = d.countedLayers
+        val areaBefore = d.width.toLong() * d.height
         change()
+        // Like Procreate: a bigger canvas allows fewer layers. More layers than that (or a canvas made
+        // bigger with too many) and the change is taken back
+        val limit = com.tim.quartzeditor.engine.Doc.maxLayers(d.width, d.height)
+        val countAfter = d.countedLayers
+        if (countAfter > limit && (countAfter > countBefore || d.width.toLong() * d.height > areaBefore)) {
+            d.restore(before)
+            d.invalidate()
+            toast(
+                if (countAfter > countBefore) "At ${d.width} × ${d.height} px this picture can have $limit layers. Merge or delete some, or make the image smaller, to add more"
+                else "At that size the picture could only have $limit layers (it has $countAfter). Merge or delete some first"
+            )
+            return
+        }
         val after = d.snapshot()
         // Layers whose pixels were replaced need new thumbnails
         for (b in before.layers) {

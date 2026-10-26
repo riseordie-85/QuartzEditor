@@ -291,6 +291,9 @@ class Doc(width: Int, height: Int, name: String) {
         return "$base $n"
     }
 
+    /** Layers that count toward [maxLayers]: everything with pixels of its own (not folders, adjustment layers or Quick Mask). */
+    val countedLayers: Int get() = layers.count { !it.isGroup && !it.isAdjustment && !it.props.quickMask }
+
     fun snapshot(): DocSnap = DocSnap(
         layers.filter { it.id != previewLayerId || previewLayerId == 0L }.map { LayerSnap(it, it.props, it.tiles, it.x, it.y, it.mask) },
         activeId,
@@ -450,8 +453,64 @@ class Doc(width: Int, height: Int, name: String) {
     }
 
     companion object {
-        /** Longest side allowed for a canvas (keeps memory safe on every device). */
-        const val MAX_SIDE = 4096
+        /** Longest side allowed for a canvas (panoramas can be long and thin). */
+        const val MAX_SIDE = 16384
+
+        /**
+         * Most pixels a canvas can have: 4096 × 4096 (about 17 MP), more on devices with the memory for
+         * it ([configure]). Like Procreate, a bigger canvas allows fewer layers ([maxLayers]).
+         */
+        @Volatile
+        var MAX_PIXELS: Long = 4096L * 4096L
+            private set
+
+        /** Memory the layers' pixels may use in all (bytes), for [maxLayers]. */
+        @Volatile
+        var LAYER_BUDGET: Long = 1L shl 30
+            private set
+
+        /** Sets the limits for a device with [totalMem] bytes of memory. */
+        fun configure(totalMem: Long) {
+            val gb = totalMem / (1024.0 * 1024 * 1024)
+            val side = when {
+                gb >= 7.0 -> 8192L
+                gb >= 5.0 -> 6144L
+                else -> 4096L
+            }
+            MAX_PIXELS = side * side
+            LAYER_BUDGET = (totalMem * 0.35).toLong().coerceAtLeast(512L shl 20)
+        }
+
+        /** How many layers a [w]×[h] canvas can have (each could fill it): fewer the bigger it is. */
+        fun maxLayers(w: Int, h: Int): Int = (LAYER_BUDGET / (w.toLong().coerceAtLeast(1) * h.coerceAtLeast(1) * 4)).coerceIn(8L, 999L).toInt()
+
+        /** [w]×[h] fits the limits (side and pixels). */
+        fun fits(w: Int, h: Int): Boolean = w in 1..MAX_SIDE && h in 1..MAX_SIDE && w.toLong() * h <= MAX_PIXELS
+
+        /** The most [w]×[h] can be scaled by and still fit (below 1: it has to shrink). */
+        fun maxScale(w: Int, h: Int): Float {
+            val ww = w.coerceAtLeast(1)
+            val hh = h.coerceAtLeast(1)
+            return minOf(MAX_SIDE.toFloat() / maxOf(ww, hh), kotlin.math.sqrt(MAX_PIXELS.toDouble() / (ww.toLong() * hh)).toFloat())
+        }
+
+        /** How much [w]×[h] shrinks to fit (1 when it already does). */
+        fun fitScale(w: Int, h: Int): Float = minOf(1f, maxScale(w, h))
+
+        /** [w]×[h] made to fit, shape kept. */
+        fun fitted(w: Int, h: Int): Pair<Int, Int> {
+            val k = fitScale(w, h)
+            if (k >= 1f) return w.coerceIn(1, MAX_SIDE) to h.coerceIn(1, MAX_SIDE)
+            // (Rounded down, so it's never just over)
+            return (w * k).toInt().coerceIn(1, MAX_SIDE) to (h * k).toInt().coerceIn(1, MAX_SIDE)
+        }
+
+        /** The limits in words, for messages. */
+        val LIMIT_TEXT: String get() = "$MAX_SIDE px on a side and ${MAX_PIXELS / 1_000_000} megapixels"
+
+        /** The pixel limit as a square ("8192 × 8192"). */
+        val SQUARE_TEXT: String get() = kotlin.math.sqrt(MAX_PIXELS.toDouble()).toInt().let { "$it × $it" }
+
     }
 }
 

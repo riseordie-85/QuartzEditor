@@ -491,8 +491,8 @@ fun EditorViewModel.runComfy(
             if (placed > 1) toast("${w.name}: $placed new layers")
             // An upscale: the image grows to the result's size (the new smart layer keeps every pixel it came with)
             if (placed > 0 && growBy > 1.05f && doc === d && d.width == input.docW && d.height == input.docH) {
-                val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.MAX_SIDE.toFloat() / max(d.width, d.height))
-                if (k <= 1.05f) toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px), so the result is fitted to it")
+                val k = minOf(growBy, com.tim.quartzeditor.engine.Doc.maxScale(d.width, d.height))
+                if (k <= 1.05f) toast("${w.name}: the image is as big as it can be (${com.tim.quartzeditor.engine.Doc.LIMIT_TEXT}), so the result is fitted to it")
                 else growImage(ComfyGrow(d, w.name, d.width, d.height, (d.width * k).roundToInt(), (d.height * k).roundToInt(), capped = k < growBy - 0.01f))
             }
         } catch (e: CancellationException) {
@@ -886,9 +886,9 @@ private suspend fun EditorViewModel.placeComfyResult(d: Doc, w: ComfyWorkflow, p
         RectF(r.centerX() - bw / 2f, r.centerY() - bh / 2f, r.centerX() + bw / 2f, r.centerY() + bh / 2f)
     }
     val (spec, grid, mask) = withContext(Dispatchers.Default) {
-        val bmp = if (max(result.width, result.height) > Doc.MAX_SIDE) {
-            val s = Doc.MAX_SIDE.toFloat() / max(result.width, result.height)
-            Bitmap.createScaledBitmap(result, (result.width * s).roundToInt().coerceAtLeast(1), (result.height * s).roundToInt().coerceAtLeast(1), true).also { result.recycle() }
+        val bmp = if (!Doc.fits(result.width, result.height)) {
+            val (fw, fh) = Doc.fitted(result.width, result.height)
+            Bitmap.createScaledBitmap(result, fw, fh, true).also { result.recycle() }
         } else result
         val contents = Doc(bmp.width, bmp.height, name)
         val inner = Layer(contents.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false))

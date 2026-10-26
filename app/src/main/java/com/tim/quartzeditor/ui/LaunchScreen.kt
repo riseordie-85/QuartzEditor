@@ -472,7 +472,7 @@ internal fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
     var bg by rememberSaveable { mutableStateOf(NewBackground.WHITE) }
     val wi = w.toIntOrNull() ?: 0
     val hi = h.toIntOrNull() ?: 0
-    val valid = wi in 1..Doc.MAX_SIDE && hi in 1..Doc.MAX_SIDE
+    val valid = Doc.fits(wi, hi)
 
     Column {
         FieldLabel("Name")
@@ -567,7 +567,7 @@ internal fun NewDocForm(vm: EditorViewModel, onPick: () -> Unit) {
         BackgroundMenu(bg) { bg = it }
         if (!valid) {
             Spacer(Modifier.height(6.dp))
-            Text("Width and height can be 1 to ${Doc.MAX_SIDE} pixels.", color = Color(0xFFFF8A80), fontSize = 13.sp)
+            Text("Up to ${Doc.MAX_SIDE} px on a side, and ${Doc.MAX_PIXELS / 1_000_000} megapixels in all (like ${Doc.SQUARE_TEXT}).", color = Color(0xFFFF8A80), fontSize = 13.sp)
         }
         if (savingPreset) {
             var label by remember { mutableStateOf("") }

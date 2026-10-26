@@ -523,10 +523,10 @@ fun EditorViewModel.autoEnhance() {
 /** The biggest Upscale that still fits (2 or 4), or 0 when even 2× would be too big. */
 internal fun EditorViewModel.upscaleRoom(): Int {
     val d = doc ?: return 0
-    val side = max(d.width, d.height)
+    val room = com.tim.quartzeditor.engine.Doc.maxScale(d.width, d.height)
     return when {
-        side * 4 <= com.tim.quartzeditor.engine.Doc.MAX_SIDE -> 4
-        side * 2 <= com.tim.quartzeditor.engine.Doc.MAX_SIDE -> 2
+        room >= 4f -> 4
+        room >= 2f -> 2
         else -> 0
     }
 }
@@ -538,8 +538,8 @@ fun EditorViewModel.upscaleImage(factor: Int) {
         toast("This build doesn't include the upscale model. Build the app with internet on once so Android Studio can download it.")
         return
     }
-    if (max(d.width, d.height) * factor > com.tim.quartzeditor.engine.Doc.MAX_SIDE) {
-        toast("That would be bigger than ${com.tim.quartzeditor.engine.Doc.MAX_SIDE} px")
+    if (com.tim.quartzeditor.engine.Doc.maxScale(d.width, d.height) < factor) {
+        toast("That would be bigger than ${com.tim.quartzeditor.engine.Doc.LIMIT_TEXT}")
         return
     }
     val f = factor.toFloat()

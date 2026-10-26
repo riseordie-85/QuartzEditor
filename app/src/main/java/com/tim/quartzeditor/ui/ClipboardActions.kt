@@ -172,7 +172,7 @@ fun EditorViewModel.pasteFromOtherApp() {
         return
     }
     runBusy("Pasting…") {
-        val bmp = withContext(Dispatchers.IO) { com.tim.quartzeditor.data.Media.decodeUpright(ctx, uri, com.tim.quartzeditor.engine.Doc.MAX_SIDE) }
+        val bmp = withContext(Dispatchers.IO) { com.tim.quartzeditor.data.Media.decodeForCanvas(ctx, uri) }
         val grid = withContext(Dispatchers.Default) {
             TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false).also {
                 it.dropEmptyTiles()

@@ -82,7 +82,7 @@ fun EditorViewModel.placeImage(uri: Uri) {
     if (pendingFirst { placeImage(uri) }) return
     runBusy("Placing…", onDone = { onToolButton(Tool.TRANSFORM) }) {
         val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }.substringBeforeLast('.').ifBlank { "Image" }
-        val bmp = withContext(Dispatchers.IO) { Media.decodeUpright(ctx, uri, Doc.MAX_SIDE) }
+        val bmp = withContext(Dispatchers.IO) { Media.decodeForCanvas(ctx, uri) }
         val (spec, grid) = withContext(Dispatchers.Default) {
             val contents = Doc(bmp.width, bmp.height, name)
             val inner = Layer(contents.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false))
@@ -143,7 +143,7 @@ private fun EditorViewModel.replaceContentsOf(id: Long, uri: Uri) {
                 }
             } else null
             fromPsd ?: run {
-                val bmp = Media.decodeUpright(ctx, uri, Doc.MAX_SIDE)
+                val bmp = Media.decodeForCanvas(ctx, uri)
                 Doc(bmp.width, bmp.height, name).also { c ->
                     val inner = Layer(c.newId(), LayerProps(name), TileGrid.fromBitmap(bmp, 0, 0, alphaOnly = false))
                     bmp.recycle()

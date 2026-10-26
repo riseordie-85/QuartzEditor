@@ -16,14 +16,20 @@ from the build). Background removal's model is fetched by Google Play services i
 - **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files), **Projects** (your saved work, with all layers) or **Drafts** (shown when there are any: unsaved changes kept when the app closed; tap to open, hold to throw away). Tap to open.
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),
-  portrait / landscape, background White, Black or Transparent. Up to 4096 px a side.
+  portrait / landscape, background White, Black or Transparent. Up to the **size limits** below.
+- **Size limits** (like Procreate): up to 16384 px on a side, so long panoramas keep every pixel, and a
+  total of 4096 × 4096 (17 MP) — 6144 × 6144 on devices with 5 GB of memory or more, 8192 × 8192 (67 MP)
+  with 7 GB or more. Bigger images allow fewer layers: the app works out how many from the device's memory
+  and the canvas size (Image size shows "n of max layers"). Adding a layer past that, or making the image
+  bigger than its layers allow, is refused with a note to merge or delete some. Folders, adjustment layers
+  and Quick Mask don't count.
 - **Open File Picker**: any image, a `.qedit` project file, a **Photoshop file** (`.psd`, `.psb`) or a
   **TIFF** (`.tif`, `.tiff`).
 - **TIFFs** open whatever saved them: no compression, LZW, ZIP, PackBits or JPEG; 1 to 32 bits (including
   floating point); black and white, gray, palette, RGB, CMYK, YCbCr or Lab; with transparency; in strips
   or tiles; BigTIFF. A **layered TIFF from Photoshop** opens with all its layers, like a Photoshop file
-  (everything below applies). Smaller previews saved inside the file are skipped. Pictures bigger than
-  4096 px are shrunk to fit. TIFFs also work for Place image, pattern and sky photos.
+  (everything below applies). Smaller previews saved inside the file are skipped. Pictures past the size
+  limits are shrunk to fit. TIFFs also work for Place image, pattern and sky photos.
 - **Photoshop files** open with their layers: pixel layers, folders at any depth (Pass Through or with
   their own blend mode, open or closed, with their own layer styles), layer masks (and folder masks),
   vector masks (with their path operations), every blend mode, opacity and fill, clipping masks (to
@@ -54,8 +60,8 @@ from the build). Background removal's model is fetched by Google Play services i
   Unsharp Mask, Smart Sharpen, Sharpen, Add Noise, with their strength), both still editable. A smart
   object linked to a file outside the .psd (or with a filter we don't have) keeps what you see as its
   contents; **Replace contents** puts the original file back in. 8 and 16 bits; RGB, grayscale, CMYK
-  (roughly), Lab, Indexed, Bitmap (black and white) and Duotone (as its gray). Files bigger than 4096
-  px are shrunk to fit. Afterwards a short list says what didn't come across exactly (blend modes on
+  (roughly), Lab, Indexed, Bitmap (black and white) and Duotone (as its gray). Files past the size
+  limits are shrunk to fit. Afterwards a short list says what didn't come across exactly (blend modes on
   effects that only layers have, filters we don't have, a Duotone's inks…).
 - **Very big Photoshop files and TIFFs** (over 300 MB) ask first: they can take minutes and may close the app on a
   phone or tablet. **Open anyway** goes ahead.
@@ -533,7 +539,7 @@ Menu → **Enhance** works on the selected layer (with a selection, only on what
 - **Auto enhance** — adds a Levels adjustment layer, clipped to the photo, that stretches each color
   channel between its darkest and lightest parts (evening out a color cast) and sets a natural brightness.
   With a selection, its mask shows only what's selected. Fine-tune it like any Levels layer.
-- **Upscale…** — the whole picture 2× or 4× bigger (up to 4096 px). Photo layers get new detail from the
+- **Upscale…** — the whole picture 2× or 4× bigger (within the size limits). Photo layers get new detail from the
   on-device Real-ESRGAN model (only what's on the canvas: pixels a crop left outside it are trimmed);
   shapes, text and masks are redrawn sharp as with Image size. It takes a while on big pictures; the
   spinner shows how far along it is.

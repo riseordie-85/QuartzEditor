@@ -94,7 +94,7 @@ object Media {
     }
 
     /** A TIFF's picture (its flattened one, for a layered TIFF) as a bitmap no bigger than [maxPx] on its longest side. */
-    fun decodeTiff(context: Context, uri: Uri, maxPx: Int): Bitmap {
+    fun decodeTiff(context: Context, uri: Uri, maxPx: Int, maxPixels: Long = Long.MAX_VALUE): Bitmap {
         val tmp = java.io.File(context.cacheDir, "decode-${System.nanoTime()}.tif")
         try {
             context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 20) } }
@@ -103,22 +103,22 @@ object Media {
                 if (raf.length() > Int.MAX_VALUE) throw IOException("This file is over 2 GB, too big to open here.")
                 raf.channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, raf.length())
             }
-            return decodeTiff(buf, maxPx)
+            return decodeTiff(buf, maxPx, maxPixels)
         } finally {
             tmp.delete()
         }
     }
 
     /** A TIFF held in [buf] as a bitmap no bigger than [maxPx], turned upright. */
-    fun decodeTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap = try {
-        readTiff(buf, maxPx)
+    fun decodeTiff(buf: java.nio.ByteBuffer, maxPx: Int, maxPixels: Long = Long.MAX_VALUE): Bitmap = try {
+        readTiff(buf, maxPx, maxPixels)
     } catch (e: com.tim.quartzeditor.engine.TiffException) {
         throw IOException(e.message)
     } catch (e: RuntimeException) {
         throw IOException("This TIFF file looks damaged.")
     }
 
-    private fun readTiff(buf: java.nio.ByteBuffer, maxPx: Int): Bitmap {
+    private fun readTiff(buf: java.nio.ByteBuffer, maxPx: Int, maxPixels: Long): Bitmap {
         val reader = com.tim.quartzeditor.engine.TiffReader
         val info = try {
             reader.info(buf)
@@ -126,9 +126,9 @@ object Media {
             throw IOException(e.message)
         }
         reader.unsupported(info)?.let { throw IOException(it) }
-        val k = minOf(1f, maxPx.toFloat() / max(info.width, info.height))
-        val w = (info.width * k).roundToInt().coerceAtLeast(1)
-        val h = (info.height * k).roundToInt().coerceAtLeast(1)
+        val k = fitIn(info.width, info.height, maxPx, maxPixels)
+        val w = (info.width * k).toInt().coerceAtLeast(1)
+        val h = (info.height * k).toInt().coerceAtLeast(1)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val jpeg = com.tim.quartzeditor.engine.PsdImport.androidJpeg
         if (w == info.width && h == info.height) {
@@ -157,24 +157,32 @@ object Media {
      * Android's decoder goes first (it reads camera raw files, which are TIFFs too); a TIFF it
      * can't read is read by the app.
      */
-    fun decodeUpright(context: Context, uri: Uri, maxPx: Int): Bitmap = try {
-        decodeAndroid(context, uri, maxPx)
+    fun decodeUpright(context: Context, uri: Uri, maxPx: Int, maxPixels: Long = Long.MAX_VALUE): Bitmap = try {
+        decodeAndroid(context, uri, maxPx, maxPixels)
     } catch (e: IOException) {
-        if (isTiff(context, uri)) decodeTiff(context, uri, maxPx) else throw e
+        if (isTiff(context, uri)) decodeTiff(context, uri, maxPx, maxPixels) else throw e
     }
 
-    private fun decodeAndroid(context: Context, uri: Uri, maxPx: Int): Bitmap {
+    /** As big as a canvas can be (a long panorama keeps its full height). */
+    fun decodeForCanvas(context: Context, uri: Uri): Bitmap =
+        decodeUpright(context, uri, com.tim.quartzeditor.engine.Doc.MAX_SIDE, com.tim.quartzeditor.engine.Doc.MAX_PIXELS)
+
+    /** The scale (at most 1) that brings [w]×[h] within [maxPx] on a side and [maxPixels] in all. */
+    private fun fitIn(w: Int, h: Int, maxPx: Int, maxPixels: Long): Float {
+        val bySide = maxPx.toFloat() / max(w, h)
+        val byArea = if (maxPixels == Long.MAX_VALUE) Float.MAX_VALUE else kotlin.math.sqrt(maxPixels.toDouble() / (w.toLong() * h)).toFloat()
+        return minOf(1f, bySide, byArea)
+    }
+
+    private fun decodeAndroid(context: Context, uri: Uri, maxPx: Int, maxPixels: Long): Bitmap {
         val source = ImageDecoder.createSource(context.contentResolver, uri)
         val bmp = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             decoder.isMutableRequired = false
             val w = info.size.width
             val h = info.size.height
-            val longest = max(w, h)
-            if (longest > maxPx) {
-                val s = maxPx.toFloat() / longest
-                decoder.setTargetSize((w * s).roundToInt().coerceAtLeast(1), (h * s).roundToInt().coerceAtLeast(1))
-            }
+            val s = fitIn(w, h, maxPx, maxPixels)
+            if (s < 1f) decoder.setTargetSize((w * s).toInt().coerceAtLeast(1), (h * s).toInt().coerceAtLeast(1))
         }
         // Wide-gamut and 16-bit photos become ordinary 8-bit sRGB
         return if (bmp.config != Bitmap.Config.ARGB_8888) bmp.copy(Bitmap.Config.ARGB_8888, false) else bmp
