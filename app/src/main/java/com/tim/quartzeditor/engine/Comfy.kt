@@ -564,8 +564,23 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     /** The switch's side with the plain prompt. */
     private val plainSide: String get() = if (enhancerOnTrue) "on_false" else "on_true"
 
-    /** Prompt enhancers (a language model rewriting the prompt). */
-    private val enhancers: List<String> = nodes().filter { (_, o) -> cls(o) == "TextGenerate" }.map { it.first }
+    /** Language models describing a picture (image to prompt): their typed "prompt" is an instruction, not the user's prompt. */
+    private val captioners: Set<String> = nodes().filter { (_, o) -> cls(o) == "TextGenerate" && link(inputs(o).opt("image")) != null }.map { it.first }.toSet()
+
+    /** Node [id] works from a captioner's words (linked to one, maybe a few nodes back). */
+    private fun fromCaption(id: String, depth: Int = 0, seen: HashSet<String> = HashSet()): Boolean {
+        if (id in captioners) return true
+        if (depth > 10 || !seen.add(id)) return false
+        val o = json.optJSONObject(id) ?: return false
+        val inp = inputs(o)
+        return inp.keys().asSequence().any { k -> link(inp.opt(k))?.first?.let { fromCaption(it, depth + 1, seen) } == true }
+    }
+
+    /**
+     * Prompt enhancers (a language model rewriting the prompt). Not a captioner, or a model rewriting
+     * a caption: there the prompt comes from the picture, and their typed text is their instruction.
+     */
+    private val enhancers: List<String> = nodes().filter { (id, o) -> cls(o) == "TextGenerate" && !fromCaption(id) }.map { it.first }
 
     /** Where the prompt goes: (node, input). */
     private val promptTargets: List<Pair<String, String>> = run {
@@ -645,6 +660,12 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
     }.map { (id, o) ->
         val t = title(o).removePrefix("Boolean").trim().removePrefix("(").removeSuffix(")").trim().ifBlank { "Switch $id" }
         ComfySetting(id, cls(o), "value", t, inputs(o).optBoolean("value").toString())
+    } + nodes().filter { (id, o) ->
+        // If/Else switches set right on the node (like "Use External Model?")
+        cls(o) == "ComfySwitchNode" && inputs(o).opt("switch") is Boolean && id != promptSwitch
+    }.map { (id, o) ->
+        val t = title(o).takeIf { it.isNotBlank() && it != "If/Else Switch" } ?: "If/Else switch $id"
+        ComfySetting(id, cls(o), "switch", t, inputs(o).optBoolean("switch").toString())
     }
 
     /** LoRA Manager's Lora Loader nodes: (node id, its LoRAs as saved). */
@@ -713,6 +734,7 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
                 if (inp.opt(s) is Number) inp.put(s, rnd.nextLong(0L, 1L shl 50))
             }
         }
+        routeLoras(p, overrides)
         if (prompt != null) for ((n, key) in promptTargets) p.optJSONObject(n)?.optJSONObject("inputs")?.put(key, prompt)
         if (canEnhance) promptSwitch?.let { sw ->
             if (enhance) p.optJSONObject(sw)?.optJSONObject("inputs")?.put("switch", enhancerOnTrue)
@@ -736,6 +758,38 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
             inp.put("editor_state", JSONObject().put("__value__", list))
         }
         return p
+    }
+
+    /**
+     * LoRAs switched on in a LoRA Manager loader whose output only reaches the picture through an
+     * If/Else switch set to the other side ("Use External Model?" off): the switch is turned to the
+     * loader, so the LoRAs apply. Not a switch set here by hand.
+     */
+    private fun routeLoras(p: JSONObject, overrides: ComfyOverrides) {
+        for (k in lorasRouted(p, overrides)) p.optJSONObject(k)?.optJSONObject("inputs")?.let { it.put("switch", !it.optBoolean("switch")) }
+    }
+
+    /** The switches [routeLoras] turns, with [overrides] (for showing them on). */
+    fun routedSwitches(overrides: ComfyOverrides): Set<String> = lorasRouted(JSONObject(json.toString()).also { overrides.applyTo(it) }, overrides)
+
+    private fun lorasRouted(p: JSONObject, overrides: ComfyOverrides): Set<String> {
+        val out = HashSet<String>()
+        val withLoras = p.keys().asSequence().filter { k ->
+            val inp = p.optJSONObject(k)?.optJSONObject("inputs") ?: return@filter false
+            val list = inp.optJSONObject("loras")?.optJSONArray("__value__") ?: return@filter false
+            (0 until list.length()).any { list.optJSONObject(it)?.optBoolean("active") == true }
+        }.toSet()
+        if (withLoras.isEmpty()) return out
+        for (k in p.keys().asSequence().toList()) {
+            val node = p.optJSONObject(k) ?: continue
+            if (node.optString("class_type") != "ComfySwitchNode" || overrides.values[k]?.containsKey("switch") == true) continue
+            val inp = node.optJSONObject("inputs") ?: continue
+            val on = inp.opt("switch") as? Boolean ?: continue
+            val chosen = link(inp.opt(if (on) "on_true" else "on_false"))?.first
+            val other = link(inp.opt(if (on) "on_false" else "on_true"))?.first
+            if (other in withLoras && chosen !in withLoras) out.add(k)
+        }
+        return out
     }
 
     /** FLUX 3's Create Bounding Boxes nodes: where in the picture an edit is aimed (<obj_1>, <obj_2>…). */

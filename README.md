@@ -724,7 +724,8 @@ off, a model is missing) the chip says what ComfyUI said.
   Cloud's queue, the node and step it's on); the pictures come back from Cloud's signed links; pictures sent
   to a workflow (edits) are uploaded first; the model lists come from Cloud. Live previews are for your own
   server only. One Cloud workflow comes with the app: Krea 2 with three LoRAs.
-- **Switches**: a workflow's own on/off Boolean nodes (like "Enable LoRA 2?") show as switches.
+- **Switches**: a workflow's own on/off Boolean nodes (like "Enable LoRA 2?") and If/Else switches set right
+  on the node (like "Use External Model?") show as switches.
 - **The page**, top to bottom: the **workflow** (a drop-down list), **presets**, what it works on, the
   **prompt**, the **size** (for a new picture: 0.5 to 4 megapixels, the canvas's shape; it starts at the
   workflow's own Resolution Selector megapixels when it has one), **how many** (1 to 8 pictures, each coming in as
@@ -741,6 +742,12 @@ off, a model is missing) the chip says what ComfyUI said.
 - **LoRA Manager**: its Lora Loader's list, with the ones switched on shown first (On only switches to
   all of them; Find searches): switch each on or off, set its strength, take it out (×), or **Add…** any
   LoRA your ComfyUI has. Its trigger words node gets the trigger words as LoRA Manager works them out.
+  When LoRAs are switched on but the loader only reaches the picture through an If/Else switch set the other
+  way (a "Use External Model?" / "Use External CLIP?" left off), that switch is turned to the loader so the
+  LoRAs apply (shown under Switches; switch it off there to send it as saved).
+- **Image to prompt** workflows (a language model describing the uploaded picture): its instructions, and a
+  second model rewriting that description, are left as they are; the prompt box only appears if the
+  workflow also takes a typed prompt.
 - **Saved prompts** (under the prompt): **Save prompt…** keeps the text under a name (its start, unless
   you give it one); **Saved prompts…** lists them (newest first, with a Find box): tap one to use it, **Add**
   puts it after what's typed (handy for style bits), × deletes it. They're shared by every workflow.

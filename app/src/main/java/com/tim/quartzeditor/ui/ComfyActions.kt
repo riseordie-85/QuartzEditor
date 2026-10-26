@@ -1363,21 +1363,28 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                         if (w.toggles.isNotEmpty()) {
                             Spacer(Modifier.height(16.dp))
                             SectionTitle("Switches")
+                            // (Switches turned so the LoRAs switched on apply show as they'll be sent)
+                            val routed = remember(w, overrides) { w.routedSwitches(overrides) }
                             for (t in w.toggles) {
-                                val saved = t.value == "true"
-                                val on = overrides.values[t.node]?.get("value") as? Boolean ?: saved
+                                val key = t.input
+                                val auto = t.node in routed
+                                val saved = (t.value == "true") != auto
+                                val on = overrides.values[t.node]?.get(key) as? Boolean ?: saved
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth().clickable {
-                                        setOverrides(if (!on == saved) overrides.without(t.node, "value") else overrides.with(t.node, "value", !on, w.baseOf(t.node, "value").orEmpty()))
+                                        setOverrides(if (!on == saved) overrides.without(t.node, key) else overrides.with(t.node, key, !on, w.baseOf(t.node, key).orEmpty()))
                                     }.padding(vertical = 2.dp),
                                 ) {
                                     androidx.compose.material3.Switch(
                                         checked = on,
-                                        onCheckedChange = { v -> setOverrides(if (v == saved) overrides.without(t.node, "value") else overrides.with(t.node, "value", v, w.baseOf(t.node, "value").orEmpty())) },
+                                        onCheckedChange = { v -> setOverrides(if (v == saved) overrides.without(t.node, key) else overrides.with(t.node, key, v, w.baseOf(t.node, key).orEmpty())) },
                                         colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Q.accent),
                                     )
-                                    Text(t.nodeTitle, color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(start = 10.dp))
+                                    Column(Modifier.padding(start = 10.dp)) {
+                                        Text(t.nodeTitle, color = Q.text, fontSize = 14.sp)
+                                        if (auto && on) Text("Turned on so the LoRAs you switched on apply", color = Q.textDim, fontSize = 11.sp)
+                                    }
                                 }
                             }
                         }
