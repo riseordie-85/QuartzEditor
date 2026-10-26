@@ -967,6 +967,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onToolButton(t: Tool) {
         // (Rotate view and Zoom end when another tool is picked)
         viewTool = null
+        // (G on a keyboard comes back to whichever of these was used last)
+        if (t == Tool.GRADIENT || t == Tool.BUCKET) prefs.edit().putString("lastFillTool", t.name).apply()
         // Picking Color Range's color: picking a tool stops (the window comes back)
         if (pickingForRange) pickingForRange = false
         if (t == Tool.TRANSFORM && transform != null) return

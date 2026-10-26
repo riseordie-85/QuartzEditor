@@ -212,14 +212,19 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             if (shift && tool == Tool.SELECT) (if (selectShape == SelectShape.LASSO) SelectShape.POLYGON else SelectShape.LASSO)
             else if (selectShape == SelectShape.POLYGON) SelectShape.POLYGON else SelectShape.LASSO
         )
-        KeyEvent.KEYCODE_W -> chooseSelectShape(SelectShape.WAND)
+        // W: magic wand / object select (AI); Shift+W switches between them
+        KeyEvent.KEYCODE_W -> chooseSelectShape(
+            if (shift && tool == Tool.SELECT && selectShape in setOf(SelectShape.WAND, SelectShape.OBJECT)) (if (selectShape == SelectShape.WAND) SelectShape.OBJECT else SelectShape.WAND)
+            else if (selectShape == SelectShape.OBJECT) SelectShape.OBJECT else SelectShape.WAND
+        )
         KeyEvent.KEYCODE_C -> if (tool != Tool.CROP) onToolButton(Tool.CROP)
         KeyEvent.KEYCODE_I -> if (tool != Tool.EYEDROPPER) onToolButton(Tool.EYEDROPPER)
         // Paint bucket and gradient share G (Shift+G switches between them)
         KeyEvent.KEYCODE_G -> when {
             shift && tool == Tool.GRADIENT -> onToolButton(Tool.BUCKET)
             shift && tool == Tool.BUCKET -> onToolButton(Tool.GRADIENT)
-            tool != Tool.GRADIENT && tool != Tool.BUCKET -> onToolButton(Tool.GRADIENT)
+            // (G alone: whichever of the two was used last)
+            tool != Tool.GRADIENT && tool != Tool.BUCKET -> onToolButton(if (prefs.getString("lastFillTool", null) == Tool.BUCKET.name) Tool.BUCKET else Tool.GRADIENT)
         }
         KeyEvent.KEYCODE_U -> if (shift && tool == Tool.SHAPE) onToolButton(Tool.SHAPE) else if (tool != Tool.SHAPE) onToolButton(Tool.SHAPE)
         // P: the pen; Shift+P switches between the Pen and the Curvature Pen
