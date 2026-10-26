@@ -504,11 +504,23 @@ fun EditorViewModel.quickExport() {
 }
 
 /** [fileName]: the name to save under (without its extension), instead of the image's. */
+/**
+ * What an export saves: the picture shown, which in a smart layer's tab is the smart layer's own
+ * contents (as edited there), otherwise the whole image (with what's being edited in its smart layers' tabs).
+ */
+internal fun EditorViewModel.exportCopy(): SaveCopy? {
+    val d = doc ?: return null
+    if (d !== rootDoc) return SaveCopy(d.shallowCopy(), emptyList())
+    return saveCopy()
+}
+
+/** A smart layer's contents are shown (in its tab): exports save those. */
+val EditorViewModel.exportingSmartContents: Boolean get() = doc != null && doc !== rootDoc
+
 fun EditorViewModel.export(format: ExportFormat, fileName: String? = null, onSaved: (Uri) -> Unit = {}) {
     if (doc == null) return
     if (pendingFirst { export(format, fileName, onSaved) }) return
-    // The whole picture (with what's being edited in smart layers' tabs)
-    val sc = saveCopy() ?: return
+    val sc = exportCopy() ?: return
     val copy = sc.doc
     if (format == ExportFormat.PSD || format == ExportFormat.TIFF_LAYERS) {
         val tiff = format == ExportFormat.TIFF_LAYERS
@@ -517,7 +529,7 @@ fun EditorViewModel.export(format: ExportFormat, fileName: String? = null, onSav
                 sc.finish()
                 val tmp = java.io.File(ctx.cacheDir, "export.${format.ext}")
                 try {
-                    val name = "${copy.name.ifBlank { "Quartz" }}.${format.ext}"
+                    val name = "${(fileName ?: copy.name).ifBlank { "Quartz" }}.${format.ext}"
                     if (tiff) {
                         val r = com.tim.quartzeditor.engine.PsdExport.writeTiff(copy, tmp, ctx.cacheDir)
                         Media.savePictureFile(ctx, tmp, name, format.mime) to r.notes
@@ -530,7 +542,7 @@ fun EditorViewModel.export(format: ExportFormat, fileName: String? = null, onSav
                 }
             }
             val where = if (tiff) "Pictures/${Media.FOLDER}" else "Download/${Media.FOLDER}"
-            if (notes.isNotEmpty()) exportReport = Triple(copy.name + "." + format.ext, where, notes) else toast("Saved to $where")
+            if (notes.isNotEmpty()) exportReport = Triple((fileName ?: copy.name) + "." + format.ext, where, notes) else toast("Saved to $where")
             onSaved(uri)
         }
         return
@@ -568,7 +580,7 @@ fun EditorViewModel.renameDocument(name: String) {
  * they always have). Null when there's nothing open.
  */
 internal suspend fun EditorViewModel.flattenForExport(white: Boolean = false): android.graphics.Bitmap? {
-    val sc = saveCopy() ?: return null
+    val sc = exportCopy() ?: return null
     val copy = sc.doc
     return withContext(Dispatchers.Default) {
         sc.finish()
@@ -586,8 +598,8 @@ data class ExportSettings(val format: ExportFormat, val quality: Int, val lossle
  */
 fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, name: String, onSaved: (Uri) -> Unit = {}) {
     if (s.format == ExportFormat.PSD || s.format == ExportFormat.TIFF_LAYERS) {
-        renameDocument(name)
-        export(s.format, onSaved = onSaved)
+        if (!exportingSmartContents) renameDocument(name)
+        export(s.format, fileName = if (exportingSmartContents) name else null, onSaved = onSaved)
         return
     }
     runBusy("Exporting…") {

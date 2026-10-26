@@ -113,7 +113,15 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   to the start screen with the files kept open. Deleting a project that's open closes it.
 - **Squarer look**: the bars, toolbar, panels and picture have only slightly rounded corners and sit
   closer together.
-- **Mouse**: the **wheel** moves the view up and down; **Ctrl + wheel** left and right (**Ctrl+Shift**:
+- **Mouse** is its own kind of input (not a finger, not the pen): the **left button** paints, selects and
+  uses every tool like the pen does (without pressure), even when fingers are set to move the view;
+  it's never ignored as a resting hand; holding it still isn't a long press. **Right-click** the canvas
+  for its menu (Undo, Redo, Deselect / Select inverse / Select all, Layer via copy or cut, Free transform,
+  Copy, Copy merged, Paste, Fill, Workspace color). **Middle button**: drag to move the view. Hovering
+  shows the brush's outline with a crosshair (a text cursor with the Text tool).
+- **Keyboard**: Space, Tab, Enter (apply) and Esc (cancel) work even after a button or switch was tapped
+  (they're caught first, except while you type in a text field). **V**: Transform (V again: Move).
+- **Mouse wheel**: the **wheel** moves the view up and down; **Ctrl + wheel** left and right (**Ctrl+Shift**:
   faster); **Alt + wheel** zooms; a sideways wheel or trackpad moves sideways. **Right-click** a layer for
   its menu, or its **mask thumbnail** for the mask's: Disable / Enable, Delete, Apply, Invert, Mask as
   selection, Add mask to selection, Subtract mask from selection, Intersect, Replace with selection,
@@ -566,7 +574,8 @@ in between. With a selection, the mask button makes a mask that shows only what'
   Brushes panel.)
 - **Quick export (.png)** (Menu, under Home) saves a PNG of the whole picture straight to
   `Pictures/Quartz Editor`, named for when it was saved (`Quartz 10-20-26 19-30-05.png`), with no questions.
-- **Export image** (File menu) opens the Export screen: a **preview** of exactly what will be saved
+- **Export image** (File menu) opens the Export screen (in a smart layer's tab it exports the smart
+  layer's contents, as edited there, at their own size): a **preview** of exactly what will be saved
   (compression and all; Fit, 100% or 200% to look closely; hold "hold here to compare" to see it before
   compression) beside the settings:
   - **File name** (the image takes it too) and **format**: PNG, JPG, WebP, TIFF, Photoshop, TIFF with layers.

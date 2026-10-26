@@ -90,8 +90,9 @@ private fun screenSized(b: Bitmap): Bitmap {
 @Composable
 fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, String) -> Unit) {
     val prefs = vm.prefs
-    val docW = vm.rootDoc?.width ?: 1
-    val docH = vm.rootDoc?.height ?: 1
+    // (In a smart layer's tab: its contents, at their own size)
+    val docW = vm.doc?.width ?: 1
+    val docH = vm.doc?.height ?: 1
     var format by remember { mutableStateOf(ExportFormat.entries.firstOrNull { it.name == prefs.getString("exportFormat", null) } ?: ExportFormat.PNG) }
     // The picture flattened once (on white too, the first time a format without see-through is
     // picked), then sized and compressed for each change
@@ -114,7 +115,7 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
         }
     }
     val src = if (needWhite) white else clear
-    var fileName by remember { mutableStateOf(vm.rootDoc?.name ?: "Untitled") }
+    var fileName by remember { mutableStateOf(vm.doc?.name ?: "Untitled") }
     // Each format's quality, as last set (here, or when it was last saved)
     val qualities = remember { androidx.compose.runtime.mutableStateMapOf<ExportFormat, Int>() }
     val quality = qualities[format] ?: prefs.getInt("exportQ:${format.name}", if (format == ExportFormat.JPEG) 85 else 80)
@@ -212,8 +213,8 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
             .putBoolean("exportLossless", lossless)
             .apply()
         val name = fileName.trim().ifBlank { "Untitled" }
-        // The image takes the name too (its project and project files use it)
-        vm.renameDocument(name)
+        // The image takes the name too (its project and project files use it); a smart layer's contents don't
+        if (!vm.exportingSmartContents) vm.renameDocument(name)
         val settings = ExportSettings(format, quality, lossless, outW, outH)
         onDismiss()
         vm.exportWith(s, settings, name) { uri -> if (share) onShare(uri, format.mime) }
@@ -229,7 +230,10 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
             val settingsPane: @Composable (Modifier) -> Unit = { m ->
                 Column(m.verticalScroll(rememberScrollState()).padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Export image", color = Q.text, fontSize = 22.sp, modifier = Modifier.weight(1f))
+                        Column(Modifier.weight(1f)) {
+                            Text("Export image", color = Q.text, fontSize = 22.sp)
+                            if (vm.exportingSmartContents) Text("The smart layer's contents, as edited in this tab", color = Q.textDim, fontSize = 12.sp)
+                        }
                         SmallButton("Cancel") { onDismiss() }
                     }
                     Spacer(Modifier.height(14.dp))

@@ -127,7 +127,8 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
     }
 
     when (e.keyCode) {
-        KeyEvent.KEYCODE_V -> chooseMove(pan = false)
+        // Transform (like Photoshop's Move tool with its transform controls); V again: plain Move
+        KeyEvent.KEYCODE_V -> if (tool == Tool.TRANSFORM) chooseMove(pan = false) else onToolButton(Tool.TRANSFORM)
         KeyEvent.KEYCODE_H -> chooseMove(pan = true)
         KeyEvent.KEYCODE_M -> chooseSelectShape(
             if (shift && tool == Tool.SELECT) (if (selectShape == SelectShape.RECT) SelectShape.ELLIPSE else SelectShape.RECT)

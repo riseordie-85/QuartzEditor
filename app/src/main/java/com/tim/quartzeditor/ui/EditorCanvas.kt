@@ -60,6 +60,8 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
@@ -188,6 +190,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     var cursor by remember { mutableStateOf<Offset?>(null) }
     // Where the pen hovers above the screen (null when it isn't)
     var hover by remember { mutableStateOf<Offset?>(null) }
+    // It's a mouse hovering (not the pen)
+    var hoverMouse by remember { mutableStateOf(false) }
+    // A right-click on the canvas: its menu, there
+    var canvasContext by remember { mutableStateOf<Offset?>(null) }
     // A guide being moved with the Move tool: (vertical, which one)
     var movingGuide by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
     // Typing on the picture: the cursor blinks, and the words' layout is kept while they don't change
@@ -322,7 +328,15 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerHoverIcon(if (handIcon) grabIcon else PointerIcon.Default)
+                // (Brushes: a crosshair, with the brush's outline around it)
+                .pointerHoverIcon(
+                    when {
+                        handIcon -> grabIcon
+                        vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH || vm.tool == Tool.EYEDROPPER || vm.tool == Tool.BUCKET -> PointerIcon.Crosshair
+                        vm.tool == Tool.TEXT -> PointerIcon.Text
+                        else -> PointerIcon.Default
+                    }
+                )
                 // The mouse wheel: up and down moves the view up and down; with Ctrl, left and right
                 // (Ctrl+Shift: faster); a sideways wheel or trackpad, sideways; Alt: zoom
                 .pointerInput(Unit) {
@@ -357,10 +371,12 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     awaitPointerEventScope {
                         while (true) {
                             val e = awaitPointerEvent()
-                            val c = e.changes.firstOrNull { it.isPen }
+                            // The pen or a mouse over the canvas: where the brush would paint
+                            val c = e.changes.firstOrNull { it.isPen || it.type == PointerType.Mouse }
                             hover = if (c != null && !c.pressed && e.type != PointerEventType.Exit) c.position else null
+                            hoverMouse = c?.type == PointerType.Mouse
                             // The pen went off the canvas (its leaving is told to whatever it went over)
-                            if (c != null) {
+                            if (c != null && c.isPen) {
                                 if (e.type == PointerEventType.Exit) vm.pen.left() else vm.pen.onCanvas(c.uptimeMillis)
                             }
                         }
@@ -376,8 +392,21 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         val first = carried ?: awaitNewDown()
                         var down = first.down
                         var resting = first.resting
+                        // A mouse is its own thing: never a resting hand, never a finger moving the view.
+                        // Right button: the canvas menu; middle button: moves the view.
+                        val byMouse = down.type == PointerType.Mouse
+                        val mouseButtons = if (byMouse) currentEvent.buttons else null
+                        if (byMouse && mouseButtons?.isSecondaryPressed == true) {
+                            canvasContext = down.position
+                            do {
+                                val e = awaitPointerEvent()
+                                e.changes.forEach { it.consume() }
+                            } while (e.changes.any { it.pressed })
+                            return@awaitEachTouch null
+                        }
+                        val middlePan = byMouse && mouseButtons?.isTertiaryPressed == true
                         // A finger while the pen is near is the hand holding it: ignored, until the pen touches
-                        if (!down.isPen && vm.pen.near(down.uptimeMillis)) {
+                        if (!down.isPen && !byMouse && vm.pen.near(down.uptimeMillis)) {
                             var penDown: TouchStart? = null
                             while (penDown == null) {
                                 val e = awaitPointerEvent()
@@ -391,7 +420,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         val byPen = down.isPen
                         vm.penGesture = true
                         // With a pen around, fingers move the view instead of painting (when that's on)
-                        val fingerNav = !byPen && vm.fingersNavigate
+                        val fingerNav = !byPen && !byMouse && vm.fingersNavigate
                         // The pen's side button set to undo: a touch with it held does nothing (it undid when pressed)
                         if (byPen && vm.penButton == PenButton.UNDO && vm.pen.buttonHeld) {
                             do {
@@ -406,7 +435,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         var cancelled = false
                         val t0 = down.uptimeMillis
                         val start = down.position
-                        var mode = GestureMode.PENDING
+                        var mode = if (middlePan) GestureMode.PAN else GestureMode.PENDING
                         var maxPointers = 1
                         var moved = false
                         var navTravel = 0f
@@ -601,7 +630,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         down.consume()
 
                         while (true) {
-                            val waitLong = mode == GestureMode.PENDING && !moved && !longPressDone
+                            // (Holding a mouse button still isn't a long press: the right button has the menu)
+                            val waitLong = mode == GestureMode.PENDING && !moved && !longPressDone && !byMouse
                             // A stroke held still long enough snaps to a shape, even when the pen sends nothing
                             val waitHold = mode == GestureMode.STROKE && !holdTried && vm.quickShapeReady && !straightOn()
                             val ev: PointerEvent? = if (waitLong) {
@@ -1471,8 +1501,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
             // The pen hovering: where its brush (or its eraser end's) would paint, with a dot in the middle
             val hp = hover
-            if (cursor == null && hp != null && vm.penHover) {
-                val eraserEnd = vm.penEraserEnd && vm.pen.eraserEnd && vm.penCanErase()
+            if (cursor == null && hp != null && (vm.penHover || hoverMouse)) {
+                val eraserEnd = !hoverMouse && vm.penEraserEnd && vm.pen.eraserEnd && vm.penCanErase()
                 val painting = vm.tool == Tool.BRUSH || vm.tool == Tool.ERASER || vm.tool == Tool.RETOUCH
                 if (eraserEnd || painting) {
                     val r = (if (eraserEnd) vm.eraser.size else vm.currentBrush.size) * s / 2f
@@ -1495,6 +1525,13 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
         }
 
         // Long press beside the canvas: workspace color
+        // Right-click on the canvas: the things most often done there
+        canvasContext?.let { p ->
+            Box(Modifier.offset { IntOffset(p.x.roundToInt(), p.y.roundToInt()) }) {
+                CanvasContextMenu(vm, onDismiss = { canvasContext = null }, onWorkspaceColor = { canvasMenuAt = p })
+            }
+        }
+
         canvasMenuAt?.let { p ->
             Box(Modifier.offset { IntOffset(p.x.roundToInt(), p.y.roundToInt()) }) {
                 DropdownMenu(expanded = true, onDismissRequest = { canvasMenuAt = null }) {
@@ -1727,3 +1764,40 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropQuad(q: Lis
 
 /** Asks for another frame (after this one is drawn) while zoomed-out tile copies are still being made. */
 private val lodHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+
+/** The canvas's right-click menu. */
+@Composable
+private fun CanvasContextMenu(vm: EditorViewModel, onDismiss: () -> Unit, onWorkspaceColor: () -> Unit) {
+    val sel = vm.doc?.selection?.isEmpty == false
+    val h = vm.history
+    @Suppress("UNUSED_VARIABLE") val v = h.version
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        @Composable
+        fun item(label: String, enabled: Boolean = true, action: () -> Unit) {
+            androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = {
+                onDismiss()
+                action()
+            })
+        }
+        item("Undo", enabled = h.canUndo) { vm.undo() }
+        item("Redo", enabled = h.canRedo) { vm.redo() }
+        androidx.compose.material3.HorizontalDivider()
+        if (sel) {
+            item("Deselect") { vm.deselect() }
+            item("Select inverse") { vm.invertSelection() }
+            item("Layer via copy") { vm.selectionToLayer(cut = false) }
+            item("Layer via cut") { vm.selectionToLayer(cut = true) }
+        } else {
+            item("Select all") { vm.selectAll() }
+        }
+        item("Free transform") { vm.onToolButton(Tool.TRANSFORM) }
+        androidx.compose.material3.HorizontalDivider()
+        item("Copy") { vm.copyPixels() }
+        item("Copy merged") { vm.copyPixels(merged = true) }
+        item("Paste") { vm.pastePixels() }
+        androidx.compose.material3.HorizontalDivider()
+        item("Fill with foreground color") { vm.fillLayer(vm.foreground) }
+        item("Workspace color…") { onWorkspaceColor() }
+    }
+}

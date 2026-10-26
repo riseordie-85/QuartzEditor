@@ -40,8 +40,21 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        // (A text field in the panels being typed in keeps its spaces)
-        vm.onSpaceKey(event, typingInField = currentFocus?.onCheckIsTextEditor() == true) || vm.onTabKey(event) || super.dispatchKeyEvent(event)
+        dispatchFirst(event) || super.dispatchKeyEvent(event)
+
+    /**
+     * Keys the editor needs before a button or switch that has focus can take them: Space (move the
+     * view), Tab (panels), Enter (apply) and Esc (cancel). Not while a text field is being typed in.
+     */
+    private fun dispatchFirst(event: KeyEvent): Boolean {
+        val typing = currentFocus?.onCheckIsTextEditor() == true
+        if (vm.onSpaceKey(event, typingInField = typing) || vm.onTabKey(event)) return true
+        if (typing || event.action != KeyEvent.ACTION_DOWN) return false
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_ESCAPE -> vm.onKeyDown(event)
+            else -> false
+        }
+    }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
