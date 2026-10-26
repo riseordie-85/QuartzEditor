@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.Deselect
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -339,6 +340,23 @@ fun Workspace(vm: EditorViewModel) {
                     ) { vm.deselect() }
                 }
 
+                // Space held: a hand (for the pen and fingers, which have no pointer to show it)
+                if (vm.tempPan) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = if (desktop) 10.dp else 56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black.copy(alpha = 0.65f))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Icon(Icons.Outlined.PanTool, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Space: drag to move the view", color = Color.White, fontSize = 13.sp)
+                    }
+                }
+
                 // After a ColorDrop: its tolerance, to fill again with more or less
                 ColorDropBar(vm, Modifier.align(Alignment.BottomCenter).padding(bottom = if (vm.online && vm.showComfyBar) 76.dp else 10.dp, start = 64.dp, end = if (desktop) 110.dp else 160.dp))
 
@@ -544,6 +562,7 @@ fun Workspace(vm: EditorViewModel) {
             renameOpen = false
         }
     }
+    MaskRefineScreen(vm)
     if (exportOpen) {
         ExportScreen(
             vm,

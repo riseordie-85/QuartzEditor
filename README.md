@@ -95,7 +95,7 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
     italic), **size**, **left / center / right**, **color**, and a text layer's **warp**.
   - Eyedropper: **sample size** (point, 3×3, 5×5, 11×11, 31×31, 51×51, 101×101, averaged) and **All
     layers** (off: just the colors on the layer you're on). Also in Properties.
-  - Crop, warp and pen show their bars here; the text field stays over the picture.
+  - Crop, warp and pen show their bars here; text is typed right on the picture.
 - **Toolbar**: as before, with tall **size and opacity** sliders beside it for the brushes (can be turned off).
 - **Panels**: drag their left edge to make them wider or narrower (remembered). **History** is a panel
   section of its own (on phones too): tap a step to go back to it.
@@ -113,6 +113,18 @@ for a pen; Settings → Appearance → Layout switches it (Automatic, Menu bar, 
   to the start screen with the files kept open. Deleting a project that's open closes it.
 - **Squarer look**: the bars, toolbar, panels and picture have only slightly rounded corners and sit
   closer together.
+- **Mouse**: the **wheel** moves the view up and down; **Ctrl + wheel** left and right (**Ctrl+Shift**:
+  faster); **Alt + wheel** zooms; a sideways wheel or trackpad moves sideways. **Right-click** a layer for
+  its menu, or its **mask thumbnail** for the mask's: Disable / Enable, Delete, Apply, Invert, Mask as
+  selection, Add mask to selection, Subtract mask from selection, Intersect, Replace with selection,
+  **Select and mask…**, **Enhance edge**, Clear. **Drag a layer from anywhere on its row** (mouse or pen;
+  fingers use the handle at the right, since they scroll the list) and **drop it on +** to duplicate it.
+  **Space**: the pointer turns into a hand while it's held (and a "Space" note shows, for the pen and
+  fingers); Space is caught before buttons can take it, so it always moves the view.
+- **Select and mask…** (a mask's menu): a preview (checkerboard, on black, on white, red overlay, or the
+  mask) and Edge detection radius (the edge follows the picture's own: hair, fur; Auto picks one), Smooth,
+  Feather, Contrast and Shift edge. OK applies it to the mask as one step. **Enhance edge** does edge
+  detection in one tap.
 - **Pen niceties** (everywhere): hover over a button for a moment to see its name; the pen's side button
   (or a mouse's right button) on a layer opens its menu, like a long press.
 
@@ -240,7 +252,9 @@ the list; the button shows the one you used last.
 - **Adding to a shape** with either pen (while drawing, with a pen shape selected): tap its outline to add a
   point there (the shape stays the same; point editing comes on so you can drag it), or tap one of an open
   shape's ends to carry it on — the new points join that shape, and tapping its other end closes it.
-- **Text** — tap the picture and type (the bar at the top has the text box, Cancel and Done). Tap existing
+- **Text** — tap the picture and type: the words appear **on the picture** as you type, with a blinking
+  cursor (tap inside the text to move it; a keyboard's arrows and selection work too). The small bar at
+  the top has Cancel and Done. Tap existing
   text to change it; drag with the Text tool to move it. Properties: font (Android's, Google Fonts, or your
   own .ttf/.otf), size, color, alignment, faux bold/italic, underline, ALL CAPS, letter and line spacing,
   and **Warp text**: Arc, Arc Lower, Arc Upper, Arch, Bulge, Shell Lower, Shell Upper, Flag, Wave, Fish,

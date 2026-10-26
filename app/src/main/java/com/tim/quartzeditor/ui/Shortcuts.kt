@@ -201,6 +201,21 @@ fun EditorViewModel.onTabKey(e: KeyEvent): Boolean {
     return true
 }
 
+/**
+ * Space, caught before anything on the screen sees it (a button or switch that had focus would
+ * otherwise take it, and the view wouldn't move): held, one finger, the pen or the mouse moves the
+ * view. Not while typing text on the picture.
+ */
+fun EditorViewModel.onSpaceKey(e: KeyEvent): Boolean {
+    if (e.keyCode != KeyEvent.KEYCODE_SPACE || doc == null || showHome || textEdit != null) return false
+    if (e.isCtrlPressed || e.isMetaPressed || e.isAltPressed) return false
+    when (e.action) {
+        KeyEvent.ACTION_DOWN -> tempPan = true
+        KeyEvent.ACTION_UP -> tempPan = false
+    }
+    return true
+}
+
 /** The keyboard went away mid-press (another app, a window on top): let go of Space. */
 fun EditorViewModel.releaseKeys() {
     tempPan = false

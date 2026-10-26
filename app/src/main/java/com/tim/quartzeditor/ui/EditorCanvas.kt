@@ -6,6 +6,8 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
+import com.tim.quartzeditor.engine.toMatrix
+import androidx.compose.ui.graphics.asComposePath
 import android.os.SystemClock
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
@@ -58,6 +60,12 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.positionChange
@@ -182,6 +190,18 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     var hover by remember { mutableStateOf<Offset?>(null) }
     // A guide being moved with the Move tool: (vertical, which one)
     var movingGuide by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
+    // Typing on the picture: the cursor blinks, and the words' layout is kept while they don't change
+    val textBuilt = remember { arrayOfNulls<Pair<com.tim.quartzeditor.engine.TextSpec, com.tim.quartzeditor.engine.TextBuilt>>(1) }
+    val caretOn = if (vm.textEdit != null) {
+        val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "caret")
+        val v = t.animateFloat(
+            0f, 1f,
+            androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1060, easing = androidx.compose.animation.core.LinearEasing)),
+            label = "blink",
+        )
+        // (Only on and off count: the canvas isn't drawn again every frame)
+        remember(v) { derivedStateOf { v.value < 0.55f } }.value
+    } else false
     val checker = remember { checkerShader(with(density) { 8.dp.toPx() }.roundToInt().coerceAtLeast(4)) }
 
     fun animateFit() {
@@ -295,9 +315,39 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
                 }
         )
+        // Holding Space (or with Pan): a hand, so it's clear dragging moves the view
+        val handIcon = vm.tempPan || vm.tool == Tool.PAN
         Canvas(
             Modifier
                 .fillMaxSize()
+                .pointerHoverIcon(if (handIcon) PointerIcon.Hand else PointerIcon.Default)
+                // The mouse wheel: up and down moves the view up and down; with Ctrl, left and right
+                // (Ctrl+Shift: faster); a sideways wheel or trackpad, sideways; Alt: zoom
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            if (e.type != PointerEventType.Scroll) continue
+                            val c = e.changes.firstOrNull() ?: continue
+                            val delta = c.scrollDelta
+                            val mods = e.keyboardModifiers
+                            val ctrl = mods.isCtrlPressed || mods.isMetaPressed
+                            val step = 72.dp.toPx() * (if (ctrl && mods.isShiftPressed) 4f else 1f)
+                            if (mods.isAltPressed) {
+                                vm.transformView(if (delta.y < 0f) 1.15f else 1f / 1.15f, c.position.x, c.position.y, 0f, 0f)
+                            } else {
+                                // On the screen: down the screen, or across it with Ctrl (the view may be turned)
+                                val sx = if (ctrl) -delta.y * step else -delta.x * step
+                                val sy = if (ctrl) -delta.x * step else -delta.y * step
+                                val th = Math.toRadians(-vm.rotation.toDouble())
+                                val dx = (sx * kotlin.math.cos(th) - sy * kotlin.math.sin(th)).toFloat()
+                                val dy = (sx * kotlin.math.sin(th) + sy * kotlin.math.cos(th)).toFloat()
+                                vm.transformView(1f, 0f, 0f, dx, dy)
+                            }
+                            c.consume()
+                        }
+                    }
+                }
                 // The pen hovering: the brush outline follows it
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
@@ -1345,6 +1395,40 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     val sz = androidx.compose.ui.geometry.Size(b.width() * s, b.height() * s)
                     drawRect(Color.Black.copy(alpha = 0.5f), tl, sz, style = Stroke(3.dp.toPx()))
                     drawRect(Q.accent, tl, sz, style = Stroke(1.5.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
+                }
+                // The cursor (and what's selected), on the words themselves: straight text only
+                val spec = l.props.text
+                if (spec != null) {
+                    val built = textBuilt[0]?.takeIf { it.first === spec }?.second
+                        ?: com.tim.quartzeditor.engine.VectorArt.buildText(spec).also { textBuilt[0] = spec to it }
+                    val layout = built.layout
+                    if (layout != null && built.warp == null) {
+                        val m = Matrix(spec.matrix.toMatrix()).apply {
+                            postTranslate(l.x.toFloat(), l.y.toFloat())
+                            postScale(s, s)
+                            postTranslate(ox, oy)
+                        }
+                        val sel = vm.textValue.selection
+                        val n = layout.text.length
+                        if (!sel.collapsed) {
+                            val path = android.graphics.Path()
+                            layout.getSelectionPath(sel.min.coerceIn(0, n), sel.max.coerceIn(0, n), path)
+                            path.offset(built.left, built.top)
+                            path.transform(m)
+                            drawPath(path.asComposePath(), Q.accent.copy(alpha = 0.35f))
+                        }
+                        if (caretOn) {
+                            val i = sel.end.coerceIn(0, if (spec.text.isEmpty()) 0 else n)
+                            val line = layout.getLineForOffset(i)
+                            val x = layout.getPrimaryHorizontal(i) + built.left
+                            val pts = floatArrayOf(x, layout.getLineTop(line) + built.top, x, layout.getLineBottom(line) + built.top)
+                            m.mapPoints(pts)
+                            val a = Offset(pts[0], pts[1])
+                            val b = Offset(pts[2], pts[3])
+                            drawLine(Color.Black.copy(alpha = 0.6f), a, b, 4.dp.toPx())
+                            drawLine(Q.accent, a, b, 2.dp.toPx())
+                        }
+                    }
                 }
             }
 

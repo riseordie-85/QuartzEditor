@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -527,49 +528,45 @@ fun PenBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
     }
 }
 
-/** Typing: the text box (the keyboard opens), cancel and done. */
+/**
+ * Typing on the picture: the words appear in the text layer as you type, with a cursor (tap in the
+ * text to move it). This bar has only Cancel and Done; the keyboard types into a field you don't see.
+ */
 @Composable
 fun TextBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val session = vm.textEdit ?: return
-    val layer = vm.doc?.layer(session.layerId) ?: return
-    val start = remember(session) { layer.props.text?.text.orEmpty() }
-    var value by remember(session) { mutableStateOf(TextFieldValue(start, TextRange(start.length))) }
+    vm.doc?.layer(session.layerId) ?: return
     val focus = remember { FocusRequester() }
-    LaunchedEffect(session) { runCatching { focus.requestFocus() } }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(session, vm.textFocusTick) {
+        runCatching { focus.requestFocus() }
+        keyboard?.show()
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
-            .widthIn(max = 560.dp)
-            .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(Q.toolbar.copy(alpha = 0.96f))
             .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {
         BarIcon(Icons.Outlined.Close, "Cancel") { vm.cancelText() }
-        Box(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Q.field)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            if (value.text.isEmpty()) Text("Type your text", color = Q.textDim, fontSize = 16.sp)
-            BasicTextField(
-                value = value,
-                onValueChange = {
-                    value = it
-                    vm.typeText(it.text)
-                },
-                textStyle = TextStyle(color = Q.text, fontSize = 16.sp),
-                cursorBrush = SolidColor(Q.accent),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                maxLines = 4,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 22.dp)
-                    .focusRequester(focus),
-            )
-        }
+        Text(
+            if (vm.textValue.text.isEmpty()) "Type on the picture" else "Typing · tap in the text to move the cursor",
+            color = Q.textDim, fontSize = 13.sp, maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        // What the keyboard types into (the words show on the picture instead)
+        BasicTextField(
+            value = vm.textValue,
+            onValueChange = { vm.typeTextValue(it) },
+            textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
+            cursorBrush = SolidColor(Color.Transparent),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier
+                .size(1.dp)
+                .alpha(0f)
+                .focusRequester(focus),
+        )
         Spacer(Modifier.width(4.dp))
         Box(
             contentAlignment = Alignment.Center,

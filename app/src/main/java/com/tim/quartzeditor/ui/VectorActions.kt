@@ -17,6 +17,7 @@ import com.tim.quartzeditor.engine.StackChange
 import com.tim.quartzeditor.engine.TextSpec
 import com.tim.quartzeditor.engine.TileGrid
 import com.tim.quartzeditor.engine.VectorArt
+import com.tim.quartzeditor.engine.toMatrix
 import com.tim.quartzeditor.engine.translation
 import com.tim.quartzeditor.engine.toAffine
 import kotlinx.coroutines.Dispatchers
@@ -714,7 +715,13 @@ fun EditorViewModel.selectionToShape() {
 fun EditorViewModel.textTap(x: Float, y: Float) {
     val d = doc ?: return
     if (textEdit != null) {
-        finishText()
+        // In the text being typed: the cursor goes there; anywhere else: done
+        val l = editingText
+        val at = l?.let { textOffsetAt(it, x, y) }
+        if (at != null) {
+            textValue = textValue.copy(selection = androidx.compose.ui.text.TextRange(at))
+            textFocusTick++
+        } else finishText()
         return
     }
     if (pendingFirst { textTap(x, y) }) return
@@ -742,6 +749,7 @@ private fun EditorViewModel.newText(x: Float, y: Float) {
     d.activeId = l.id
     d.editMask = false
     d.invalidate()
+    textValue = androidx.compose.ui.text.input.TextFieldValue("")
     textEdit = TextEditSession(l.id, before, isNew = true)
 }
 
@@ -765,6 +773,8 @@ fun EditorViewModel.beginTextEdit(l: Layer) {
         // Typing happens with the Text tool (its settings show in Properties)
         if (tool != Tool.TEXT) onToolButton(Tool.TEXT)
         if (d.activeId != l.id) selectLayer(l.id)
+        val words = l.props.text?.text.orEmpty()
+        textValue = androidx.compose.ui.text.input.TextFieldValue(words, androidx.compose.ui.text.TextRange(words.length))
         textEdit = TextEditSession(l.id, d.snapshot(), isNew = false)
         // From Photoshop: until now it showed Photoshop's pixels; from here it's drawn here
         if (l.props.text?.psdFont != null) {
@@ -774,6 +784,33 @@ fun EditorViewModel.beginTextEdit(l: Layer) {
             redrawVectorNow(l)
         }
     }
+}
+
+/** Typing on the picture: the words and where the cursor is. */
+fun EditorViewModel.typeTextValue(v: androidx.compose.ui.text.input.TextFieldValue) {
+    val changed = v.text != textValue.text
+    textValue = v
+    if (changed) typeText(v.text)
+    else doc?.invalidate()
+}
+
+/**
+ * Where in text layer [l]'s words canvas point ([x], [y]) is (an offset for the cursor), or null when
+ * it's outside the text. Bent and arched text: the end.
+ */
+fun EditorViewModel.textOffsetAt(l: Layer, x: Float, y: Float): Int? {
+    val spec = l.props.text ?: return null
+    val box = VectorArt.bounds(l.props)?.apply { offset(l.x.toFloat(), l.y.toFloat()) } ?: return null
+    if (!box.contains(x, y)) return null
+    val b = VectorArt.buildText(spec)
+    val layout = b.layout
+    if (layout == null || b.warp != null) return spec.text.length
+    val inv = android.graphics.Matrix()
+    if (!spec.matrix.toMatrix().invert(inv)) return spec.text.length
+    val p = floatArrayOf(x - l.x, y - l.y)
+    inv.mapPoints(p)
+    val line = layout.getLineForVertical((p[1] - b.top).toInt())
+    return layout.getOffsetForHorizontal(line, p[0] - b.left).coerceIn(0, spec.text.length)
 }
 
 /** The text being typed changed. */

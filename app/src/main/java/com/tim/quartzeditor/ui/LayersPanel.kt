@@ -96,6 +96,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontStyle
@@ -214,6 +216,17 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
         val rowH = Q.gap(58.dp, 48.dp)
         val rowPx = with(density) { rowH.toPx() }
         var dragId by remember { mutableStateOf<Long?>(null) }
+        // Dragging a layer onto the New layer button duplicates it: where the button and the list are on the screen
+        val newButton = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+        val listCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+        var overNew by remember { mutableStateOf(false) }
+        fun overNewButton(at: androidx.compose.ui.geometry.Offset): Boolean {
+            val lc = listCoords[0]?.takeIf { it.isAttached } ?: return false
+            val nb = newButton[0]?.takeIf { it.isAttached } ?: return false
+            val w = lc.localToWindow(at)
+            val tl = nb.localToWindow(androidx.compose.ui.geometry.Offset.Zero)
+            return w.x >= tl.x && w.y >= tl.y && w.x <= tl.x + nb.size.width && w.y <= tl.y + nb.size.height
+        }
         var dragOffset by remember { mutableFloatStateOf(0f) }
         // The folder a drop would go into (kept here so the drag's callbacks see the latest)
         val dropFolderRef = remember { mutableStateOf<Long?>(null) }
@@ -327,12 +340,15 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                 .then(listMod)
                 .clip(RoundedCornerShape(10.dp))
                 .onSizeChanged { listH = it.height }
+                .onGloballyPositioned { listCoords[0] = it }
                 // Dragging a row by its handle (the right end): watched here, ahead of the list's own
                 // scrolling, so the drag carries on even when the row scrolls out of view
                 .pointerInput(listKey) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        if (down.position.x < size.width - handlePx) return@awaitEachGesture
+                        // A mouse or the pen picks a row up anywhere on it; a finger by its handle (it scrolls the list elsewhere)
+                        val anywhere = down.type == androidx.compose.ui.input.pointer.PointerType.Mouse || down.isPen
+                        if (!anywhere && down.position.x < size.width - handlePx) return@awaitEachGesture
                         // The pen's side button (or a right click) opens the row's menu instead
                         if ((down.isPen && vm.pen.buttonHeld) || down.type == androidx.compose.ui.input.pointer.PointerType.Mouse && currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
                         val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { down.position.y >= it.offset && down.position.y < it.offset + it.size }
@@ -365,14 +381,27 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
                                     edgeArmed = false
                                 }
                                 if (started) {
-                                    dragOffset += c.position.y - lastY
+                                    overNew = overNewButton(c.position)
+                                    // (Over the button the list holds still)
+                                    if (!overNew) {
+                                        dragOffset += c.position.y - lastY
+                                        fingerY = c.position.y
+                                    } else fingerY = listH / 2f
                                     lastY = c.position.y
-                                    fingerY = c.position.y
                                     c.consume()
                                 }
                             }
-                            if (started && !cancelled) drop()
+                            if (started && !cancelled) {
+                                if (overNew) {
+                                    // Dropped on New layer: a copy of it
+                                    dragId = null
+                                    dragOffset = 0f
+                                    vm.selectLayer(id)
+                                    vm.duplicateLayer()
+                                } else drop()
+                            }
                         } finally {
+                            overNew = false
                             if (started && dragId != null) {
                                 dragId = null
                                 dragOffset = 0f
@@ -479,7 +508,14 @@ fun LayersPanel(vm: EditorViewModel, onPlaceImage: () -> Unit, fillList: Boolean
             BarButton(Icons.Outlined.CreateNewFolder, if (vm.isMultiSelecting) "Put picked layers in a folder" else "New folder") {
                 if (vm.isMultiSelecting) vm.groupActive() else vm.addFolder()
             }
-            BarButton(Icons.Outlined.Add, "New layer") { vm.addLayer() }
+            // (Drop a layer dragged from the list here to duplicate it)
+            Box(
+                Modifier
+                    .onGloballyPositioned { newButton[0] = it }
+                    .then(if (overNew) Modifier.clip(RoundedCornerShape(10.dp)).background(Q.accent.copy(alpha = 0.35f)) else Modifier),
+            ) {
+                BarButton(Icons.Outlined.Add, if (dragId != null) "Drop here to duplicate" else "New layer") { vm.addLayer() }
+            }
             BarButton(Icons.Outlined.DeleteOutline, "Delete layer") { vm.deleteLayer() }
             Box {
                 BarButton(Icons.Outlined.MoreVert, "More layer actions") { more = true }
@@ -541,6 +577,9 @@ private fun LayerRow(
 ) {
     val p = layer.props
     var menu by remember { mutableStateOf(false) }
+    // The mask's own menu (hold it, or right-click it), and where its thumbnail is in the row
+    var maskMenu by remember { mutableStateOf(false) }
+    val maskBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
     val swipe = with(LocalDensity.current) { 48.dp.toPx() }
     Box {
     Row(
@@ -569,7 +608,8 @@ private fun LayerRow(
                 )
             }
             // The pen's side button (or a right click): this layer's quick actions, like a long press
-            .penSecondaryClick(vm) { menu = true }
+            // (on the mask's thumbnail: the mask's)
+            .penSecondaryClickAt(vm) { at -> if (layer.hasMask && maskBounds[0]?.contains(at) == true) maskMenu = true else menu = true }
             .combinedClickable(
                 onClick = { vm.selectLayer(layer.id, mask = false) },
                 onLongClick = { menu = true },
@@ -635,9 +675,8 @@ private fun LayerRow(
         }
         if (layer.hasMask) {
             Spacer(Modifier.width(4.dp))
-            Box {
-                var maskMenu by remember { mutableStateOf(false) }
-                // Hold the mask for what you can do with it
+            Box(Modifier.onGloballyPositioned { c -> maskBounds[0] = c.boundsInParent() }) {
+                // Hold the mask (or right-click it) for what you can do with it
                 Thumb(layer.maskThumb, outlined = maskSelected, plain = true, onLongPress = { maskMenu = true }) { vm.selectLayer(layer.id, mask = true) }
                 if (p.maskDisabled) {
                     Text("✕", color = Color(0xFFE53935), fontSize = 18.sp, modifier = Modifier.align(Alignment.Center))
@@ -654,18 +693,33 @@ private fun LayerRow(
                             if (!vm.pendingFirst(run)) run()
                         })
                     }
+                    item(if (p.maskDisabled) "Enable mask" else "Disable mask") { toggleMaskEnabled() }()
+                    item("Delete mask") { deleteMask() }()
+                    item("Apply mask") { applyMask() }()
+                    item("Invert mask") { invertMask() }()
+                    HorizontalDivider()
                     DropdownMenuItem(text = { Text("Mask as selection") }, onClick = {
                         maskMenu = false
-                        vm.selectionFromMask(layer.id)
+                        vm.selectionFromMask(layer.id, com.tim.quartzeditor.engine.SelectMode.NEW)
                     })
-                    if (vm.doc?.selection != null) item("Replace with selection") { maskFromSelection() }()
+                    val hasSel = vm.doc?.selection?.isEmpty == false
+                    DropdownMenuItem(text = { Text("Add mask to selection") }, onClick = {
+                        maskMenu = false
+                        vm.selectionFromMask(layer.id, com.tim.quartzeditor.engine.SelectMode.ADD)
+                    })
+                    DropdownMenuItem(text = { Text("Subtract mask from selection") }, enabled = hasSel, onClick = {
+                        maskMenu = false
+                        vm.selectionFromMask(layer.id, com.tim.quartzeditor.engine.SelectMode.SUBTRACT)
+                    })
+                    DropdownMenuItem(text = { Text("Intersect mask with selection") }, enabled = hasSel, onClick = {
+                        maskMenu = false
+                        vm.selectionFromMask(layer.id, com.tim.quartzeditor.engine.SelectMode.INTERSECT)
+                    })
+                    if (hasSel) item("Replace with selection") { maskFromSelection() }()
                     HorizontalDivider()
-                    item("Invert mask") { invertMask() }()
-                    item(if (p.maskDisabled) "Enable mask" else "Disable mask") { toggleMaskEnabled() }()
+                    item("Select and mask…") { openMaskRefine() }()
+                    item("Enhance edge") { enhanceMaskEdge() }()
                     item("Clear mask", enabled = layer.mask?.isEmpty == false) { clearMask() }()
-                    HorizontalDivider()
-                    item("Apply mask") { applyMask() }()
-                    item("Delete mask") { deleteMask() }()
                 }
             }
         }

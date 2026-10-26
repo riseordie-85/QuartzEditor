@@ -146,6 +146,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var draftAsk by mutableStateOf<com.tim.quartzeditor.engine.ProjectInfo?>(null)
     /** A ComfyUI upscale came back while something was half done: enlarging the image is being asked. */
     var comfyGrowAsk by mutableStateOf<ComfyGrow?>(null)
+    /** Select and mask is open for this layer's mask. */
+    var maskRefineFor by mutableStateOf<Long?>(null)
 
     // ------------------------------------------------------------ tools and colors
 
@@ -288,6 +290,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Text being typed (null = none). */
     var textEdit by mutableStateOf<TextEditSession?>(null)
+    /** The text being typed on the picture, with where the cursor is (or what's selected). */
+    var textValue by mutableStateOf(androidx.compose.ui.text.input.TextFieldValue())
+    /** Bumped when the keyboard should come (back) up for the text being typed. */
+    var textFocusTick by mutableStateOf(0)
         internal set
 
     /** "Rasterize this layer?" (null = not asking). */

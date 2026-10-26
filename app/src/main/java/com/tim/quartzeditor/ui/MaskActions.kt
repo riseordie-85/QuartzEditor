@@ -100,9 +100,9 @@ fun EditorViewModel.invertMask() {
 }
 
 /** Selects what layer [id]'s mask shows (its white), like Ctrl-clicking a mask in Photoshop. */
-fun EditorViewModel.selectionFromMask(id: Long) {
+fun EditorViewModel.selectionFromMask(id: Long, combine: com.tim.quartzeditor.engine.SelectMode? = null) {
     val d = doc ?: return
-    if (pendingFirst { selectionFromMask(id) }) return
+    if (pendingFirst { selectionFromMask(id, combine) }) return
     val l = d.layer(id) ?: return
     val m = l.mask ?: return
     val src = TileGrid(alphaOnly = true).also { it.tiles.putAll(m.tiles) }
@@ -111,7 +111,7 @@ fun EditorViewModel.selectionFromMask(id: Long) {
     val w = d.width
     val h = d.height
     val old = d.selection
-    val mode = selectMode
+    val mode = combine ?: selectMode
     setSelectionComputed(if (mode == com.tim.quartzeditor.engine.SelectMode.NEW) "Selection from mask" else "Change selection") {
         // The mask keeps what's hidden: start from everything and take that away
         val area = RectF(0f, 0f, w.toFloat(), h.toFloat())

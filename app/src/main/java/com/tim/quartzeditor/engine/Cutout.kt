@@ -233,7 +233,7 @@ object Cutout {
     }
 
     /** The average over a (2r+1)² window around each pixel (smaller at the edges), in O(n). */
-    private fun boxMean(src: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+    internal fun boxMean(src: FloatArray, w: Int, h: Int, r: Int): FloatArray {
         // Rows, then columns, with running sums (in doubles, so long rows don't drift)
         val rows = FloatArray(w * h)
         for (y in 0 until h) {

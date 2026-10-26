@@ -9,6 +9,7 @@ import com.tim.quartzeditor.ui.saveDraft
 import com.tim.quartzeditor.ui.FileDialogs
 import com.tim.quartzeditor.ui.onKeyUp
 import com.tim.quartzeditor.ui.onTabKey
+import com.tim.quartzeditor.ui.onSpaceKey
 import com.tim.quartzeditor.ui.releaseKeys
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,7 +40,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        vm.onTabKey(event) || super.dispatchKeyEvent(event)
+        vm.onSpaceKey(event) || vm.onTabKey(event) || super.dispatchKeyEvent(event)
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)

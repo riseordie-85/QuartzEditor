@@ -681,7 +681,10 @@ fun TipLayer(host: TipHostState) {
  * The pen's side button held while it touches (or a mouse's right button): [onClick], instead of
  * what a tap does. For opening an item's menu, like a right click.
  */
-fun Modifier.penSecondaryClick(vm: EditorViewModel, onClick: () -> Unit): Modifier = composed {
+fun Modifier.penSecondaryClick(vm: EditorViewModel, onClick: () -> Unit): Modifier = penSecondaryClickAt(vm) { onClick() }
+
+/** As [penSecondaryClick], told where it was pressed (in this element's own pixels). */
+fun Modifier.penSecondaryClickAt(vm: EditorViewModel, onClick: (androidx.compose.ui.geometry.Offset) -> Unit): Modifier = composed {
     val click by rememberUpdatedState(onClick)
     pointerInput(Unit) {
         awaitPointerEventScope {
@@ -691,7 +694,7 @@ fun Modifier.penSecondaryClick(vm: EditorViewModel, onClick: () -> Unit): Modifi
                 val secondary = (c.isPen && vm.pen.buttonHeld) || (c.type == PointerType.Mouse && e.buttons.isSecondaryPressed)
                 if (!secondary) continue
                 e.changes.forEach { it.consume() }
-                click()
+                click(c.position)
                 // The rest of this touch goes nowhere else
                 do {
                     val more = awaitPointerEvent(PointerEventPass.Initial)
