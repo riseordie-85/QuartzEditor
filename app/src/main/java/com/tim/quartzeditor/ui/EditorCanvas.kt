@@ -186,6 +186,10 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     var canvasMenuAt by remember { mutableStateOf<Offset?>(null) }
+    // Move › Show transform controls: the box, worked out again when what it's around changes
+    androidx.compose.runtime.LaunchedEffect(vm.doc, vm.tool, vm.showTransformControls, vm.history.version, vm.selectedLayerIds(), vm.transform == null, vm.busy == null) {
+        if (vm.transform == null && vm.busy == null) vm.refreshMoveBox()
+    }
     var loupe by remember { mutableStateOf<Pair<Offset, Int?>?>(null) }
     var cursor by remember { mutableStateOf<Offset?>(null) }
     // Where the pen hovers above the screen (null when it isn't)
@@ -467,6 +471,8 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         vm.brushPickerFor = null
                         var hit: TransformHit? = null
                         val tStart = vm.transform?.state
+                        // A Move box handle grabbed: Free Transform's box, once it's ready
+                        var tLate: com.tim.quartzeditor.engine.TransformState? = null
                         val (startCx, startCy) = vm.screenToCanvas(start.x, start.y)
                         if (tool == Tool.TRANSFORM && tStart != null) {
                             val q = tStart.corners().map { Offset(it.x * vm.scale + vm.offsetX, it.y * vm.scale + vm.offsetY) }
@@ -610,6 +616,30 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                             vm.selectLayerAt(startCx, startCy)
                             mode = GestureMode.DONE
                         }
+                        // Move with transform controls: a handle of the box switches to Free Transform, with this drag
+                        if (mode == GestureMode.PENDING && tool == Tool.MOVE && vm.showTransformControls && vm.transform == null && !vm.altOn) {
+                            vm.moveBox?.let { b ->
+                                val q = listOf(Offset(b.left, b.top), Offset(b.right, b.top), Offset(b.right, b.bottom), Offset(b.left, b.bottom))
+                                    .map { Offset(it.x * vm.scale + vm.offsetX, it.y * vm.scale + vm.offsetY) }
+                                val r = 22.dp.toPx()
+                                // A small box: inside it always moves (handles only from outside, no edge handles)
+                                val small = minOf(b.width(), b.height()) * vm.scale < 4 * r
+                                val inside = insideQuad(q, start)
+                                val ci = if (small && inside) -1 else q.indexOfFirst { (it - start).getDistance() < r }
+                                val ei = if (small) null else (0 until 4).firstOrNull { i -> ((q[i] + q[(i + 1) % 4]) / 2f - start).getDistance() < r }
+                                val h = when {
+                                    ci >= 0 -> TransformHit.Corner(ci)
+                                    ei != null -> TransformHit.Edge(ei)
+                                    // Just outside a corner: turns it (like Photoshop)
+                                    !inside && q.any { (it - start).getDistance() < r * 2.2f } -> TransformHit.Rotate
+                                    else -> null
+                                }
+                                if (h != null) {
+                                    hit = h
+                                    mode = if (vm.transformFromMoveBox()) GestureMode.TRANSFORM else GestureMode.DONE
+                                }
+                            }
+                        }
                         // The view tool's turn: where the pointer started, around the middle of the view, on the screen
                         fun screenAngle(p: Offset): Double {
                             val th = Math.toRadians(vm.rotation.toDouble())
@@ -731,7 +761,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         mode = GestureMode.NAV
                                     }
                                     GestureMode.TRANSFORM -> {
-                                        if (tStart != null) vm.updateTransform { tStart.copy(keepAspect = it.keepAspect) }
+                                        (tStart ?: tLate)?.let { ts -> vm.updateTransform { ts.copy(keepAspect = it.keepAspect) } }
                                         mode = GestureMode.NAV
                                     }
                                     GestureMode.SELECTING -> {
@@ -940,7 +970,9 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                         }
                                     }
                                 }
-                                GestureMode.TRANSFORM -> if (main != null && tStart != null) {
+                                GestureMode.TRANSFORM -> if (main != null && (tStart ?: tLate ?: vm.transform?.state?.also { tLate = it }) != null) {
+                                    @Suppress("NAME_SHADOWING")
+                                    val tStart = (tStart ?: tLate)!!
                                     val (cx, cy) = vm.screenToCanvas(main.position.x, main.position.y)
                                     val p = android.graphics.PointF(cx, cy)
                                     // Handles move by how far the finger moved (no jump to the finger)
@@ -1102,7 +1134,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                                 GestureMode.STROKE -> vm.cancelStroke()
                                 GestureMode.MOVE -> vm.cancelMove()
                                 GestureMode.EYEDROP -> loupe = null
-                                GestureMode.TRANSFORM -> if (tStart != null) vm.updateTransform { tStart.copy(keepAspect = it.keepAspect) }
+                                GestureMode.TRANSFORM -> (tStart ?: tLate)?.let { ts -> vm.updateTransform { ts.copy(keepAspect = it.keepAspect) } }
                                 GestureMode.SELECTING -> vm.selectDraft = null
                                 GestureMode.GRADIENT -> vm.cancelGradient()
                                 GestureMode.CROP -> {
@@ -1261,6 +1293,28 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 }
                 for (m in listOf(Offset((l + r) / 2f, t), Offset((l + r) / 2f, bt))) drawLine(Color.White, m - Offset(hl / 2f, 0f), m + Offset(hl / 2f, 0f), hw)
                 for (m in listOf(Offset(l, (t + bt) / 2f), Offset(r, (t + bt) / 2f))) drawLine(Color.White, m - Offset(0f, hl / 2f), m + Offset(0f, hl / 2f), hw)
+            }
+
+            // Move › Show transform controls: the box around the layer (following a move in progress)
+            val mb = vm.moveBox
+            if (mb != null && vm.tool == Tool.MOVE && vm.showTransformControls && vm.transform == null) {
+                val pv = vm.preview?.takeIf { vm.moveLayer != null }
+                val dx = (pv?.dragX ?: 0f) * s
+                val dy = (pv?.dragY ?: 0f) * s
+                val q = listOf(Offset(mb.left, mb.top), Offset(mb.right, mb.top), Offset(mb.right, mb.bottom), Offset(mb.left, mb.bottom))
+                    .map { Offset(it.x * s + ox + dx, it.y * s + oy + dy) }
+                val line = 1.dp.toPx()
+                val col = if (vm.moveBoxLocked) Color.White.copy(alpha = 0.45f) else Color.White
+                for (i in 0 until 4) {
+                    drawLine(Color.Black.copy(alpha = 0.5f), q[i], q[(i + 1) % 4], line * 2.5f)
+                    drawLine(col, q[i], q[(i + 1) % 4], line)
+                }
+                val hs = 5.dp.toPx()
+                val handles = q + (0 until 4).map { i -> (q[i] + q[(i + 1) % 4]) / 2f }
+                for (p in handles) {
+                    drawRect(Color.Black.copy(alpha = 0.6f), Offset(p.x - hs - line, p.y - hs - line), androidx.compose.ui.geometry.Size(2 * (hs + line), 2 * (hs + line)))
+                    drawRect(col, Offset(p.x - hs, p.y - hs), androidx.compose.ui.geometry.Size(2 * hs, 2 * hs))
+                }
             }
 
             // Transform box

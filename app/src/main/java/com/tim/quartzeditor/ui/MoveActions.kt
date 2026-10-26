@@ -80,6 +80,8 @@ fun EditorViewModel.endMove() {
         d.invalidate()
         return
     }
+    // (The Move box goes along straight away, instead of waiting to be worked out again)
+    moveBox?.let { moveBox = android.graphics.RectF(it).apply { offset(dx.toFloat(), dy.toFloat()) } }
     val smartRedo = ArrayList<com.tim.quartzeditor.engine.Layer>()
     stackEdit("Move") {
         // A folder moves everything in it

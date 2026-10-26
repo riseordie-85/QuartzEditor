@@ -180,6 +180,10 @@ the list; the button shows the one you used last.
   and **deselect** (the dotted square) drops the selection, whatever tool you're on.
 - **Crop** (its own button; hold it for Perspective crop) — drag the corners, edges or the box; pick a shape (Free, Original,
   1:1, 4:3, 3:4, 16:9, 9:16). Dragging past the canvas adds space. Cropped-off pixels stay on their layers.
+- **Show transform controls** (Move tool, in its options bar or Properties): a box with handles around the
+  picked layer (or every picked layer), like Photoshop. Grab a corner or edge handle (or just outside a corner,
+  to turn it) and it becomes Free Transform with that drag; Enter applies, Esc cancels. Dragging inside the box
+  still just moves the layer. Locked layers show the box dimmed.
 - **Canvas size** (Menu → Image → Canvas size…, Ctrl+Alt+C) — makes the canvas bigger or smaller without
   scaling anything; the 3×3 anchor picks which side stays put (center: grows evenly on all sides).
 - **Image size** (Menu → Image → Image size…) — shows the picture's size, layer count and memory, and

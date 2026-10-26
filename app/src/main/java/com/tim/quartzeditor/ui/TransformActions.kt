@@ -64,10 +64,7 @@ fun EditorViewModel.beginTransform(onReady: (() -> Unit)? = null) {
     if (transform != null) return
     // Several picked: every one of them with pixels (a picked folder brings everything in it,
     // as with moving); otherwise the active layer
-    val chosen = selectedLayerIds().mapNotNull { d.layer(it) }
-    val layers = if (chosen.size > 1) {
-        pickedRoots().flatMap { r -> if (r.isGroup) d.layers.slice(d.block(r)) else listOf(r) }.filter { it.hasContent }.distinct()
-    } else listOfNotNull(d.active)
+    val layers = transformTargets()
     if (layers.isEmpty()) return
     layers.firstOrNull { it.props.locked }?.let {
         toast("\"${it.props.name}\" is locked")

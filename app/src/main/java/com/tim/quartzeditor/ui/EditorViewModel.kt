@@ -418,6 +418,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val shiftOn: Boolean get() = (modShift && !modAlt) || keyShift
     val altOn: Boolean get() = modAlt || keyAlt
     var showModifier by mutableStateOf(prefs.getBoolean("showModifier", true))
+    /** Move tool: a box with handles around the layer (grab a handle to transform). */
+    var showTransformControls by mutableStateOf(prefs.getBoolean("moveTransformControls", false))
+    /** That box, in canvas pixels (null: nothing to show). */
+    var moveBox by mutableStateOf<android.graphics.RectF?>(null)
+    internal var moveBoxLocked = false
     /** Where the button sits, as fractions of the picture area (null: bottom left). */
     var modifierAt by mutableStateOf(
         if (prefs.contains("modX")) androidx.compose.ui.geometry.Offset(prefs.getFloat("modX", 0f), prefs.getFloat("modY", 0f)) else null

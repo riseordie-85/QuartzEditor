@@ -272,7 +272,9 @@ fun ToolOptionsBar(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 CropBar(vm)
                 WarpBar(vm)
                 PenBar(vm)
-                if (vm.tool == Tool.MOVE || vm.tool == Tool.PAN || vm.tool == Tool.BUCKET || vm.tool == Tool.GRADIENT) {
+                if (vm.tool == Tool.MOVE) {
+                    OptionChip("Show transform controls", vm.showTransformControls) { vm.toggleTransformControls() }
+                } else if (vm.tool == Tool.PAN || vm.tool == Tool.BUCKET || vm.tool == Tool.GRADIENT) {
                     Text("More settings in Properties", color = Q.textDim, fontSize = 12.sp)
                 }
             }

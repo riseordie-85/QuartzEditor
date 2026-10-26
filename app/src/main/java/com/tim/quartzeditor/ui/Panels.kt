@@ -605,6 +605,10 @@ internal fun PropertiesPanel(vm: EditorViewModel) {
     val l = d.active ?: return
     // Tools show their own settings; with Move (or Pan) it's the selected layer's
     if (tool != Tool.MOVE && tool != Tool.PAN) return
+    if (tool == Tool.MOVE) {
+        ToggleRow("Show transform controls", vm.showTransformControls) { vm.toggleTransformControls() }
+        Spacer(Modifier.height(6.dp))
+    }
     // Shape and text layers: their own settings first
     if (l.isShape) ShapeOptions(vm)
     if (l.isText) TextOptions(vm)
