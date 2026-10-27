@@ -742,6 +742,11 @@ off, a model is missing) the chip says what ComfyUI said.
   upscale model) shows the file it uses; tap it for the list of what your ComfyUI has (with a search box)
   to pick another. Weight type, device and the like are under More options. LoRA loaders' strengths are
   sliders. Changed ones are tinted and have Reset.
+- **Node settings** (folded away under the sampler, with how many you've changed): every other node's own
+  numbers, on/off switches and short choices, custom nodes included (Krea 2 Edit's source patch: ref boost,
+  fit mode; grounded encode's grounding size; skip-layer guidance's layers and range…). Choices come from
+  your ComfyUI's list when it has one. Prompts, models, LoRAs, the sampler, switches, seeds and the batch
+  size have their own places and aren't repeated here.
 - **Sampler**: each KSampler's settings: **seed** (new each run by default; switch it off to keep one seed and
   type it), **steps**, **CFG** and **denoise** as sliders, and **sampler** and **scheduler** picked from your
   ComfyUI's lists. Changed ones have Reset, and they're kept per workflow like the models.

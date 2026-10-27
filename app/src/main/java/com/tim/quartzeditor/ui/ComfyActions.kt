@@ -1045,7 +1045,7 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
     var infoDone by remember(file, source) { mutableStateOf(false) }
     LaunchedEffect(file, source, fetchAgain) {
         val w = picked ?: return@LaunchedEffect
-        val classes = (w.modelSettings.map { it.cls } + w.samplerSettings.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
+        val classes = (w.modelSettings.map { it.cls } + w.samplerSettings.map { it.cls } + w.nodeSettings.filter { w.kindOf(it) == 's' }.map { it.cls } + if (w.loraManagers.isNotEmpty()) listOf("LoraLoader") else emptyList()).distinct()
         if (classes.isEmpty() || (if (w.cloud) cloudKey.isBlank() else server.isBlank())) return@LaunchedEffect
         // Not while the address or key is still being typed
         delay(600)
@@ -1356,6 +1356,25 @@ fun ComfyDialog(vm: EditorViewModel, onImport: () -> Unit, onDismiss: () -> Unit
                                     modifier = Modifier.padding(vertical = 6.dp).clickable { more = !more },
                                 )
                                 if (more) for (s in minor) ModelRow(s, overrides, info[s.cls], loaded = infoDone) { v -> pick(s, v) }
+                            }
+                        }
+
+                        // Every other node's own settings (custom nodes too), folded away at first
+                        if (w.nodeSettings.isNotEmpty()) {
+                            var open by remember(file) { mutableStateOf(false) }
+                            val changedCount = w.nodeSettings.count { overrides.values[it.node]?.containsKey(it.input) == true }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                (if (open) "Hide node settings" else "Node settings (${w.nodeSettings.size})") + if (changedCount > 0) " · $changedCount changed" else "",
+                                color = Q.accent, fontSize = 14.sp,
+                                modifier = Modifier.clickable { open = !open }.padding(vertical = 6.dp),
+                            )
+                            if (open) {
+                                val groups = w.nodeSettings.groupBy { it.node }
+                                for ((_, list) in groups) {
+                                    Text(list.first().nodeTitle, color = Q.text, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
+                                    for (s in list) NodeSettingRow(s, w.kindOf(s), overrides, info[s.cls], infoDone, base = w.baseOf(s.node, s.input).orEmpty()) { o -> setOverrides(o) }
+                                }
                             }
                         }
 
@@ -1683,6 +1702,57 @@ private fun ModelRow(s: com.tim.quartzeditor.engine.ComfySetting, o: com.tim.qua
             picking = false
             set(v)
         }
+    }
+}
+
+/**
+ * One setting of a node: on/off as a switch, a number typed in, text typed in, or a choice from
+ * ComfyUI's list when it has one ([info]: the node's description). Changed ones have Reset.
+ */
+@Composable
+private fun NodeSettingRow(
+    s: com.tim.quartzeditor.engine.ComfySetting,
+    kind: Char,
+    o: com.tim.quartzeditor.engine.ComfyOverrides,
+    info: JSONObject?,
+    loaded: Boolean,
+    base: String,
+    set: (com.tim.quartzeditor.engine.ComfyOverrides) -> Unit,
+) {
+    val over = o.values[s.node]?.get(s.input)
+    val changed = over != null
+    val choices = if (kind == 's') com.tim.quartzeditor.engine.ComfyOverrides.choices(info, s.input) else null
+    if (kind == 's' && choices != null) {
+        ModelRow(s, o, info, loaded) { v -> set(if (v == null || v == s.value) o.without(s.node, s.input) else o.with(s.node, s.input, v, base)) }
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(s.label, color = Q.textDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        when (kind) {
+            'b' -> {
+                val on = over as? Boolean ?: (s.value == "true")
+                androidx.compose.material3.Switch(
+                    checked = on,
+                    onCheckedChange = { v -> set(if (v == (s.value == "true")) o.without(s.node, s.input) else o.with(s.node, s.input, v, base)) },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Q.accent),
+                )
+            }
+            else -> PanelField(
+                over?.toString() ?: s.value,
+                onCommit = { t ->
+                    val v: Any? = when (kind) {
+                        // (Saved as a whole number, but some take fractions: 1.5 stays 1.5)
+                        'i' -> t.trim().toDoubleOrNull()?.let { d -> if (d % 1.0 == 0.0 && kotlin.math.abs(d) < Int.MAX_VALUE) d.toInt() else d }
+                        'f' -> t.trim().toDoubleOrNull()
+                        else -> t
+                    }
+                    if (v != null) set(if (v.toString() == s.value) o.without(s.node, s.input) else o.with(s.node, s.input, v, base))
+                },
+                numeric = kind != 's',
+                modifier = Modifier.width(140.dp),
+            )
+        }
+        if (changed) Text("Reset", color = Q.accent, fontSize = 12.sp, modifier = Modifier.clickable { set(o.without(s.node, s.input)) }.padding(start = 8.dp))
     }
 }
 

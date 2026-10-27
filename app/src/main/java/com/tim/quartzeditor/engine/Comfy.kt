@@ -650,6 +650,38 @@ class ComfyWorkflow(val name: String, val json: JSONObject, val builtIn: Boolean
             .map { k -> ComfySetting(id, c, k, title(o).ifBlank { c }, inp.get(k).toString()) }
     }
 
+    /**
+     * Every other node's own settings (numbers, on/off and short choices), so custom nodes like Krea 2
+     * Edit's source patch can be tuned too. Not what has its own place here (prompts, models, LoRAs,
+     * the sampler, switches, pictures), nor seeds (new each run) or the batch size (How many).
+     */
+    val nodeSettings: List<ComfySetting> = run {
+        val skipClasses = setOf("LoadImage", "SaveImage", "PreviewImage", "PreviewAny", "ComfySwitchNode", "PrimitiveBoolean", "TextGenerate", "CLIPTextEncode", "ImageCompare")
+        val skipKeys = setOf("seed", "noise_seed", "batch_size", "prompt", "text", "system_prompt", "filename_prefix", "image", "value", "string")
+        val prompts = promptTargets.toSet()
+        nodes().flatMap { (id, o) ->
+            val c = cls(o)
+            if (c in skipClasses || c.startsWith("KSampler") || c.contains("Loader") || c.startsWith("Primitive") || isLoraManager(o) || c.startsWith("TriggerWord")) return@flatMap emptyList()
+            val inp = inputs(o)
+            inp.keys().asSequence().filter { k ->
+                val v = inp.opt(k)
+                !k.startsWith("__") && k !in skipKeys && (id to k) !in prompts && when (v) {
+                    is Number, is Boolean -> true
+                    is String -> v.length <= 60 && !v.contains('\n')
+                    else -> false
+                }
+            }.map { k -> ComfySetting(id, c, k, title(o).ifBlank { c }, inp.get(k).toString()) }.toList()
+        }
+    }
+
+    /** What kind of value [s] holds as saved: a whole number, a number, on/off, or text. */
+    fun kindOf(s: ComfySetting): Char = when (val v = json.optJSONObject(s.node)?.optJSONObject("inputs")?.opt(s.input)) {
+        is Boolean -> 'b'
+        is Int, is Long -> 'i'
+        is Number -> 'f'
+        else -> 's'
+    }
+
     /** Numbers on LoRA loaders (their strengths), changeable here too. */
     val loraStrengths: List<ComfySetting> = nodes().flatMap { (id, o) ->
         val c = cls(o)
