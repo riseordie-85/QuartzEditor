@@ -256,6 +256,12 @@ fun PanelIconStrip(vm: EditorViewModel, modifier: Modifier = Modifier, onIconAt:
     val density = LocalDensity.current
     Column(
         modifier
+            .onGloballyPositioned { c ->
+                vm.workspaceCoords?.takeIf { it.isAttached && c.isAttached }?.let { ws ->
+                    val tl = ws.localPositionOf(c, Offset.Zero)
+                    vm.iconStripArea = androidx.compose.ui.geometry.Rect(tl.x, tl.y, tl.x + c.size.width, tl.y + c.size.height)
+                }
+            }
             .clip(RoundedCornerShape(Q.corner(18.dp)))
             .background(Q.panel)
             .padding(vertical = 6.dp),
@@ -321,6 +327,12 @@ fun PanelFlyout(vm: EditorViewModel, onPlaceImage: () -> Unit, topDp: Float, rig
                 .offset(x = (-rightDp).dp, y = top.dp)
                 .width(widthDp.dp)
                 .then(if (h != null) Modifier.height(h.coerceAtMost(maxH - top).dp) else Modifier.heightIn(max = (maxH - top).dp))
+                .onGloballyPositioned { c ->
+                    vm.workspaceCoords?.takeIf { it.isAttached && c.isAttached }?.let { ws ->
+                        val tl = ws.localPositionOf(c, Offset.Zero)
+                        vm.flyoutArea = androidx.compose.ui.geometry.Rect(tl.x, tl.y, tl.x + c.size.width, tl.y + c.size.height)
+                    }
+                }
                 .shadow(10.dp, RoundedCornerShape(Q.corner(18.dp)))
                 .clip(RoundedCornerShape(Q.corner(18.dp)))
                 .background(Q.panel)

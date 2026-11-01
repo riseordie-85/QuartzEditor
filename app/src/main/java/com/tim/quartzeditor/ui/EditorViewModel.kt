@@ -1126,6 +1126,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The workspace's place on screen (floating panels are placed in it). */
     internal var workspaceCoords: androidx.compose.ui.layout.LayoutCoordinates? = null
 
+    /** Where the icon column and the panel opened from it are, in the workspace (a press anywhere else closes the panel). */
+    internal var flyoutArea: androidx.compose.ui.geometry.Rect? = null
+    internal var iconStripArea: androidx.compose.ui.geometry.Rect? = null
+
     /** Where the dock is, in the workspace (a floating panel dropped on it docks again). */
     internal var dockArea: androidx.compose.ui.geometry.Rect? = null
 

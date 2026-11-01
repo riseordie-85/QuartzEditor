@@ -217,6 +217,19 @@ fun Workspace(vm: EditorViewModel) {
             .safeDrawingPadding()
             // (Floating panels and the icon column's panels are placed in it)
             .onGloballyPositioned { vm.workspaceCoords = it }
+            // A press anywhere but the panel opened from the icon column (or the icons) closes it,
+            // like Photoshop's auto-collapsing icon panels (the press still does what it does)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (vm.flyout == null || e.type != androidx.compose.ui.input.pointer.PointerEventType.Press) continue
+                        val p = e.changes.firstOrNull { it.pressed && !it.previousPressed }?.position ?: continue
+                        if (vm.flyoutArea?.contains(p) == true || vm.iconStripArea?.contains(p) == true) continue
+                        vm.flyout = null
+                    }
+                }
+            }
     ) {
         vm.workspaceWidthDp = maxWidth.value
         // Big screens: a menu bar, the tool's settings in a bar under it, a status bar at the bottom
