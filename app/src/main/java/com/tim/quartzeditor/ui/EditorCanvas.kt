@@ -469,8 +469,6 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                         }
                         val downPen = vm.penSample(down, 0, 1, down.uptimeMillis)
                         vm.brushPickerFor = null
-                        // (A panel opened from the icon column closes when the picture is touched)
-                        vm.flyout = null
                         var hit: TransformHit? = null
                         val tStart = vm.transform?.state
                         // A Move box handle grabbed: Free Transform's box, once it's ready
