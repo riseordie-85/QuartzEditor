@@ -1022,7 +1022,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 tool = t
                 // The tool's settings show in Properties; other unpinned sections fold away
                 // (Unless Properties is set not to open by itself: then what's open stays open)
-                if (propertiesWithTools) {
+                // (Not when it's in a window of its own, or the panels are icons: nothing would show it)
+                if (propertiesWithTools && !dockCollapsed && dock.none { PanelSection.PROPERTIES in it.sections && it.floating != null }) {
                     openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
                     if (t in TOOLS_WITH_OPTIONS) showInDock(PanelSection.PROPERTIES)
                 }

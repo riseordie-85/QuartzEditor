@@ -279,10 +279,12 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
         return up to lo
     }
 
+    // (The column isn't on screen: no place to drop a floating panel)
+    if (floats) androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.dockArea = null } }
     Box(
         modifier
-            .clip(RoundedCornerShape(Q.corner(26.dp)))
-            .background(Q.panel)
+            // (Rounded but not clipped here: a section pulled out past the edge still shows by the finger)
+            .background(Q.panel, RoundedCornerShape(Q.corner(26.dp)))
             .onGloballyPositioned { c ->
                 dockCoords[0] = c
                 // (Where a floating panel let go docks again)
@@ -375,7 +377,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                 }
             },
             // (Big screens: a strip at the top for the fold-to-icons button)
-            modifier = Modifier.fillMaxSize().padding(top = if (floats) 22.dp else Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp)),
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(Q.corner(26.dp))).padding(top = if (floats) 22.dp else Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp)),
         ) { ms, c ->
             val w = c.maxWidth
             val slotsM = ms.filterIndexed { k, _ -> k % 2 == 0 }

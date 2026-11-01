@@ -426,7 +426,7 @@ The column holds **Color**, **Properties**, **Brushes**, **History** and **Layer
 - **Fold the column to icons** (›› at its top, or Window → Fold panels to icons): one icon per panel, groups
   apart. Tap an icon to open its panel beside the column (tap it again, press Esc or touch the picture to
   close it); its ⧉ floats it. ‹‹ opens the column out again.
-- **Close** a panel (× in its header or window): it's nowhere until **Window → its name** brings it back.
+- **Close** a panel (× in its header or window): it's nowhere until **Window → its name** brings it back (the ☰ menu has a Window page too).
   **Window → Open Properties when picking a tool** (on at first): off, tools leave the panels as they are.
 - It's all remembered; **Window → Reset panel layout** puts everything back (every panel in the column).
 - **Crash reports** (Settings → Appearance): the last 5 reasons the app closed unexpectedly, with Copy.

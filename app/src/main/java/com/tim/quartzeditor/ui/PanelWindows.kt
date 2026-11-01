@@ -156,7 +156,8 @@ internal fun EditorViewModel.floatToFront(real: Int) {
     val list = dock.toMutableList()
     val s = list.removeAt(real)
     list.add(s)
-    setDock(list)
+    // (Kept with the next real change)
+    setDock(list, save = false)
 }
 
 /** Slot [real]'s tab [section] is the one it shows. */
@@ -376,7 +377,8 @@ private fun FloatingPanelWindow(vm: EditorViewModel, real: Int, slot: DockSlot, 
     val x = spec.x.coerceIn(0f, (maxWDp - 120f).coerceAtLeast(0f))
     val y = spec.y.coerceIn(0f, (maxHDp - 40f).coerceAtLeast(0f))
     val realNow by rememberUpdatedState(real)
-    val fNow by rememberUpdatedState(f)
+    // What's on screen (kept on it after a turn or a narrower window): moving and sizing start from it
+    val fNow by rememberUpdatedState(FloatSpec(x, y, w, h, f.folded))
     Column(
         Modifier
             .offset { IntOffset((x * density.density).roundToInt(), (y * density.density).roundToInt()) }
@@ -407,7 +409,7 @@ private fun FloatingPanelWindow(vm: EditorViewModel, real: Int, slot: DockSlot, 
                             live = null
                             if (l != null) {
                                 // Let go over the dock: back in it
-                                val dockArea = vm.dockArea
+                                val dockArea = vm.dockArea.takeIf { !vm.dockCollapsed }
                                 val px = (l.x + (at.x / density.density)) * density.density
                                 val py = (l.y + (at.y / density.density)) * density.density
                                 if (dockArea != null && dockArea.contains(Offset(px, py))) vm.dockSlot(realNow)
@@ -443,14 +445,15 @@ private fun FloatingPanelWindow(vm: EditorViewModel, real: Int, slot: DockSlot, 
         }
         if (!spec.folded) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                // (Room at the bottom for the corner grip, so it doesn't cover buttons)
+                Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp)) {
                     PanelBody(vm, section, onPlaceImage, Modifier.weight(1f))
                 }
                 // The corner: drag to size it
                 Box(
                     Modifier
                         .align(Alignment.BottomEnd)
-                        .size(26.dp)
+                        .size(18.dp)
                         .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = { live = fNow },
@@ -471,7 +474,7 @@ private fun FloatingPanelWindow(vm: EditorViewModel, real: Int, slot: DockSlot, 
                     contentAlignment = Alignment.Center,
                 ) {
                     // A grip: two short diagonal lines
-                    Box(Modifier.size(12.dp).border(width = 2.dp, color = Q.textDim.copy(alpha = 0.5f), shape = RoundedCornerShape(bottomEnd = 6.dp)))
+                    Box(Modifier.size(10.dp).border(width = 2.dp, color = Q.textDim.copy(alpha = 0.5f), shape = RoundedCornerShape(bottomEnd = 6.dp)))
                 }
             }
         }

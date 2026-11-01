@@ -73,7 +73,7 @@ private fun lastExit(context: Context): String? {
     val device = "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}"
     val whenText = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(info.timestamp))
     val report = "$why\n$mem\n$device · $whenText\n\n$details".trim()
-    keepReport(context, report)
+    runCatching { keepReport(context, report) }
     return report
 }
 

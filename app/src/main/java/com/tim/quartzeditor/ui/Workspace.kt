@@ -240,6 +240,9 @@ fun Workspace(vm: EditorViewModel) {
         // The column folded to icons (big screens): its panels open beside it, windows float over the picture
         val iconsOnly = docked && vm.dockCollapsed
         var flyoutTop by remember { mutableStateOf(80f) }
+        // (A panel opened from the icons closes when they go away, or when a window like Layer Style opens)
+        LaunchedEffect(iconsOnly) { if (!iconsOnly) vm.flyout = null }
+        LaunchedEffect(vm.popup) { if (vm.popup != null) vm.flyout = null }
         // Tab on a keyboard shows or hides the panels
         var seenToggle by remember { mutableIntStateOf(vm.panelsToggle) }
         LaunchedEffect(vm.panelsToggle) {
@@ -302,6 +305,8 @@ fun Workspace(vm: EditorViewModel) {
                             Page("Enhance", Icons.Outlined.AutoFixHigh) { EnhanceMenuItems(vm, menuActions) }
                             if (vm.online) Item("ComfyUI…", Icons.Outlined.Cloud) { comfyOpen = true }
                             Page("View", Icons.Outlined.Visibility) { ViewMenuItems(vm, menuActions) }
+                            // (Closed panels come back here too)
+                            Page("Window", Icons.Outlined.Layers) { WindowMenuItems(vm, panelsOpen) { panelsOpen = !panelsOpen } }
                             Divider()
                             Item("Settings…", Icons.Outlined.Settings) { settingsOpen = true }
                         }
