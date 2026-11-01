@@ -425,7 +425,7 @@ The column holds **Color**, **Properties**, **Brushes**, **History** and **Layer
   its buttons fold it to the title bar, put it back in the column (or drag it onto the column), or close it.
 - **Fold the column to icons** (›› at its top, or Window → Fold panels to icons): one icon per panel, groups
   apart. Tap an icon to open its panel beside the column; it folds away again as soon as you press anywhere
-  else (the picture, the toolbar, a menu, another window), tap its icon again or press Esc; its ⧉ floats it. ‹‹ opens the column out again.
+  else (the picture, the toolbar, a menu, another window), or tap its icon again; its ⧉ floats it. ‹‹ opens the column out again.
 - **Close** a panel (× in its header or window): it's nowhere until **Window → its name** brings it back (the ☰ menu has a Window page too).
   **Window → Open Properties when picking a tool** (on at first): off, tools leave the panels as they are.
 - It's all remembered; **Window → Reset panel layout** puts everything back (every panel in the column).

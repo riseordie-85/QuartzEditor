@@ -254,7 +254,6 @@ fun EditorViewModel.onKeyDown(e: KeyEvent): Boolean {
             penPoints.isNotEmpty() -> cancelPen()
             polygonPoints.isNotEmpty() -> cancelPolygon()
             popup != null -> closePopup()
-            flyout != null -> flyout = null
             // Rotate view: Esc straightens the canvas; then (or with Zoom) it leaves the view tool
             viewTool == ViewTool.ROTATE && rotation % 360f != 0f -> straightenView()
             viewTool != null -> viewTool = null
