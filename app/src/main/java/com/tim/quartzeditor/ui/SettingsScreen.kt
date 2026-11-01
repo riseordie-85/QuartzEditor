@@ -174,6 +174,12 @@ private fun AppearanceSettings(vm: EditorViewModel) {
         Q.compact = false
         Q.save(vm.prefs)
     }
+    Spacer(Modifier.height(18.dp))
+    Heading("Crash reports")
+    var reportsOpen by remember { mutableStateOf(false) }
+    SmallButton("Crash reports…") { reportsOpen = true }
+    Text("Why the app last closed unexpectedly (the last 5), to copy for a bug report.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+    if (reportsOpen) CrashReportsDialog { reportsOpen = false }
 }
 
 /** How a pen (stylus) works: pressure, tilt, its eraser end and button, and what fingers do. */

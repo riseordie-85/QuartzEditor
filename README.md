@@ -420,7 +420,16 @@ The column holds **Color**, **Properties**, **Brushes**, **History** and **Layer
   section above it more room and the open one below less (folded ones in between don't count); each keeps
   the height you gave it. Double-tap the line: back to automatic (as tall as needed).
   The section showing Layers always takes whatever room is left.
-- It's all remembered; **Window → Reset panel layout** puts everything back.
+- **Float** a section in a window of its own (big screens, like Photoshop): drag its header or tab out past
+  the column's left edge, or tap its ⧉ button. Drag a window's title bar to move it, its corner to size it;
+  its buttons fold it to the title bar, put it back in the column (or drag it onto the column), or close it.
+- **Fold the column to icons** (›› at its top, or Window → Fold panels to icons): one icon per panel, groups
+  apart. Tap an icon to open its panel beside the column (tap it again, press Esc or touch the picture to
+  close it); its ⧉ floats it. ‹‹ opens the column out again.
+- **Close** a panel (× in its header or window): it's nowhere until **Window → its name** brings it back.
+  **Window → Open Properties when picking a tool** (on at first): off, tools leave the panels as they are.
+- It's all remembered; **Window → Reset panel layout** puts everything back (every panel in the column).
+- **Crash reports** (Settings → Appearance): the last 5 reasons the app closed unexpectedly, with Copy.
 - **Color** and **Properties** fold away by themselves: picking a tool opens Properties with that tool's
   settings (selection shape and mode, crop ratio, transform numbers, bucket tolerance, gradient presets
   and type, brush tips and opacity), and tapping a color swatch opens Color. The **pin** on a section's

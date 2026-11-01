@@ -1021,8 +1021,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 tool = t
                 // The tool's settings show in Properties; other unpinned sections fold away
-                openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
-                if (t in TOOLS_WITH_OPTIONS) showInDock(PanelSection.PROPERTIES)
+                // (Unless Properties is set not to open by itself: then what's open stays open)
+                if (propertiesWithTools) {
+                    openedSections = if (t in TOOLS_WITH_OPTIONS) setOf(PanelSection.PROPERTIES) else emptySet()
+                    if (t in TOOLS_WITH_OPTIONS) showInDock(PanelSection.PROPERTIES)
+                }
                 brushPickerFor = null
                 if (t == Tool.BRUSH || t == Tool.ERASER || t == Tool.RETOUCH) brushColumnHidden = false
                 if (t == Tool.TRANSFORM) beginTransform()
@@ -1099,8 +1102,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var layersFolded by mutableStateOf(prefs.getBoolean("layersFolded", false))
         private set
 
+    /** Panels you closed (the Window menu brings them back): shown nowhere, and tools don't open them. */
+    var hiddenSections by mutableStateOf(
+        prefs.getStringSet("hiddenPanels", emptySet())!!.mapNotNull { n -> PanelSection.entries.firstOrNull { it.name == n } }.toSet()
+    )
+        internal set
+
+    /** The dock folded to a column of icons (each opens its panel beside it, like Photoshop). */
+    var dockCollapsed by mutableStateOf(prefs.getBoolean("dockCollapsed", false))
+        internal set
+
+    /** Picking a tool opens Properties with its settings (Window menu). */
+    var propertiesWithTools by mutableStateOf(prefs.getBoolean("propertiesWithTools", true))
+        internal set
+
+    /** The panel open from the icon column (null: none). */
+    var flyout by mutableStateOf<PanelSection?>(null)
+
+    /** The workspace's width (dp), for placing floating panels. */
+    internal var workspaceWidthDp = 1000f
+
+    /** The workspace's place on screen (floating panels are placed in it). */
+    internal var workspaceCoords: androidx.compose.ui.layout.LayoutCoordinates? = null
+
+    /** Where the dock is, in the workspace (a floating panel dropped on it docks again). */
+    internal var dockArea: androidx.compose.ui.geometry.Rect? = null
+
     fun isOpen(s: PanelSection): Boolean =
-        if (s == PanelSection.LAYERS) !layersFolded else s in pinnedSections || s in openedSections
+        s !in hiddenSections && if (s == PanelSection.LAYERS) !layersFolded else s in pinnedSections || s in openedSections
 
     /** Opens or closes a section. Opening one folds the other unpinned ones away. */
     fun toggleSection(s: PanelSection, open: Boolean = !isOpen(s)) {

@@ -24,7 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
@@ -69,9 +72,16 @@ import kotlin.math.roundToInt
  * you dragged it to (null: as tall as it needs; the slot showing Layers takes whatever's left).
  */
 @Immutable
-data class DockSlot(val sections: List<PanelSection>, val active: Int = 0, val heightDp: Float? = null) {
+data class DockSlot(val sections: List<PanelSection>, val active: Int = 0, val heightDp: Float? = null, val floating: FloatSpec? = null) {
     val activeSection: PanelSection get() = sections[active.coerceIn(0, sections.lastIndex)]
 }
+
+/**
+ * A panel group in a window of its own, over the picture (like Photoshop's floating panels): where
+ * it is in the workspace and how big (dp), and whether it's folded to its title bar.
+ */
+@Immutable
+data class FloatSpec(val x: Float, val y: Float, val w: Float = 300f, val h: Float = 420f, val folded: Boolean = false)
 
 object DockStore {
     val DEFAULT: List<DockSlot> = PanelSection.entries.map { DockSlot(listOf(it)) }
@@ -82,7 +92,10 @@ object DockStore {
             val o = a.optJSONObject(i) ?: return@mapNotNull null
             val names = o.optJSONArray("s") ?: return@mapNotNull null
             val secs = (0 until names.length()).mapNotNull { k -> PanelSection.entries.firstOrNull { it.name == names.optString(k) } }
-            DockSlot(secs, o.optInt("a", 0), if (o.has("h")) o.optDouble("h").toFloat() else null)
+            val f = o.optJSONObject("f")?.let { fo ->
+                FloatSpec(fo.optDouble("x").toFloat(), fo.optDouble("y").toFloat(), fo.optDouble("w", 300.0).toFloat(), fo.optDouble("h", 420.0).toFloat(), fo.optBoolean("fold"))
+            }
+            DockSlot(secs, o.optInt("a", 0), if (o.has("h")) o.optDouble("h").toFloat() else null, f)
         }
         return normalize(out)
     }
@@ -94,6 +107,7 @@ object DockStore {
                 put("s", JSONArray().also { n -> s.sections.forEach { n.put(it.name) } })
                 put("a", s.active)
                 s.heightDp?.let { put("h", it.toDouble()) }
+                s.floating?.let { f -> put("f", JSONObject().put("x", f.x.toDouble()).put("y", f.y.toDouble()).put("w", f.w.toDouble()).put("h", f.h.toDouble()).put("fold", f.folded)) }
             })
         }
         prefs.edit().putString("dockLayout", a.toString()).apply()
@@ -106,7 +120,8 @@ object DockStore {
         for (s in dock) {
             val secs = s.sections.filter { seen.add(it) }
             val h = s.heightDp?.takeIf { it.isFinite() && it > 0f }
-            if (secs.isNotEmpty()) out.add(s.copy(sections = secs, active = s.active.coerceIn(0, secs.lastIndex), heightDp = h))
+            val f = s.floating?.takeIf { it.x.isFinite() && it.y.isFinite() && it.w.isFinite() && it.h.isFinite() }
+            if (secs.isNotEmpty()) out.add(s.copy(sections = secs, active = s.active.coerceIn(0, secs.lastIndex), heightDp = h, floating = f))
         }
         PanelSection.entries.filter { it !in seen }.forEach { out.add(DockSlot(listOf(it))) }
         return out
@@ -121,6 +136,9 @@ internal fun EditorViewModel.setDock(d: List<DockSlot>, save: Boolean = true) {
 /** The panels as they came. */
 fun EditorViewModel.resetDock() {
     setDock(DockStore.DEFAULT)
+    // (Every panel back, in the column, opened out)
+    hiddenSections.forEach { setPanelHidden(it, false) }
+    if (dockCollapsed) toggleDockCollapsed()
     toast("Panels back to their usual places")
 }
 
@@ -130,12 +148,12 @@ private fun EditorViewModel.shownTab(s: DockSlot): Int =
     else s.sections.indexOfFirst { isOpen(it) }.takeIf { it >= 0 } ?: s.active.coerceIn(0, s.sections.lastIndex)
 
 /** What's being dragged: a whole slot, or one section (a tab) out of it. */
-private class DockDrag(val fromSlot: Int, val section: PanelSection?, val label: String) {
+private class DockDrag(val fromSlot: Int, val fromShown: Int, val section: PanelSection?, val label: String) {
     var at by mutableStateOf(Offset.Zero)
 }
 
-/** Where a drag would land: before slot [gap] (0..n), or stacked onto slot [stackOn]. */
-private data class DockTarget(val gap: Int = -1, val stackOn: Int = -1)
+/** Where a drag would land: before slot [gap] (0..n), stacked onto slot [stackOn], or out of the dock in a window of its own ([float]). */
+private data class DockTarget(val gap: Int = -1, val stackOn: Int = -1, val float: Boolean = false)
 
 /** [s] without [sec], still showing the tab it showed (or the first, if that's the one taken). */
 private fun without(s: DockSlot, sec: PanelSection): DockSlot {
@@ -189,10 +207,20 @@ private fun EditorViewModel.dropOnDock(drag: DockDrag, t: DockTarget) {
  * fills what's left (its list scrolls; its settings and buttons stay on screen).
  */
 @Composable
-fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier) {
+fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifier = Modifier, floats: Boolean = true) {
     val density = LocalDensity.current
-    val dock = vm.dock
+    // The slots shown here: not the closed panels, nor (where windows can float) the floating ones.
+    // [real]: each one's place in the whole dock
+    val entries = vm.dock.withIndex().mapNotNull { (ri, s) -> if (floats && s.floating != null) null else vm.visibleSlot(s)?.let { ri to it } }
+    val real = entries.map { it.first }
+    val dock = entries.map { it.second }
     val n = dock.size
+    /** [t] (in the slots shown here) in the whole dock's places. */
+    fun toReal(t: DockTarget): DockTarget = when {
+        t.stackOn >= 0 -> DockTarget(stackOn = real.getOrElse(t.stackOn) { -1 })
+        t.gap >= 0 -> DockTarget(gap = if (t.gap < n) real[t.gap] else (real.lastOrNull()?.plus(1) ?: 0))
+        else -> t
+    }
     // Where each slot is in the dock, and its header's height (for working out where a drag lands)
     val slotRects = remember { HashMap<Int, Rect>() }
     val headerH = remember { HashMap<Int, Float>() }
@@ -215,6 +243,8 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
 
     fun target(d: DockDrag): DockTarget {
         val dockH = dockCoords[0]?.takeIf { it.isAttached }?.size?.height?.toFloat() ?: Float.MAX_VALUE
+        // Pulled out past the dock's left edge (big screens): a window of its own
+        if (floats && d.at.x < -48f * density.density) return DockTarget(float = true)
         val y = d.at.y.coerceIn(0f, dockH)
         for (j in 0 until n) {
             val r = slotRects[j] ?: continue
@@ -228,7 +258,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                     f < 0.25f -> DockTarget(gap = j)
                     // (A folded slot is just its header: its bottom edge is the gap after it)
                     f > 0.75f && r.bottom - r.top <= h + 1f -> DockTarget(gap = j + 1)
-                    j == d.fromSlot -> DockTarget()
+                    j == d.fromShown -> DockTarget()
                     else -> DockTarget(stackOn = j)
                 }
             }
@@ -253,23 +283,41 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
         modifier
             .clip(RoundedCornerShape(Q.corner(26.dp)))
             .background(Q.panel)
-            .onGloballyPositioned { dockCoords[0] = it },
+            .onGloballyPositioned { c ->
+                dockCoords[0] = c
+                // (Where a floating panel let go docks again)
+                if (floats) vm.workspaceCoords?.takeIf { it.isAttached && c.isAttached }?.let { ws ->
+                    val tl = ws.localPositionOf(c, Offset.Zero)
+                    vm.dockArea = Rect(tl.x, tl.y, tl.x + c.size.width, tl.y + c.size.height)
+                }
+            },
     ) {
         Layout(
             content = {
                 dock.forEachIndexed { i, slot ->
                     key(slot.sections.first()) {
                         DockSlotView(
-                            vm, slot, i, shown[i], open[i], onPlaceImage,
+                            vm, slot, real[i], shown[i], open[i], onPlaceImage, floats,
                             onHeader = { h -> headerH[i] = h },
                             onBounds = { r -> slotRects[i] = r },
                             dockCoords = { dockCoords[0] },
-                            onDragStart = { section, label, at -> drag = DockDrag(i, section, label).also { it.at = at } },
+                            onDragStart = { section, label, at -> drag = DockDrag(real[i], i, section, label).also { it.at = at } },
                             onDrag = { at -> drag?.at = at },
                             onDragEnd = { cancelled ->
                                 val d = drag
                                 drag = null
-                                if (d != null && !cancelled) vm.dropOnDock(d, target(d))
+                                if (d != null && !cancelled) {
+                                    val t = target(d)
+                                    if (t.float) {
+                                        // Where it was let go, in the workspace
+                                        val ws = vm.workspaceCoords?.takeIf { it.isAttached }
+                                        val dc = dockCoords[0]?.takeIf { it.isAttached }
+                                        val p = if (ws != null && dc != null) ws.localPositionOf(dc, d.at) else d.at
+                                        vm.floatSlot(d.fromSlot, d.section, (p.x / density.density - 140f).coerceAtLeast(8f), (p.y / density.density - 20f).coerceAtLeast(8f))
+                                    } else {
+                                        vm.dropOnDock(d, toReal(t))
+                                    }
+                                }
                             },
                         )
                     }
@@ -308,7 +356,7 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                                 // Into the dock (in dp), kept
                                 if (liveHeights.isNotEmpty()) {
                                     val list = vm.dock.toMutableList()
-                                    liveHeights.forEach { (k, px) -> if (k in list.indices) list[k] = list[k].copy(heightDp = with(density) { px.toDp().value }) }
+                                    liveHeights.forEach { (k, px) -> real.getOrNull(k)?.takeIf { it in list.indices }?.let { r -> list[r] = list[r].copy(heightDp = with(density) { px.toDp().value }) } }
                                     liveHeights.clear()
                                     vm.setDock(list)
                                 }
@@ -316,15 +364,18 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
                             onReset = {
                                 val p = pair ?: return@DockDivider
                                 val list = vm.dock.toMutableList()
-                                list[p.first] = list[p.first].copy(heightDp = null)
-                                list[p.second] = list[p.second].copy(heightDp = null)
+                                val a = real[p.first]
+                                val b = real[p.second]
+                                list[a] = list[a].copy(heightDp = null)
+                                list[b] = list[b].copy(heightDp = null)
                                 vm.setDock(list)
                             },
                         )
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize().padding(top = Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp)),
+            // (Big screens: a strip at the top for the fold-to-icons button)
+            modifier = Modifier.fillMaxSize().padding(top = if (floats) 22.dp else Q.gap(6.dp, 2.dp), bottom = Q.gap(8.dp, 3.dp)),
         ) { ms, c ->
             val w = c.maxWidth
             val slotsM = ms.filterIndexed { k, _ -> k % 2 == 0 }
@@ -385,6 +436,18 @@ fun PanelColumn(vm: EditorViewModel, onPlaceImage: () -> Unit, modifier: Modifie
 
         // What's being dragged, and where it would go (only this redraws as it moves)
         drag?.let { d -> DockDragOverlay(d, dock, slotRects, headerH, ::target) }
+        // The column folds to icons (››), like Photoshop's
+        if (floats) Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 1.dp, end = 10.dp)
+                .size(20.dp)
+                .clip(CircleShape)
+                .clickable(onClickLabel = "Fold the panels to icons") { vm.toggleDockCollapsed() },
+        ) {
+            Icon(Icons.Filled.KeyboardDoubleArrowRight, contentDescription = "Fold the panels to icons", tint = Q.textDim, modifier = Modifier.size(16.dp))
+        }
     }
 }
 
@@ -394,13 +457,27 @@ private fun DockDragOverlay(d: DockDrag, dock: List<DockSlot>, slotRects: Map<In
     val density = LocalDensity.current
     val n = dock.size
     val t = target(d)
+    if (t.float) {
+        Text(
+            d.label + "  → window",
+            color = Q.text,
+            fontSize = 14.sp,
+            modifier = Modifier
+                .offset { IntOffset((d.at.x - 40 * density.density).roundToInt(), (d.at.y - 34 * density.density).roundToInt()) }
+                .clip(RoundedCornerShape(8.dp))
+                .background(Q.panelDark)
+                .border(1.dp, Q.accent, RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        )
+        return
+    }
     val line = when {
         t.stackOn >= 0 || t.gap < 0 -> null
         t.gap < n -> slotRects[t.gap]?.top
         else -> slotRects[n - 1]?.bottom
     }
-    val whole = d.section == null || dock.getOrNull(d.fromSlot)?.sections?.size == 1
-    val moves = t.stackOn >= 0 || (t.gap >= 0 && (!whole || (t.gap != d.fromSlot && t.gap != d.fromSlot + 1)))
+    val whole = d.section == null || dock.getOrNull(d.fromShown)?.sections?.size == 1
+    val moves = t.stackOn >= 0 || (t.gap >= 0 && (!whole || (t.gap != d.fromShown && t.gap != d.fromShown + 1)))
     if (t.stackOn >= 0) slotRects[t.stackOn]?.let { r ->
         val hh = headerH[t.stackOn] ?: 0f
         Box(
@@ -501,6 +578,7 @@ private fun DockSlotView(
     shown: Int,
     open: Boolean,
     onPlaceImage: () -> Unit,
+    floats: Boolean,
     onHeader: (Float) -> Unit,
     onBounds: (Rect) -> Unit,
     dockCoords: () -> LayoutCoordinates?,
@@ -626,36 +704,30 @@ private fun DockSlotView(
                 }
             }
             if (section == PanelSection.LAYERS) LayersPickedChip(vm)
+            // In a window of its own (big screens), or closed (the Window menu brings it back)
+            if (floats) SlotHeaderButton(Icons.Outlined.OpenInNew, "Float in a window") {
+                vm.floatSlot(index, if (tabs) section else null, (vm.workspaceWidthDp - vm.dockWidth - 340f).coerceAtLeast(8f), 80f)
+            }
+            SlotHeaderButton(Icons.Filled.Close, "Close ${section.label} (Window menu brings it back)") { vm.setPanelHidden(section, true) }
             Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Q.text, modifier = Modifier.size(28.dp))
         }
         if (open) {
-            if (section == PanelSection.LAYERS) {
-                LayersPanel(vm, onPlaceImage, fillList = true, modifier = Modifier.weight(1f).fillMaxWidth(), showHeader = false)
-            } else if (section == PanelSection.HISTORY) {
-                // (It scrolls by itself, in all the room the slot has)
-                Box(Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = Q.gap(12.dp, 8.dp)).padding(bottom = Q.gap(10.dp, 4.dp))) {
-                    HistoryList(vm, Modifier)
-                }
-            } else {
-                // (Each tab keeps its own place)
-                val scroll = key(section) { rememberScrollState() }
-                Column(
-                    Modifier
-                        .weight(1f, fill = false)
-                        .fillMaxWidth()
-                        .verticalScroll(scroll)
-                        .padding(horizontal = Q.gap(12.dp, 8.dp))
-                        .padding(bottom = Q.gap(10.dp, 4.dp)),
-                ) {
-                    when (section) {
-                        PanelSection.COLOR -> ColorPanel(vm)
-                        PanelSection.PROPERTIES -> PropertiesPanel(vm)
-                        PanelSection.BRUSHES -> BrushesPanel(vm)
-                        PanelSection.HISTORY -> Unit
-                        PanelSection.LAYERS -> Unit
-                    }
-                }
-            }
+            // (Layers fills the slot; the others are as tall as they need, each tab keeping its own place)
+            PanelBody(vm, section, onPlaceImage, if (section == PanelSection.LAYERS) Modifier.weight(1f) else Modifier.weight(1f, fill = false))
         }
+    }
+}
+
+/** A small icon button in a slot's header. */
+@Composable
+private fun SlotHeaderButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .clickable(onClickLabel = label) { onClick() },
+    ) {
+        Icon(icon, contentDescription = label, tint = Q.textDim, modifier = Modifier.size(17.dp))
     }
 }

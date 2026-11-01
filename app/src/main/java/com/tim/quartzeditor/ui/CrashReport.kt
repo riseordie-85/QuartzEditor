@@ -70,7 +70,65 @@ private fun lastExit(context: Context): String? {
         }
     }
     val mem = "Memory: ${info.pss / 1024} MB in use when it closed"
-    return "$why\n$mem\n\n$details".trim()
+    val device = "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}"
+    val whenText = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(info.timestamp))
+    val report = "$why\n$mem\n$device · $whenText\n\n$details".trim()
+    keepReport(context, report)
+    return report
+}
+
+/** The last few reports are kept (Settings → Appearance → Crash reports), so closing one by mistake loses nothing. */
+private const val REPORTS_FILE = "crash-reports.txt"
+private const val REPORT_BREAK = "\n\u241E\n"
+private const val KEEP_REPORTS = 5
+
+private fun keepReport(context: Context, report: String) {
+    val f = File(context.filesDir, REPORTS_FILE)
+    val old = if (f.exists()) f.readText().split(REPORT_BREAK).filter { it.isNotBlank() } else emptyList()
+    f.writeText((listOf(report) + old).take(KEEP_REPORTS).joinToString(REPORT_BREAK))
+}
+
+/** The kept reports, newest first. */
+internal fun crashReports(context: Context): List<String> {
+    val f = File(context.filesDir, REPORTS_FILE)
+    return if (f.exists()) runCatching { f.readText().split(REPORT_BREAK).filter { it.isNotBlank() } }.getOrDefault(emptyList()) else emptyList()
+}
+
+internal fun clearCrashReports(context: Context) {
+    File(context.filesDir, REPORTS_FILE).delete()
+}
+
+/** The kept crash reports, each with Copy. */
+@Composable
+fun CrashReportsDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var reports by remember { mutableStateOf(crashReports(context)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Crash reports") },
+        text = {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                if (reports.isEmpty()) Text("None kept. When the app closes unexpectedly, the reason is kept here (the last $KEEP_REPORTS).", fontSize = 14.sp)
+                reports.forEachIndexed { i, r ->
+                    Text(r.substringBefore("\n\n"), fontSize = 13.sp, modifier = Modifier.padding(top = if (i > 0) 14.dp else 0.dp))
+                    val details = r.substringAfter("\n\n", "")
+                    if (details.isNotBlank()) Text(details.lines().take(8).joinToString("\n"), fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 4.dp))
+                    TextButton(onClick = {
+                        val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Quartz Editor report", r))
+                        android.widget.Toast.makeText(context, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+                    }) { Text("Copy this report") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            if (reports.isNotEmpty()) TextButton(onClick = {
+                clearCrashReports(context)
+                reports = emptyList()
+            }) { Text("Clear") }
+        },
+    )
 }
 
 /** Shows (once) why the app closed unexpectedly last time. */

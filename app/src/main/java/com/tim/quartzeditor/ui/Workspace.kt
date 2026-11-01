@@ -80,6 +80,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
@@ -214,7 +215,10 @@ fun Workspace(vm: EditorViewModel) {
             // Every touch, as it comes in: the pen's pressure, tilt, eraser end and button (anywhere on the screen)
             .motionEventSpy { if (vm.pen.onMotion(it) && vm.pen.touching) vm.notePenSeen() }
             .safeDrawingPadding()
+            // (Floating panels and the icon column's panels are placed in it)
+            .onGloballyPositioned { vm.workspaceCoords = it }
     ) {
+        vm.workspaceWidthDp = maxWidth.value
         // Big screens: a menu bar, the tool's settings in a bar under it, a status bar at the bottom
         val desktop = vm.desktopFor(maxWidth.value, maxHeight.value)
         // The menu bar layout's squarer look
@@ -233,6 +237,9 @@ fun Workspace(vm: EditorViewModel) {
             }
         }
         val docked = wide && panelsOpen
+        // The column folded to icons (big screens): its panels open beside it, windows float over the picture
+        val iconsOnly = docked && vm.dockCollapsed
+        var flyoutTop by remember { mutableStateOf(80f) }
         // Tab on a keyboard shows or hides the panels
         var seenToggle by remember { mutableIntStateOf(vm.panelsToggle) }
         LaunchedEffect(vm.panelsToggle) {
@@ -440,7 +447,12 @@ fun Workspace(vm: EditorViewModel) {
                 enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
                 exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
             ) {
-              Row {
+              if (iconsOnly) {
+                Row {
+                    Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
+                    PanelIconStrip(vm, Modifier.width(56.dp).fillMaxHeight()) { y -> flyoutTop = y }
+                }
+              } else Row {
                 if (desktop) DockHandle(vm, pad) else Spacer(Modifier.width(Q.gap(12.dp, 4.dp)))
                 // A window opened from the panels (Layer Style, Adjustments…) takes their place, so the
                 // picture keeps its room; closing it brings the panels back
@@ -487,7 +499,8 @@ fun Workspace(vm: EditorViewModel) {
                 PanelColumn(
                     vm,
                     requestPlace,
-                    Modifier
+                    floats = false,
+                    modifier = Modifier
                         .padding(8.dp)
                         .width(minOf(340.dp, maxWidth * 0.9f))
                         .fillMaxHeight(),
@@ -520,7 +533,18 @@ fun Workspace(vm: EditorViewModel) {
         // Layer Style / Adjustments / Filters float over the picture, so the preview stays visible
         // (Docked panels show them in their own place instead, above)
         LaunchedEffect(vm.popup) { if (!wide && vm.popup != null) panelsOpen = false }
-        if (!docked) {
+        // Floating panel windows, and the panel opened from the icon column
+        if (docked && !full) {
+            FloatingPanels(vm, requestPlace, maxWidth.value, maxHeight.value)
+            if (iconsOnly && vm.flyout != null) {
+                PanelFlyout(
+                    vm, requestPlace, topDp = flyoutTop, rightDp = pad.value + 56f + Q.gap(12.dp, 4.dp).value + 8f,
+                    heightDp = maxHeight.value, widthDp = vm.dockWidth.coerceIn(260f, 420f),
+                )
+            }
+        }
+
+        if (!docked || iconsOnly) {
             FloatingPanel(
                 vm,
                 Modifier

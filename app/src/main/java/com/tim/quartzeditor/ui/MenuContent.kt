@@ -318,11 +318,25 @@ fun PagedMenuScope.ViewMenuItems(vm: EditorViewModel, a: MenuActions) {
 fun PagedMenuScope.WindowMenuItems(vm: EditorViewModel, panelsOpen: Boolean, togglePanels: () -> Unit) {
     Item(if (panelsOpen) "Hide panels" else "Show panels") { togglePanels() }
     Divider()
+    // Each panel shown or closed (a closed one is nowhere until it's picked here again)
     PanelSection.entries.forEach { s ->
-        Item(s.label, checked = vm.isOpen(s)) {
-            if (!panelsOpen) togglePanels()
-            vm.toggleSection(s)
+        Item(s.label, checked = s !in vm.hiddenSections) {
+            if (s in vm.hiddenSections) {
+                if (!panelsOpen) togglePanels()
+                vm.showPanel(s)
+            } else {
+                vm.setPanelHidden(s, true)
+            }
         }
+    }
+    Divider()
+    Item("Fold panels to icons", checked = vm.dockCollapsed) {
+        if (!panelsOpen) togglePanels()
+        vm.toggleDockCollapsed()
+    }
+    Item("Open Properties when picking a tool", checked = vm.propertiesWithTools) {
+        vm.propertiesWithTools = !vm.propertiesWithTools
+        vm.prefs.edit().putBoolean("propertiesWithTools", vm.propertiesWithTools).apply()
     }
     Divider()
     PanelSection.entries.filter { it != PanelSection.LAYERS }.forEach { s ->
