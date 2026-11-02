@@ -155,15 +155,20 @@ fun PanelSlider(
     onDone: () -> Unit = {},
     fromTyped: ((Float) -> Float?)? = null,
 ) {
-    val typed: ((Float) -> Float?)? = fromTyped ?: typedMapping(value, range, display)
+    // (A value that isn't a number would crash the slider: it shows at the start instead)
+    val lo = range.start.takeIf { it.isFinite() } ?: 0f
+    val hi = range.endInclusive.takeIf { it.isFinite() && it >= lo } ?: lo
+    val safeRange = lo..hi
+    val safeValue = if (value.isNaN()) lo else value.coerceIn(lo, hi)
+    val typed: ((Float) -> Float?)? = fromTyped ?: typedMapping(safeValue, safeRange, display)
     Column(Modifier.fillMaxWidth()) {
         if (label.isNotEmpty()) Text(label, color = Q.textDim, fontSize = 13.sp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Slider(
-                value = value,
-                onValueChange = onChange,
+                value = safeValue,
+                onValueChange = { if (!it.isNaN()) onChange(it) },
                 onValueChangeFinished = onDone,
-                valueRange = range,
+                valueRange = safeRange,
                 colors = SliderDefaults.colors(thumbColor = Q.sliderThumb, activeTrackColor = Q.accent, inactiveTrackColor = Q.field),
                 modifier = Modifier.weight(1f).height(30.dp),
             )

@@ -376,7 +376,7 @@ private fun OptionSlider(label: String, value: Float, display: String, onActive:
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Q.textDim, fontSize = 12.sp)
         Slider(
-            value = value.coerceIn(0f, 1f),
+            value = if (value.isNaN()) 0f else value.coerceIn(0f, 1f),
             onValueChange = {
                 active(true)
                 onChange(it)

@@ -1048,13 +1048,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateBrush(forTool: Tool, change: (BrushSettings) -> BrushSettings) {
         if (forTool == Tool.RETOUCH) {
-            retouchBrush = change(retouchBrush)
+            retouchBrush = change(retouchBrush).sane(retouchBrush)
             saveBrush("retouch", retouchBrush)
         } else if (forTool == Tool.ERASER) {
-            eraser = change(eraser)
+            eraser = change(eraser).sane(eraser)
             saveBrush("eraser", eraser)
         } else {
-            brush = change(brush)
+            brush = change(brush).sane(brush)
             saveBrush("brush", brush)
         }
     }
@@ -1202,7 +1202,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putInt("canvasColor", c).apply()
     }
 
-    private fun loadBrush(key: String, def: BrushSettings) = BrushSettings(
+    private fun loadBrush(key: String, def: BrushSettings) = loadBrushRaw(key, def).sane(def)
+
+    private fun loadBrushRaw(key: String, def: BrushSettings) = BrushSettings(
         tip = BrushTip.byName(prefs.getString("$key.tip", def.tip.name)),
         size = prefs.getFloat("$key.size", def.size),
         softness = prefs.getFloat("$key.soft", def.softness),
@@ -1442,3 +1444,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
 /** Alt-click solo: the document, each layer's visibility before, and which layers showed right after (to know it's still in place). */
 internal class SoloRestore(val doc: com.tim.quartzeditor.engine.Doc, val before: Map<Long, Boolean>, val shown: Set<Long>)
+
+/** These settings with anything that isn't a number (a broken import, say) taken from [fallback]. */
+internal fun BrushSettings.sane(fallback: BrushSettings): BrushSettings {
+    fun ok(v: Float, d: Float) = if (v.isFinite()) v else if (d.isFinite()) d else 0f
+    return copy(
+        size = ok(size, fallback.size).coerceAtLeast(1f),
+        softness = ok(softness, fallback.softness),
+        opacity = ok(opacity, fallback.opacity),
+        smoothing = ok(smoothing, fallback.smoothing),
+        taperStart = ok(taperStart, fallback.taperStart),
+        taperEnd = ok(taperEnd, fallback.taperEnd),
+    )
+}
