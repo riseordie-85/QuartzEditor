@@ -13,6 +13,8 @@ from the build). Background removal's model is fetched by Google Play services i
   only to the ComfyUI server you give it.
 
 ## Launch screen
+The app icon is a rose-quartz gem with a paintbrush on a faceted pink background (with a themed
+version for Android's matching-icon setting), and the start screen sits on a lilac-to-blue crystal background.
 - **Recent Photos in Gallery** (newest first; only pictures Android can show, not Photoshop files), **Projects** (your saved work, with all layers) or **Drafts** (shown when there are any: unsaved changes kept when the app closed; tap to open, hold to throw away). Tap to open.
   Long-press a project to delete it.
 - **New image**: name, width and height in pixels (a menu of sizes: screen, square, story, HD, 4K, A4),

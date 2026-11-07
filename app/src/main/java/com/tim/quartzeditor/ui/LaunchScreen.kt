@@ -118,20 +118,17 @@ fun LaunchScreen(vm: EditorViewModel) {
         uri?.let { vm.openPicked(it) }
     }
 
+    Box(Modifier.fillMaxSize().background(Color(0xFFD9D3EC))) {
+        // Tim's crystal background: lilac, white and blue facets, filling the screen
+        Image(
+            painterResource(R.drawable.start_background),
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
     Box(
         Modifier
             .fillMaxSize()
-            // The app icon's background: magenta at the top, through blue, to yellow at the bottom (a little slanted)
-            .drawBehind {
-                drawRect(
-                    Brush.linearGradient(
-                        0f to Color(0xFFAA3D89), 0.07f to Color(0xFF8B4893), 0.28f to Color(0xFF5C529F),
-                        0.46f to Color(0xFF1358A8), 0.70f to Color(0xFF80898D), 0.88f to Color(0xFFC6BC65), 1f to Color(0xFFFFF200),
-                        start = androidx.compose.ui.geometry.Offset(size.width * 0.6f, 0f),
-                        end = androidx.compose.ui.geometry.Offset(size.width * 0.4f, size.height),
-                    )
-                )
-            }
             .safeDrawingPadding()
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -151,17 +148,17 @@ fun LaunchScreen(vm: EditorViewModel) {
                         modifier = Modifier
                             .size(if (wide) 96.dp else 72.dp)
                             .graphicsLayer {
-                                scaleX = 1.45f
-                                scaleY = 1.45f
+                                scaleX = 1.6f
+                                scaleY = 1.6f
                             },
                     )
                     Spacer(Modifier.width(12.dp))
-                    Text("Quartz Editor", color = Color.White, fontSize = if (wide) 40.sp else 30.sp, fontWeight = FontWeight.Bold)
+                    Text("Quartz Editor", color = START_INK, fontSize = if (wide) 40.sp else 30.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(12.dp))
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.size(44.dp).clip(CircleShape).clickable { settingsOpen = true },
-                    ) { Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = Color.White) }
+                    ) { Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = START_INK) }
                 }
                 // Over open files: back to one of them (what's opened or started here joins them)
                 if (vm.doc != null && vm.files.isNotEmpty()) {
@@ -172,27 +169,27 @@ fun LaunchScreen(vm: EditorViewModel) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                     ) {
-                        Text("Open:", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+                        Text("Open:", color = START_INK.copy(alpha = 0.75f), fontSize = 14.sp)
                         vm.files.forEachIndexed { i, f ->
                             val name = vm.fileRoot(f)?.name ?: "Untitled"
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(if (i == vm.fileIndex) Q.accent else Color.White.copy(alpha = 0.14f))
+                                    .background(if (i == vm.fileIndex) Q.accent else Color.White.copy(alpha = 0.6f))
                                     .clickable {
                                         vm.showHome = false
                                         vm.switchFile(i)
                                     }
                                     .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                             ) {
-                                Text(name, color = Color.White, fontSize = 14.sp, maxLines = 1)
+                                Text(name, color = if (i == vm.fileIndex) Color.White else START_INK, fontSize = 14.sp, maxLines = 1)
                                 // Close it (asks first when it has unsaved changes)
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier.padding(start = 4.dp).size(28.dp).clip(CircleShape).clickable { vm.closeFile(i) },
                                 ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Close \"$name\"", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Filled.Close, contentDescription = "Close \"$name\"", tint = if (i == vm.fileIndex) Color.White else START_INK, modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
@@ -238,6 +235,7 @@ fun LaunchScreen(vm: EditorViewModel) {
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             )
         }
+    }
     }
 }
 
@@ -685,3 +683,6 @@ private fun BigButton(text: String, modifier: Modifier, enabled: Boolean = true,
         Text(text, color = if (enabled) Color.White else Q.launchDim, fontSize = 17.sp, maxLines = 1)
     }
 }
+
+/** Text and icons straight on the start screen's light crystal background: a deep violet. */
+private val START_INK = Color(0xFF2B2150)
