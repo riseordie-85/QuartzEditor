@@ -1985,7 +1985,15 @@ fun ComfyStatus(vm: EditorViewModel, modifier: Modifier = Modifier) {
                     color = Q.textDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(4.dp))
-                if (j.steps > 0) LinearProgressIndicator(progress = { j.step / j.steps.toFloat() }, color = Q.accent, modifier = Modifier.fillMaxWidth())
+                // (The bar reads the steps later than this check: between runs they go back to 0, and
+                // 0 / 0 isn't a number, which crashed the app. So it checks again itself)
+                if (j.steps > 0) LinearProgressIndicator(
+                    progress = {
+                        val total = j.steps
+                        if (total > 0) (j.step.toFloat() / total).coerceIn(0f, 1f) else 0f
+                    },
+                    color = Q.accent, modifier = Modifier.fillMaxWidth(),
+                )
                 else LinearProgressIndicator(color = Q.accent, modifier = Modifier.fillMaxWidth())
             }
         }
