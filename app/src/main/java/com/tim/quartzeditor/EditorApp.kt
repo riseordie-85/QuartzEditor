@@ -11,7 +11,8 @@ class EditorApp : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {
                 val trace = android.util.Log.getStackTraceString(error)
-                File(filesDir, CRASH_FILE).writeText("${System.currentTimeMillis()}\n${thread.name}\n$trace")
+                val state = runCatching { describeState?.invoke() }.getOrNull()
+                File(filesDir, CRASH_FILE).writeText("${System.currentTimeMillis()}\n${thread.name}\n$trace" + if (state != null) "\n\nOn screen:\n$state" else "")
             } catch (_: Throwable) {
             }
             before?.uncaughtException(thread, error)
@@ -20,5 +21,9 @@ class EditorApp : Application() {
 
     companion object {
         const val CRASH_FILE = "last-crash.txt"
+
+        /** What the app was showing, for a crash report (set by the editor). */
+        @Volatile
+        var describeState: (() -> String)? = null
     }
 }

@@ -583,7 +583,9 @@ in between. With a selection, the mask button makes a mask that shows only what'
 - **Closing** (× on its tab, File → Close project) with unsaved changes asks: **Save** (into the
   project; it closes once the save is done, and stays open if saving fails), **Don't save** (the draft is thrown away; the project stays as it was last
   saved) or **Cancel**.
-- If the app closes first (you swipe it away, it crashes, the tablet restarts), the changes wait in
+- **Autosave**: changes are kept as a draft while you work: a few seconds after you stop (at least
+  once a minute while you keep going), when you switch to another open file, and when the app is put
+  away. If the app closes first (you swipe it away, it crashes, the tablet restarts), the changes wait in
   **Drafts** on the start screen. Opening a project that has a draft asks: **Open the changes** or
   **Open saved** (the changes are thrown away).
 - **File menu**: **New…** (the canvas size screen: presets, your own size, orientation, background),

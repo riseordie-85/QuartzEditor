@@ -63,10 +63,11 @@ private fun lastExit(context: Context): String? {
         // Only this closing's own crash (written moments before it)
         val at = text.lineSequence().firstOrNull()?.toLongOrNull() ?: 0L
         if (abs(info.timestamp - at) < 60_000) {
-            val lines = text.lines().drop(1)
+            val onScreen = text.substringAfter("\n\nOn screen:\n", "").trim()
+            val lines = text.substringBefore("\n\nOn screen:\n").lines().drop(1)
             // The top of the trace, and every "Caused by" (the real reason is often there)
             val causes = lines.withIndex().filter { it.value.trimStart().startsWith("Caused by") }.flatMap { (i, _) -> lines.subList(i, minOf(lines.size, i + 6)) }
-            details = (lines.take(30) + listOf("") + causes).joinToString("\n").trim()
+            details = ((if (onScreen.isNotEmpty()) listOf("On screen: $onScreen", "") else emptyList()) + lines.take(30) + listOf("") + causes).joinToString("\n").trim()
         }
     }
     val mem = "Memory: ${info.pss / 1024} MB in use when it closed"

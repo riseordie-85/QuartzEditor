@@ -681,6 +681,33 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { myShapes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { loadMyShapes() } }
         // Zoomed-out tile copies made in the background: draw again when they're ready
         com.tim.quartzeditor.engine.TileLod.onReady = { doc?.invalidate() }
+        // Drafts while you work, not only when the app is put away: a crash loses a few seconds at
+        // most. A few seconds after the last change (or at least every minute while changes keep
+        // coming), never in the middle of a stroke or while something else is working
+        viewModelScope.launch {
+            var lastVersion = -1
+            var changedAt = 0L
+            var triedVersion = -1
+            var draftedAt = android.os.SystemClock.elapsedRealtime()
+            var job: Job? = null
+            while (true) {
+                delay(1500)
+                if (doc == null || stroking || busy != null || job?.isActive == true) continue
+                val v = history.version
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (v != lastVersion) {
+                    lastVersion = v
+                    changedAt = now
+                }
+                if (v == triedVersion) continue
+                if (now - changedAt < 4000 && now - draftedAt < 60_000) continue
+                triedVersion = v
+                draftedAt = now
+                job = runCatching { saveDraft() }.getOrNull()
+            }
+        }
+        // What was on screen, kept with a crash report
+        com.tim.quartzeditor.EditorApp.describeState = { stateForReport() }
         // Keep thumbnails up to date shortly after changes
         viewModelScope.launch {
             var lastSeen = -1
@@ -1457,3 +1484,23 @@ internal fun BrushSettings.sane(fallback: BrushSettings): BrushSettings {
         taperEnd = ok(taperEnd, fallback.taperEnd),
     )
 }
+
+/** What was going on (for a crash report): screen, tool, windows and panels, brush, picture. */
+internal fun EditorViewModel.stateForReport(): String = runCatching {
+    val c = ctx.resources.configuration
+    val d = doc
+    buildString {
+        append("Screen ${c.screenWidthDp}×${c.screenHeightDp} dp")
+        append(if (showHome || d == null) " · start screen" else " · editor")
+        append(" · tool ${tool.name}")
+        popup?.let { append(" · window ${it.name}") }
+        flyout?.let { append(" · panel ${it.name} (icons)") }
+        if (dockCollapsed) append(" · panels as icons")
+        if (hiddenSections.isNotEmpty()) append(" · closed ${hiddenSections.joinToString { it.name }}")
+        val floating = dock.filter { it.floating != null }.flatMap { it.sections }
+        if (floating.isNotEmpty()) append(" · floating ${floating.joinToString { it.name }}")
+        append("\nBrush size ${brush.size} soft ${brush.softness} opacity ${brush.opacity} · eraser ${eraser.size}/${eraser.softness}/${eraser.opacity}")
+        append(" · view ${scale}× ${rotation}°")
+        if (d != null) append("\nPicture ${d.width}×${d.height}, ${d.layers.size} layers, active ${d.active?.let { (if (it.isGroup) "folder" else if (it.isAdjustment) "adjustment" else if (it.isText) "text" else "layer") }}")
+    }
+}.getOrElse { "(state unavailable: ${it.message})" }

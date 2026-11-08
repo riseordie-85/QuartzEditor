@@ -82,6 +82,8 @@ fun EditorViewModel.switchFile(i: Int) {
         return
     }
     if (pendingFirst { switchFile(i) }) return
+    // (The file left behind keeps its changes as a draft, in case the app closes unexpectedly)
+    saveDraft()
     stashFile()
     enterFile(i)
 }

@@ -377,20 +377,20 @@ fun EditorViewModel.discardDocument() {
  * screen, the app being put away). The project itself isn't touched: if the app closes before you
  * save or discard, the draft is there to open again.
  */
-fun EditorViewModel.saveDraft() {
-    if (doc == null) return
-    val d = rootDoc ?: return
+fun EditorViewModel.saveDraft(): kotlinx.coroutines.Job? {
+    if (doc == null) return null
+    val d = rootDoc ?: return null
     val h = tabs.firstOrNull()?.history ?: history
     val undrafted = tabsUndrafted.map { it to it.history.version }
-    if (h.editsSinceDraft == 0 && undrafted.isEmpty()) return
+    if (h.editsSinceDraft == 0 && undrafted.isEmpty()) return null
     // Just as its project has it: nothing to keep
-    if (!hasUnsavedChanges) return
+    if (!hasUnsavedChanges) return null
     if (d.draftId == null) d.draftId = d.projectId ?: ProjectIO.newId()
-    val sc = saveCopy() ?: return
+    val sc = saveCopy() ?: return null
     val copy = sc.doc
     val color = canvasColor
     val at = h.editCount
-    viewModelScope.launch {
+    return viewModelScope.launch {
         try {
             saveLock.withLock {
                 withContext(Dispatchers.Default) { sc.finish() }
