@@ -399,6 +399,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var preciseCursor by mutableStateOf(false)
     /** F: 0 everything, 1 panels hidden, 2 only the picture. */
     var screenMode by mutableStateOf(0)
+
+    /** Around the picture: the workspace color, or black in full screen with nothing else (F twice). */
+    val viewBackground: Int get() = if (screenMode == 2) 0xFF000000.toInt() else canvasColor
     /** A dialog a keyboard shortcut asked for (the workspace opens it). */
     var dialogRequest by mutableStateOf<String?>(null)
     /** R or Z: the view tool in use (drags turn or zoom the view), until pressed again or another tool. */

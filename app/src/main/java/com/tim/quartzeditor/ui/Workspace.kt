@@ -231,9 +231,12 @@ fun Workspace(vm: EditorViewModel) {
         val full = vm.screenMode == 2
         var seenScreenMode by rememberSaveable { mutableIntStateOf(vm.screenMode) }
         LaunchedEffect(vm.screenMode) {
+            // (Only the picture: panels away; back from it: as they were on a big screen)
             if (vm.screenMode != seenScreenMode) {
+                val was = seenScreenMode
                 seenScreenMode = vm.screenMode
-                panelsOpen = vm.screenMode == 0 && wide
+                if (vm.screenMode == 2) panelsOpen = false
+                else if (was == 2) panelsOpen = wide
             }
         }
         val docked = wide && panelsOpen
@@ -391,7 +394,7 @@ fun Workspace(vm: EditorViewModel) {
                     vm.viewTool == ViewTool.ZOOM -> "Zoom: click to zoom in (Alt: out), drag sideways · Z to stop"
                     vm.quickMaskId != null -> "Quick Mask: white selects, black takes away · Q to finish"
                     vm.viewMaskOf != null -> "Showing the mask · Alt-click it or Esc to go back"
-                    full -> "Only the picture · F for everything"
+                    full -> "Only the picture · F or Esc for normal"
                     else -> null
                 }
                 if (modeNote != null && !vm.tempPan) {

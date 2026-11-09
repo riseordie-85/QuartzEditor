@@ -243,13 +243,22 @@ fun EditorViewModel.resizeCanvas(w: Int, h: Int, ax: Float, ay: Float) {
 // ===================================================================== view, brushes, text
 
 /** F: everything → panels hidden → only the picture → everything. */
+/**
+ * F, like Photoshop: full screen (Android's status and navigation bars hidden), then full screen
+ * with nothing but the picture on black, then back to normal.
+ */
 fun EditorViewModel.cycleScreenMode() {
     screenMode = (screenMode + 1) % 3
     toast(when (screenMode) {
-        1 -> "Panels hidden (F again: only the picture)"
-        2 -> "Only the picture (F again: everything back)"
-        else -> "Everything back"
+        1 -> "Full screen (F again: only the picture)"
+        2 -> "Only the picture (F again: normal)"
+        else -> "Normal screen"
     })
+}
+
+/** View → Full screen: Android's bars hidden (or back), the editor as it is. */
+fun EditorViewModel.toggleFullScreen() {
+    screenMode = if (screenMode == 0) 1 else 0
 }
 
 /** Shift+1 … 0: the brush's flow 10% … 100%. */

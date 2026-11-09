@@ -643,7 +643,10 @@ With a keyboard (tablet or Chromebook), Photoshop's shortcuts work (Ctrl or Cmd)
   **O** dodge / burn / sponge (again switches).
 - View tools: **R** rotate view (drag to turn, Shift snaps to 15°, **Esc** straightens), **Z** zoom (drag right
   to zoom in, click ×1.6, Alt+click out). Press the key again or pick another tool to leave.
-- **F** screen modes: everything → panels hidden → only the picture (Esc comes back).
+- **F** screen modes, like Photoshop: **full screen** (Android's status and navigation bars hidden; swipe in
+  from an edge to see them for a moment) → **only the picture** (full screen, every toolbar and panel hidden,
+  black around the picture) → normal. Esc also comes back from only the picture. **View → Full screen**
+  turns the first one on and off.
 - **Q** quick mask: the selection becomes a red overlay you paint with the brush (black adds red = not
   selected, white removes it); **Q** again turns it back into a selection.
 - Brush: **[ ]** size, **Shift+[ ]** softer/harder, **1…0** opacity 10…100% (with Move: the layer's opacity),

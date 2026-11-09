@@ -239,7 +239,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
     // turned as a whole, so everything in it (and every touch) works in its own straight coordinates.
     // ColorDrop: the view's coordinates and the part of it that shows (the view is bigger than the screen)
     val viewCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(2) }
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(Color(vm.canvasColor)).onGloballyPositioned { viewCoords[1] = it }) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(Color(vm.viewBackground)).onGloballyPositioned { viewCoords[1] = it }) {
     val sw = constraints.maxWidth.toFloat()
     val sh = constraints.maxHeight.toFloat()
     val side = kotlin.math.ceil(kotlin.math.hypot(sw, sh)).toInt().coerceAtLeast(1)
@@ -290,7 +290,7 @@ fun EditorCanvas(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 kotlin.math.ceil(size.width / 2f + hx).toInt().coerceAtMost(size.width.roundToInt()), kotlin.math.ceil(size.height / 2f + hy).toInt().coerceAtMost(size.height.roundToInt()),
             )
             if (vis.width() <= 0 || vis.height() <= 0) return@drawBehind
-            drawRect(Color(vm.canvasColor))
+            drawRect(Color(vm.viewBackground))
             val left = ox
             val top = oy
             val right = ox + d.width * s

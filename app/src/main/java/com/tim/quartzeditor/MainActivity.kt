@@ -33,9 +33,26 @@ class MainActivity : ComponentActivity() {
             QuartzTheme {
                 // (The start screen can also show over open files, to open another)
                 if (vm.doc == null || vm.showHome) LaunchScreen(vm) else Workspace(vm)
+                // Full screen (View menu, F): Android's bars hidden while editing
+                val immersive = vm.screenMode != 0 && vm.doc != null && !vm.showHome
+                androidx.compose.runtime.LaunchedEffect(immersive) { hideSystemBars(immersive) }
                 // Save changes? / Open the unsaved changes?
                 FileDialogs(vm)
             }
+        }
+    }
+
+    /**
+     * Android's status and navigation bars hidden ([on]) or shown. Hidden, a swipe in from an edge
+     * shows them for a moment, and they slide away again by themselves.
+     */
+    private fun hideSystemBars(on: Boolean) {
+        val c = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        if (on) {
+            c.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            c.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        } else {
+            c.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -61,6 +78,8 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) vm.releaseKeys()
+        // (Back from a dialog or another app: still full screen)
+        if (hasFocus && vm.screenMode != 0 && vm.doc != null && !vm.showHome) hideSystemBars(true)
     }
 
     // Keyboard shortcuts (Photoshop's), for keys nothing on screen used

@@ -270,13 +270,9 @@ fun PagedMenuScope.ViewMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Zoom out") { vm.zoomTo(vm.scale / 1.5f) }
     Item("Rotate view tool", checked = vm.viewTool == ViewTool.ROTATE) { vm.toggleViewTool(ViewTool.ROTATE) }
     Item("Zoom tool", checked = vm.viewTool == ViewTool.ZOOM) { vm.toggleViewTool(ViewTool.ZOOM) }
-    Item(
-        when (vm.screenMode) {
-            0 -> "Screen mode: hide panels"
-            1 -> "Screen mode: full screen"
-            else -> "Screen mode: normal"
-        },
-    ) { vm.cycleScreenMode() }
+    // Full screen: Android's status and navigation bars hidden (swipe in from an edge to see them)
+    Item("Full screen", checked = vm.screenMode != 0) { vm.toggleFullScreen() }
+    Item("Only the picture (F twice)", checked = vm.screenMode == 2) { vm.screenMode = if (vm.screenMode == 2) 0 else 2 }
     Divider()
     if (vm.online) {
         Item("ComfyUI bar", checked = vm.showComfyBar) { vm.showComfyBar = !vm.showComfyBar }
