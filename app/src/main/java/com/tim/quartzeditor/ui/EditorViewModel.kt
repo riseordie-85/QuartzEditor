@@ -1143,6 +1143,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var dockCollapsed by mutableStateOf(prefs.getBoolean("dockCollapsed", false))
         internal set
 
+    /** Saving over a .psd that came in differently: asked once first (true: close it after saving). */
+    var psdOverwriteAsk by mutableStateOf<Pair<com.tim.quartzeditor.engine.Doc, Boolean>?>(null)
+
     /** Photoshop save notes already shown (per file), so saving again doesn't repeat them. */
     internal val shownPsdNotes = HashSet<String>()
 

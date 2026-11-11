@@ -578,8 +578,11 @@ in between. With a selection, the mask button makes a mask that shows only what'
 - **Projects** are what you've saved: **File → Save project** (Ctrl+S), or **Save** when you close one.
 - **Photoshop files save back to themselves**: a .psd opened from the file picker is saved over the same
   .psd by **File → Save (.psd)** (Ctrl+S) and when you close it, like Photoshop. **File → Save to Projects**
-  keeps a project copy too. (What Photoshop shows differently is listed the first time.) A .psd opened from
-  another app's Share or "Open with", or a .psb, saves to Projects as before.
+  keeps a project copy too (a project of its own, which doesn't save over the .psd). Safety: if anything came
+  in differently when it opened, the first save over it lists those things and asks; the original is kept
+  aside while it's written and put back if the write fails; and if some layer couldn't be written at all, the
+  .psd is left as it was. A .psd opened from another app's Share or "Open with", or a .psb, saves to
+  Projects as before.
   They keep every layer, mask and setting (smart layers keep their full-size contents inside).
 - **Drafts** keep what you're doing safe as you go: changes are autosaved into a draft when you switch
   files, go Home or switch apps. A project you opened is **never changed by the autosave** — only by

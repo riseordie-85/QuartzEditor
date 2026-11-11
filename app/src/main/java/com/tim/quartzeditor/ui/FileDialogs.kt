@@ -1,6 +1,14 @@
 package com.tim.quartzeditor.ui
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -11,6 +19,30 @@ import androidx.compose.runtime.Composable
 
 @Composable
 fun FileDialogs(vm: EditorViewModel) {
+    // Saving over a .psd that came in differently: once, first
+    vm.psdOverwriteAsk?.let { (d, _) ->
+        AlertDialog(
+            onDismissRequest = { vm.psdOverwriteAsk = null },
+            title = { Text("Save over \"${d.name}.psd\"?") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text("When it opened, some things came in differently. Saving over the original writes it as it is here, so these would change in the .psd too:", fontSize = 14.sp)
+                    for (n in d.psdConfirm) Text("• $n", fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                    Text("Save to Projects keeps your changes and leaves the .psd as it is.", fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.confirmPsdOverwrite() }) { Text("Save over it") } },
+            dismissButton = {
+                androidx.compose.foundation.layout.Row {
+                    TextButton(onClick = { vm.psdOverwriteAsk = null }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        vm.psdOverwriteAsk = null
+                        vm.saveToProjects(quiet = false, intoProjects = true)
+                    }) { Text("Save to Projects") }
+                }
+            },
+        )
+    }
     vm.closeAsk?.let { target ->
         // (Another file came up meanwhile, from a share say: the question was about that one)
         if (vm.rootDoc !== target) {
@@ -20,12 +52,14 @@ fun FileDialogs(vm: EditorViewModel) {
         val d = target
         val name = d.name
         val saved = d.projectId != null
+        val psd = d.psdUri != null
         AlertDialog(
             onDismissRequest = { vm.closeAsk = null },
             title = { Text("Save changes to \"$name\"?") },
             text = {
                 Text(
-                    if (saved) "Save puts them into the project. Don't save throws them away; the project stays as it was last saved."
+                    if (psd) "Save writes them over \"$name.psd\". Don't save throws them away; the .psd stays as it was last saved."
+                    else if (saved) "Save puts them into the project. Don't save throws them away; the project stays as it was last saved."
                     else "It hasn't been saved as a project yet. Save keeps it in Projects; Don't save throws it away."
                 )
             },

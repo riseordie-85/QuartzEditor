@@ -210,7 +210,13 @@ object ProjectIO {
             .put("tileSize", TileGrid.SIZE)
             .put("activeId", doc.activeId)
             .put("canvasColor", canvasColor)
-            .apply { if (prefix.isEmpty()) doc.psdUri?.let { put("psdUri", it) } }
+            .apply {
+                // (Only a draft remembers the .psd it saves back to: a project is a file of its own)
+                if (prefix.isEmpty()) doc.psdUri?.let { u ->
+                    put("psdUri", u)
+                    if (doc.psdConfirm.isNotEmpty()) put("psdConfirm", JSONArray(doc.psdConfirm))
+                }
+            }
             .put("layers", layers)
             .put("guidesX", JSONArray().also { a -> doc.guidesX.forEach { a.put(it.toDouble()) } })
             .put("guidesY", JSONArray().also { a -> doc.guidesY.forEach { a.put(it.toDouble()) } })
@@ -267,7 +273,10 @@ object ProjectIO {
     private fun buildDoc(jsons: Map<String, JSONObject>, tiles: Map<String, Bitmap>, prefix: String): Doc {
         val j = jsons.getValue(prefix)
         val doc = Doc(j.getInt("width"), j.getInt("height"), j.optString("name", "Untitled"))
-        if (prefix.isEmpty()) doc.psdUri = j.optString("psdUri").takeIf { it.isNotBlank() }
+        if (prefix.isEmpty()) {
+            doc.psdUri = j.optString("psdUri").takeIf { it.isNotBlank() }
+            doc.psdConfirm = j.optJSONArray("psdConfirm")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+        }
         val arr = j.getJSONArray("layers")
         var maxId = 0L
         for (i in 0 until arr.length()) {

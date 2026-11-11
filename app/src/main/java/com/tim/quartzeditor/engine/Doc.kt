@@ -260,6 +260,12 @@ class Doc(width: Int, height: Int, name: String) {
     /** The Photoshop file it was opened from, when that can be written back to: Save writes it (null: Save goes to Projects). */
     var psdUri: String? = null
 
+    /**
+     * What came in differently when the .psd was opened (non-empty: saving over it asks first, once,
+     * since those things would be lost from the original).
+     */
+    var psdConfirm: List<String> = emptyList()
+
     /** A layer put in only to show a preview (Enhance): left out of undo steps and saved files. */
     var previewLayerId = 0L
 
@@ -448,6 +454,7 @@ class Doc(width: Int, height: Int, name: String) {
         d.projectId = projectId
         d.draftId = draftId
         d.psdUri = psdUri
+        d.psdConfirm = psdConfirm
         d.nextId = nextId
         d.previewLayerId = previewLayerId
         return d

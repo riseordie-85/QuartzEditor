@@ -136,6 +136,12 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
         }
         return
     }
+    // (Already open: that one comes up, so two can't save over each other)
+    val already = files.indexOfFirst { fileRoot(it)?.psdUri == uri.toString() }
+    if (already >= 0) {
+        switchFile(already)
+        return
+    }
     runBusy("Opening…") {
         val name = withContext(Dispatchers.IO) { Media.displayName(ctx, uri) }
         val result = withContext(Dispatchers.IO) {
@@ -161,7 +167,11 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
             return@runBusy
         }
         // A .psd that can be written back to: Save saves it there (like Photoshop)
-        if (withContext(Dispatchers.IO) { canWriteBack(uri, name) }) result.doc.psdUri = uri.toString()
+        if (withContext(Dispatchers.IO) { canWriteBack(uri) }) {
+            result.doc.psdUri = uri.toString()
+            // What came in differently would be lost from the original: saving over it asks first
+            result.doc.psdConfirm = result.notes
+        }
         setDocument(result.doc)
         if (result.notes.isNotEmpty()) importReport = name to result.notes
         else if (result.doc.layers.size > 1) toast("Opened ${result.doc.layers.size} layers")
@@ -314,6 +324,11 @@ fun EditorViewModel.closeDocument(save: Boolean = true) {
     // The picture is what's saved (with what's being edited in smart layers' tabs): it closes once
     // that's safely done (if saving fails, it stays open with its changes)
     if (save && hasUnsavedChanges) {
+        val r = rootDoc
+        if (r?.psdUri != null && r.psdConfirm.isNotEmpty()) {
+            psdOverwriteAsk = r to true
+            return
+        }
         val job = projectSave(quiet = true) ?: return
         val d = rootDoc
         runBusy("Saving…") {
@@ -394,10 +409,14 @@ fun EditorViewModel.saveDraft(): kotlinx.coroutines.Job? {
     val at = h.editCount
     return viewModelScope.launch {
         try {
-            saveLock.withLock {
+            val wrote = saveLock.withLock {
+                // (Saved meanwhile, with nothing new since: no draft, or it would outlive the save)
+                if (h.editsSinceSave == 0 && undrafted.none { (t, _) -> t.savedVersion != t.history.version }) return@withLock false
                 withContext(Dispatchers.Default) { sc.finish() }
                 withContext(Dispatchers.IO) { ProjectIO.saveDraft(ctx, copy, color) }
+                true
             }
+            if (!wrote) return@launch
             h.markDrafted(at)
             for ((t, v) in undrafted) t.draftedVersion = v
             projectsVersion++
@@ -414,15 +433,25 @@ val EditorViewModel.canSaveProject: Boolean get() = hasUnsavedChanges || (rootDo
 val EditorViewModel.savesToPsd: Boolean get() = rootDoc?.psdUri != null
 
 /**
- * [uri] (named [name]) is a .psd this app may write to: opened from the file picker (not a
- * .psb, which Photoshop's big-file format isn't written here). Keeps the permission for later.
+ * [uri] is a .psd this app may keep writing to: a Photoshop file (not a .psb, Photoshop's
+ * big-file format, which isn't written here), opened from the file picker with lasting permission
+ * to write, in a place that takes writes. Keeps the permission.
  */
-private fun EditorViewModel.canWriteBack(uri: Uri, name: String): Boolean {
-    if (!name.lowercase().endsWith(".psd")) return false
+private fun EditorViewModel.canWriteBack(uri: Uri): Boolean {
+    // "8BPS", version 1: a .psd (2 is a .psb)
+    val head = runCatching { ctx.contentResolver.openInputStream(uri)?.use { s -> ByteArray(6).also { b -> var n = 0; while (n < 6) { val r = s.read(b, n, 6 - n); if (r < 0) break; n += r } } } }.getOrNull()
+    if (head == null || String(head, 0, 4, Charsets.US_ASCII) != "8BPS" || head[4].toInt() != 0 || head[5].toInt() != 1) return false
     runCatching {
         ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
     }
-    return runCatching { ctx.contentResolver.openFileDescriptor(uri, "rw")?.use { true } ?: false }.getOrDefault(false)
+    // (Only lasting permission: a file shared from another app can't be saved over after the app restarts)
+    if (ctx.contentResolver.persistedUriPermissions.none { it.uri == uri && it.isWritePermission }) return false
+    // The place it's in takes writes (asked without opening it for writing, which some cloud places count as a change)
+    return runCatching {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.DocumentsContract.Document.COLUMN_FLAGS), null, null, null)?.use { c ->
+            c.moveToFirst() && (c.getInt(0) and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_WRITE) != 0
+        } ?: false
+    }.getOrDefault(false)
 }
 
 /**
@@ -470,23 +499,24 @@ private fun EditorViewModel.projectSave(quiet: Boolean, intoProjects: Boolean = 
                     val tmp = java.io.File(ctx.cacheDir, "save.psd")
                     try {
                         val r = com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir)
-                        withContext(Dispatchers.IO) {
-                            ctx.contentResolver.openOutputStream(Uri.parse(psd), "wt")?.use { out -> tmp.inputStream().use { it.copyTo(out, 1 shl 20) } }
-                                ?: throw IllegalStateException("The file can't be written")
+                        // Something couldn't be written at all: the original stays as it was
+                        r.notes.firstOrNull { "couldn't" in it || "left out" in it }?.let {
+                            throw IllegalStateException("$it, so ${d.name}.psd was left as it was")
                         }
+                        withContext(Dispatchers.IO) { writeOver(Uri.parse(psd), tmp) }
                         r.notes
                     } finally {
                         tmp.delete()
                     }
                 }
+                h.markSaved(at)
+                for ((t, v) in unsaved) {
+                    t.savedVersion = v
+                    t.draftedVersion = v
+                }
                 // (Saved: its draft isn't needed)
                 copy.draftId?.let { id -> withContext(Dispatchers.IO) { ProjectIO.deleteDraft(ctx, id) } }
                 n
-            }
-            h.markSaved(at)
-            for ((t, v) in unsaved) {
-                t.savedVersion = v
-                t.draftedVersion = v
             }
             projectsVersion++
             // (What Photoshop gets differently: shown once per file, not on every save)
@@ -494,22 +524,37 @@ private fun EditorViewModel.projectSave(quiet: Boolean, intoProjects: Boolean = 
             if (notes.isNotEmpty() && shownPsdNotes.add(key)) exportReport = Triple(d.name + ".psd", "the same place as before", notes)
         }
     }
+    // Saving over the .psd when things came in differently from it: asked once first
+    if (psd != null && d.psdConfirm.isNotEmpty()) {
+        psdOverwriteAsk = d to false
+        return null
+    }
     // (A picture never saved takes its draft's id, so the two stay together)
     if (d.projectId == null) d.projectId = d.draftId ?: ProjectIO.newId()
     d.draftId = d.projectId
     val sc = saveCopy() ?: return null
     val copy = sc.doc
+    // (Kept in Projects, it's a file of its own: it doesn't save over the .psd)
+    copy.psdUri = null
+    copy.psdConfirm = emptyList()
+    val keepsPsd = d.psdUri != null
     val color = canvasColor
     val at = h.editCount
-    return {
+    return ret@{
         // One save at a time, so two saves of the same project can't mix; the draft it replaces
         // goes in the same step (a newer autosave waits its turn and is written after)
         saveLock.withLock {
             withContext(Dispatchers.Default) { sc.finish() }
             withContext(Dispatchers.IO) {
                 ProjectIO.saveToProjects(ctx, copy, color)
-                ProjectIO.deleteDraft(ctx, copy.projectId!!)
+                // (Opened from a .psd: its draft stays, since the .psd itself isn't saved yet)
+                if (!keepsPsd) ProjectIO.deleteDraft(ctx, copy.projectId!!)
             }
+        }
+        // (The .psd isn't saved by this: it still counts as changed)
+        if (keepsPsd) {
+            projectsVersion++
+            return@ret
         }
         h.markSaved(at)
         for ((t, v) in unsaved) {
@@ -540,6 +585,9 @@ fun EditorViewModel.saveProjectFile(uri: Uri) {
     if (pendingFirst { saveProjectFile(uri) }) return
     val sc = saveCopy() ?: return
     val copy = sc.doc
+    // (A file of its own: it doesn't save over the .psd it came from)
+    copy.psdUri = null
+    copy.psdConfirm = emptyList()
     val color = canvasColor
     runBusy("Saving…") {
         withContext(Dispatchers.Default) { sc.finish() }
@@ -685,13 +733,14 @@ fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, 
 
 /** Exports go into [tree] (a folder from the folder picker), or back to the usual places (null). */
 fun EditorViewModel.setExportFolder(tree: Uri?) {
+    // (Let go of the old folder's permission)
+    exportFolder?.takeIf { it != tree }?.let { old ->
+        runCatching { ctx.contentResolver.releasePersistableUriPermission(old, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+    }
     if (tree != null) {
         runCatching {
             ctx.contentResolver.takePersistableUriPermission(tree, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
-    } else {
-        // (Let go of the old folder's permission)
-        exportFolder?.let { old -> runCatching { ctx.contentResolver.releasePersistableUriPermission(old, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } }
     }
     exportFolder = tree
     prefs.edit().apply { if (tree != null) putString("exportFolder", tree.toString()) else remove("exportFolder") }.apply()
@@ -720,8 +769,44 @@ internal suspend fun EditorViewModel.saveToExportFolder(displayName: String, mim
     return try {
         val uri = Media.saveToFolder(ctx, tree, displayName, mime, write)
         uri to (exportFolderName ?: withContext(Dispatchers.IO) { Media.folderName(ctx, tree) } ?: "the folder you picked")
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Throwable) {
-        toast("Couldn't save in the folder you picked (${e.message}): saved in the usual place instead")
+        withContext(Dispatchers.Main) { toast("Couldn't save in the folder you picked (${e.message}): saved in the usual place instead") }
         null
     }
+}
+
+/**
+ * Writes [tmp] over the file at [uri], safely: a copy of the original is kept first, the written
+ * size is checked, and if anything goes wrong the original is put back.
+ */
+private fun EditorViewModel.writeOver(uri: Uri, tmp: java.io.File) {
+    val r = ctx.contentResolver
+    val backup = java.io.File(ctx.cacheDir, "psd-backup.psd")
+    try {
+        r.openInputStream(uri)?.use { input -> backup.outputStream().use { input.copyTo(it, 1 shl 20) } }
+            ?: throw IllegalStateException("The .psd can't be read any more")
+        try {
+            r.openOutputStream(uri, "wt")?.use { out -> tmp.inputStream().use { it.copyTo(out, 1 shl 20) } }
+                ?: throw IllegalStateException("The .psd can't be written")
+            val size = r.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+            if (size >= 0 && size != tmp.length()) throw IllegalStateException("The .psd didn't save whole")
+        } catch (e: Throwable) {
+            // Put the original back
+            runCatching { r.openOutputStream(uri, "wt")?.use { out -> backup.inputStream().use { it.copyTo(out, 1 shl 20) } } }
+            throw e
+        }
+    } finally {
+        backup.delete()
+    }
+}
+
+/** The .psd ask was answered: save over it (it won't ask again), then close if that was the plan. */
+fun EditorViewModel.confirmPsdOverwrite() {
+    val (d, close) = psdOverwriteAsk ?: return
+    psdOverwriteAsk = null
+    d.psdConfirm = emptyList()
+    if (rootDoc !== d) return
+    if (close) closeDocument(save = true) else saveToProjects(quiet = false)
 }
