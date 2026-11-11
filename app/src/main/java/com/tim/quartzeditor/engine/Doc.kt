@@ -257,6 +257,9 @@ class Doc(width: Int, height: Int, name: String) {
     /** Where its unsaved changes are kept as they're made (Drafts), so a crash loses nothing (null until the first). */
     var draftId: String? = null
 
+    /** The Photoshop file it was opened from, when that can be written back to: Save writes it (null: Save goes to Projects). */
+    var psdUri: String? = null
+
     /** A layer put in only to show a preview (Enhance): left out of undo steps and saved files. */
     var previewLayerId = 0L
 
@@ -444,6 +447,7 @@ class Doc(width: Int, height: Int, name: String) {
         d.guidesY.addAll(guidesY)
         d.projectId = projectId
         d.draftId = draftId
+        d.psdUri = psdUri
         d.nextId = nextId
         d.previewLayerId = previewLayerId
         return d

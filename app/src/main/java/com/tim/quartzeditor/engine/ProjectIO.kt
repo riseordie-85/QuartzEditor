@@ -210,6 +210,7 @@ object ProjectIO {
             .put("tileSize", TileGrid.SIZE)
             .put("activeId", doc.activeId)
             .put("canvasColor", canvasColor)
+            .apply { if (prefix.isEmpty()) doc.psdUri?.let { put("psdUri", it) } }
             .put("layers", layers)
             .put("guidesX", JSONArray().also { a -> doc.guidesX.forEach { a.put(it.toDouble()) } })
             .put("guidesY", JSONArray().also { a -> doc.guidesY.forEach { a.put(it.toDouble()) } })
@@ -266,6 +267,7 @@ object ProjectIO {
     private fun buildDoc(jsons: Map<String, JSONObject>, tiles: Map<String, Bitmap>, prefix: String): Doc {
         val j = jsons.getValue(prefix)
         val doc = Doc(j.getInt("width"), j.getInt("height"), j.optString("name", "Untitled"))
+        if (prefix.isEmpty()) doc.psdUri = j.optString("psdUri").takeIf { it.isNotBlank() }
         val arr = j.getJSONArray("layers")
         var maxId = 0L
         for (i in 0 until arr.length()) {

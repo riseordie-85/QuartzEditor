@@ -233,6 +233,11 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
         vm.exportWith(s, settings, name) { uri -> if (share) onShare(uri, format.mime) }
     }
 
+    // The folder picker (the folder is kept, with permission to write in it)
+    val pickFolder = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null) vm.setExportFolder(tree)
+    }
+    LaunchedEffect(Unit) { vm.refreshExportFolderName() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().background(Q.workspace).safeDrawingPadding()) {
             val wide = maxWidth >= 760.dp
@@ -363,11 +368,24 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                         SmallButton("Save & share", enabled = src != null || layered) { doExport(share = true) }
                         SmallButton("Save", primary = true, enabled = src != null || layered) { doExport(share = false) }
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(14.dp))
+                    // Where it goes: the usual place, or a folder you pick (kept for next time)
+                    SectionLabel("Save to")
+                    val folderName = vm.exportFolderName
                     Text(
-                        if (layered) "Saved to ${if (format == ExportFormat.PSD) "Download" else "Pictures"}/${Media.FOLDER}." else "Saved to Pictures/${Media.FOLDER} (it shows up in your gallery).",
-                        color = Q.textDim, fontSize = 12.sp,
+                        when {
+                            vm.exportFolder != null && folderName != null -> folderName
+                            vm.exportFolder != null -> "The folder you picked (it can't be reached: the usual place is used)"
+                            layered -> "${if (format == ExportFormat.PSD) "Download" else "Pictures"}/${Media.FOLDER}"
+                            else -> "Pictures/${Media.FOLDER} (it shows up in your gallery)"
+                        },
+                        color = Q.text, fontSize = 14.sp,
                     )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SmallButton("Choose folder…") { pickFolder.launch(vm.exportFolder) }
+                        if (vm.exportFolder != null) SmallButton("Usual place") { vm.setExportFolder(null) }
+                    }
                 }
             }
             if (wide) {

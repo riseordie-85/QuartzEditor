@@ -160,6 +160,8 @@ fun EditorViewModel.openPsd(uri: Uri, anyway: Boolean = false) {
             viewModelScope.launch { openImage(uri) }
             return@runBusy
         }
+        // A .psd that can be written back to: Save saves it there (like Photoshop)
+        if (withContext(Dispatchers.IO) { canWriteBack(uri, name) }) result.doc.psdUri = uri.toString()
         setDocument(result.doc)
         if (result.notes.isNotEmpty()) importReport = name to result.notes
         else if (result.doc.layers.size > 1) toast("Opened ${result.doc.layers.size} layers")
@@ -316,7 +318,7 @@ fun EditorViewModel.closeDocument(save: Boolean = true) {
         val d = rootDoc
         runBusy("Saving…") {
             job()
-            toast("Saved \"${d?.name ?: "it"}\" to Projects")
+            toast(if (d?.psdUri != null) "Saved \"${d.name}.psd\"" else "Saved \"${d?.name ?: "it"}\" to Projects")
             if (rootDoc === d) finishClose()
         }
         return
@@ -405,21 +407,38 @@ fun EditorViewModel.saveDraft(): kotlinx.coroutines.Job? {
     }
 }
 
-/** The file shown can be saved as a project: it has changes, or it was never saved. */
-val EditorViewModel.canSaveProject: Boolean get() = hasUnsavedChanges || (rootDoc != null && rootDoc?.projectId == null)
+/** The file shown can be saved: it has changes, or it was never saved (as a project or its .psd). */
+val EditorViewModel.canSaveProject: Boolean get() = hasUnsavedChanges || (rootDoc != null && rootDoc?.projectId == null && rootDoc?.psdUri == null)
+
+/** The file shown saves back to the Photoshop file it was opened from. */
+val EditorViewModel.savesToPsd: Boolean get() = rootDoc?.psdUri != null
+
+/**
+ * [uri] (named [name]) is a .psd this app may write to: opened from the file picker (not a
+ * .psb, which Photoshop's big-file format isn't written here). Keeps the permission for later.
+ */
+private fun EditorViewModel.canWriteBack(uri: Uri, name: String): Boolean {
+    if (!name.lowercase().endsWith(".psd")) return false
+    runCatching {
+        ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+    return runCatching { ctx.contentResolver.openFileDescriptor(uri, "rw")?.use { true } ?: false }.getOrDefault(false)
+}
 
 /**
  * Saves the project (File → Save project, Ctrl+S), in the background; a picture opened but never
  * saved is added to Projects as it is.
  */
-fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
-    val job = projectSave(quiet) ?: return
+fun EditorViewModel.saveToProjects(quiet: Boolean = true, intoProjects: Boolean = false) {
+    val psd = !intoProjects && savesToPsd
+    val job = projectSave(quiet, intoProjects) ?: return
+    val name = rootDoc?.name
     viewModelScope.launch {
         try {
             job()
-            if (!quiet) toast("Saved to Projects")
+            if (!quiet) toast(if (psd) "Saved \"$name.psd\"" else "Saved to Projects")
         } catch (e: Throwable) {
-            toast("Couldn't save the project (${e.message})")
+            toast(if (psd) "Couldn't save the .psd (${e.message}). File → Save to Projects keeps it here" else "Couldn't save the project (${e.message})")
         }
     }
 }
@@ -428,15 +447,52 @@ fun EditorViewModel.saveToProjects(quiet: Boolean = true) {
  * Takes the copy to save now (null when there's nothing to save) and returns the work of writing it:
  * the project, then its draft goes in the same step (anything done since is autosaved again).
  */
-private fun EditorViewModel.projectSave(quiet: Boolean): (suspend () -> Unit)? {
+private fun EditorViewModel.projectSave(quiet: Boolean, intoProjects: Boolean = false): (suspend () -> Unit)? {
     if (doc == null) return null
     // The picture itself is what's saved, with what's being edited in smart layers' tabs
     val d = rootDoc ?: return null
     val h = tabs.firstOrNull()?.history ?: history
     val unsaved = tabsUnsaved.map { it to it.history.version }
-    if (h.editsSinceSave == 0 && unsaved.isEmpty() && d.projectId != null) {
+    val psd = d.psdUri?.takeIf { !intoProjects }
+    if (h.editsSinceSave == 0 && unsaved.isEmpty() && (if (psd != null) true else d.projectId != null)) {
         if (!quiet) toast("Nothing new to save")
         return null
+    }
+    // Opened from a .psd: it's written back there, as a Photoshop file
+    if (psd != null) {
+        val sc = saveCopy() ?: return null
+        val copy = sc.doc
+        val at = h.editCount
+        return {
+            val notes = saveLock.withLock {
+                val n = withContext(Dispatchers.Default) {
+                    sc.finish()
+                    val tmp = java.io.File(ctx.cacheDir, "save.psd")
+                    try {
+                        val r = com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir)
+                        withContext(Dispatchers.IO) {
+                            ctx.contentResolver.openOutputStream(Uri.parse(psd), "wt")?.use { out -> tmp.inputStream().use { it.copyTo(out, 1 shl 20) } }
+                                ?: throw IllegalStateException("The file can't be written")
+                        }
+                        r.notes
+                    } finally {
+                        tmp.delete()
+                    }
+                }
+                // (Saved: its draft isn't needed)
+                copy.draftId?.let { id -> withContext(Dispatchers.IO) { ProjectIO.deleteDraft(ctx, id) } }
+                n
+            }
+            h.markSaved(at)
+            for ((t, v) in unsaved) {
+                t.savedVersion = v
+                t.draftedVersion = v
+            }
+            projectsVersion++
+            // (What Photoshop gets differently: shown once per file, not on every save)
+            val key = psd + notes.joinToString()
+            if (notes.isNotEmpty() && shownPsdNotes.add(key)) exportReport = Triple(d.name + ".psd", "the same place as before", notes)
+        }
     }
     // (A picture never saved takes its draft's id, so the two stay together)
     if (d.projectId == null) d.projectId = d.draftId ?: ProjectIO.newId()
@@ -523,42 +579,47 @@ fun EditorViewModel.export(format: ExportFormat, fileName: String? = null, onSav
     val copy = sc.doc
     if (format == ExportFormat.PSD || format == ExportFormat.TIFF_LAYERS) {
         val tiff = format == ExportFormat.TIFF_LAYERS
+        var savedWhere = ""
         runBusy(if (tiff) "Saving a layered TIFF…" else "Saving a Photoshop file…") {
             val (uri, notes) = withContext(Dispatchers.Default) {
                 sc.finish()
                 val tmp = java.io.File(ctx.cacheDir, "export.${format.ext}")
                 try {
                     val name = "${(fileName ?: copy.name).ifBlank { "Quartz" }}.${format.ext}"
-                    if (tiff) {
-                        val r = com.tim.quartzeditor.engine.PsdExport.writeTiff(copy, tmp, ctx.cacheDir)
-                        Media.savePictureFile(ctx, tmp, name, format.mime) to r.notes
-                    } else {
-                        val r = com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir)
-                        Media.saveDownload(ctx, tmp, name, format.mime) to r.notes
-                    }
+                    val notes = if (tiff) com.tim.quartzeditor.engine.PsdExport.writeTiff(copy, tmp, ctx.cacheDir).notes
+                    else com.tim.quartzeditor.engine.PsdExport.write(copy, tmp, ctx.cacheDir).notes
+                    // Into the folder picked on the Export screen, or the usual place
+                    val picked = saveToExportFolder(name, format.mime) { out -> tmp.inputStream().use { it.copyTo(out, 1 shl 20) } }
+                    val saved = picked?.first ?: if (tiff) Media.savePictureFile(ctx, tmp, name, format.mime) else Media.saveDownload(ctx, tmp, name, format.mime)
+                    savedWhere = picked?.second ?: if (tiff) "Pictures/${Media.FOLDER}" else "Download/${Media.FOLDER}"
+                    saved to notes
                 } finally {
                     tmp.delete()
                 }
             }
-            val where = if (tiff) "Pictures/${Media.FOLDER}" else "Download/${Media.FOLDER}"
+            val where = savedWhere
             if (notes.isNotEmpty()) exportReport = Triple((fileName ?: copy.name) + "." + format.ext, where, notes) else toast("Saved to $where")
             onSaved(uri)
         }
         return
     }
+    var where = ""
     runBusy("Exporting…") {
         val uri = withContext(Dispatchers.Default) {
             sc.finish()
             val bg = if (format.alpha) Color.TRANSPARENT else Color.WHITE
             val fx = DocRenderer.buildAllEffects(copy, FULL_FX_PX)
             val bmp = DocRenderer.flatten(copy, bg, effects = { fx[it.id] })
+            val n = fileName ?: copy.name.ifBlank { "Quartz" }
             try {
-                Media.saveImage(ctx, bmp, fileName ?: copy.name.ifBlank { "Quartz" }, format)
+                val picked = saveToExportFolder("$n.${format.ext}", format.mime) { out -> out.write(Media.encode(bmp, format, 95, false)) }
+                where = picked?.second ?: "Pictures/${Media.FOLDER}"
+                picked?.first ?: Media.saveImage(ctx, bmp, n, format)
             } finally {
                 bmp.recycle()
             }
         }
-        toast(if (fileName != null) "Saved \"$fileName.${format.ext}\" to Pictures/${Media.FOLDER}" else "Saved to Pictures/${Media.FOLDER}")
+        toast(if (fileName != null) "Saved \"$fileName.${format.ext}\" to $where" else "Saved to $where")
         onSaved(uri)
     }
 }
@@ -601,6 +662,7 @@ fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, 
         export(s.format, fileName = if (exportingSmartContents) name else null, onSaved = onSaved)
         return
     }
+    var where = ""
     runBusy("Exporting…") {
         val (uri, bytes) = withContext(Dispatchers.Default) {
             val sized = Media.resized(src, s.width, s.height, opaque = !s.format.alpha)
@@ -609,9 +671,57 @@ fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, 
             } finally {
                 sized.recycle()
             }
-            Media.saveBytes(ctx, data, name.ifBlank { "Quartz" }, s.format) to data.size
+            val n = name.ifBlank { "Quartz" }
+            val picked = saveToExportFolder("$n.${s.format.ext}", s.format.mime) { out -> out.write(data) }
+            where = picked?.second ?: "Pictures/${Media.FOLDER}"
+            (picked?.first ?: Media.saveBytes(ctx, data, n, s.format)) to data.size
         }
-        toast("Saved \"${name.ifBlank { "Quartz" }}.${s.format.ext}\" (${Media.sizeLabel(bytes.toLong())}) to Pictures/${Media.FOLDER}")
+        toast("Saved \"${name.ifBlank { "Quartz" }}.${s.format.ext}\" (${Media.sizeLabel(bytes.toLong())}) to $where")
         onSaved(uri)
+    }
+}
+
+// ===================================================================== where exports go
+
+/** Exports go into [tree] (a folder from the folder picker), or back to the usual places (null). */
+fun EditorViewModel.setExportFolder(tree: Uri?) {
+    if (tree != null) {
+        runCatching {
+            ctx.contentResolver.takePersistableUriPermission(tree, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+    } else {
+        // (Let go of the old folder's permission)
+        exportFolder?.let { old -> runCatching { ctx.contentResolver.releasePersistableUriPermission(old, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } }
+    }
+    exportFolder = tree
+    prefs.edit().apply { if (tree != null) putString("exportFolder", tree.toString()) else remove("exportFolder") }.apply()
+    refreshExportFolderName()
+}
+
+/** Looks up the export folder's name (and whether it can still be reached). */
+fun EditorViewModel.refreshExportFolderName() {
+    val tree = exportFolder
+    if (tree == null) {
+        exportFolderName = null
+        return
+    }
+    viewModelScope.launch {
+        exportFolderName = withContext(Dispatchers.IO) { Media.folderName(ctx, tree) }
+    }
+}
+
+/**
+ * Saves an export into the picked folder when there is one (named [displayName], written by
+ * [write]); null when there's none or it can't be reached any more (then the usual place is used).
+ * Returns the file's address and where it went, in words.
+ */
+internal suspend fun EditorViewModel.saveToExportFolder(displayName: String, mime: String, write: (java.io.OutputStream) -> Unit): Pair<Uri, String>? {
+    val tree = exportFolder ?: return null
+    return try {
+        val uri = Media.saveToFolder(ctx, tree, displayName, mime, write)
+        uri to (exportFolderName ?: withContext(Dispatchers.IO) { Media.folderName(ctx, tree) } ?: "the folder you picked")
+    } catch (e: Throwable) {
+        toast("Couldn't save in the folder you picked (${e.message}): saved in the usual place instead")
+        null
     }
 }

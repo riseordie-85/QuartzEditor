@@ -72,7 +72,13 @@ fun PagedMenuScope.FileMenuItems(vm: EditorViewModel, a: MenuActions) {
     Item("Open file…", Icons.Outlined.FolderOpen) { a.openFile() }
     Item("Open image…", Icons.Outlined.Image) { a.openImage() }
     Divider()
-    Item("Save project", Icons.Outlined.Save, enabled = vm.canSaveProject) { vm.saveToProjects(quiet = false) }
+    // Opened from a .psd: Save writes it back there (and Projects is one step away)
+    if (vm.savesToPsd) {
+        Item("Save (.psd)", Icons.Outlined.Save, enabled = vm.canSaveProject) { vm.saveToProjects(quiet = false) }
+        Item("Save to Projects") { vm.saveToProjects(quiet = false, intoProjects = true) }
+    } else {
+        Item("Save project", Icons.Outlined.Save, enabled = vm.canSaveProject) { vm.saveToProjects(quiet = false) }
+    }
     Item("Export image…", Icons.Outlined.IosShare) { a.export() }
     BigItem("Quick export (.png)", Icons.Outlined.Bolt) { vm.quickExport() }
     Divider()

@@ -576,6 +576,10 @@ in between. With a selection, the mask button makes a mask that shows only what'
 
 ### Saving: Projects and Drafts
 - **Projects** are what you've saved: **File → Save project** (Ctrl+S), or **Save** when you close one.
+- **Photoshop files save back to themselves**: a .psd opened from the file picker is saved over the same
+  .psd by **File → Save (.psd)** (Ctrl+S) and when you close it, like Photoshop. **File → Save to Projects**
+  keeps a project copy too. (What Photoshop shows differently is listed the first time.) A .psd opened from
+  another app's Share or "Open with", or a .psb, saves to Projects as before.
   They keep every layer, mask and setting (smart layers keep their full-size contents inside).
 - **Drafts** keep what you're doing safe as you go: changes are autosaved into a draft when you switch
   files, go Home or switch apps. A project you opened is **never changed by the autosave** — only by
@@ -604,6 +608,9 @@ in between. With a selection, the mask button makes a mask that shows only what'
   - **Quality** for JPG and WebP (1–100%; WebP can also be **Lossless**). Each format remembers its own.
   - **Size**: width and height in pixels (linked, or not), or 100 / 75 / 50 / 33 / 25%. Only the saved file
     is resized (in halves first, so it stays sharp); the image stays as it is.
+  - **Save to**: the usual place (Pictures/Quartz Editor; Download for Photoshop files), or **Choose
+    folder…** for any folder (on the tablet, an SD card, Drive…). The folder is kept for every export after
+    (Quick export too) until **Usual place** puts it back.
   - The **file size** it comes to, worked out as you change things.
   - **Save** or **Save & share**, to `Pictures/Quartz Editor` (it shows up in your gallery). Photoshop and
     layered TIFF files are saved whole, at full size.

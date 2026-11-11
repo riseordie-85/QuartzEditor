@@ -1143,6 +1143,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var dockCollapsed by mutableStateOf(prefs.getBoolean("dockCollapsed", false))
         internal set
 
+    /** Photoshop save notes already shown (per file), so saving again doesn't repeat them. */
+    internal val shownPsdNotes = HashSet<String>()
+
+    /** Where exports go: a folder picked on the Export screen (null: Pictures/Quartz Editor, or Download for .psd). */
+    var exportFolder by mutableStateOf(prefs.getString("exportFolder", null)?.let { android.net.Uri.parse(it) })
+        internal set
+
+    /** Its name, for showing (null with no folder picked, or when it can't be reached any more). */
+    var exportFolderName by mutableStateOf<String?>(null)
+        internal set
+
     /** Picking a tool opens Properties with its settings (Window menu). */
     var propertiesWithTools by mutableStateOf(prefs.getBoolean("propertiesWithTools", true))
         internal set

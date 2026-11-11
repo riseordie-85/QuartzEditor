@@ -249,6 +249,32 @@ object Media {
      * [bitmap] encoded as [format]: JPG and WebP at [quality] (1..100; WebP [lossless] ignores it),
      * PNG and TIFF without loss.
      */
+    /**
+     * A new file named [displayName] in a folder the user picked ([tree], from the folder picker),
+     * written by [write]. Returns its address.
+     */
+    suspend fun saveToFolder(context: Context, tree: Uri, displayName: String, mime: String, write: (java.io.OutputStream) -> Unit): Uri = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, android.provider.DocumentsContract.getTreeDocumentId(tree))
+        val doc = android.provider.DocumentsContract.createDocument(resolver, parent, mime, displayName)
+            ?: throw IOException("Couldn't make the file in that folder")
+        try {
+            resolver.openOutputStream(doc, "w")?.use(write) ?: throw IOException("Couldn't write the file in that folder")
+        } catch (e: Throwable) {
+            runCatching { android.provider.DocumentsContract.deleteDocument(resolver, doc) }
+            throw e
+        }
+        doc
+    }
+
+    /** A picked folder's name (as the file picker shows it), or null when it can't be read any more. */
+    fun folderName(context: Context, tree: Uri): String? = runCatching {
+        val doc = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, android.provider.DocumentsContract.getTreeDocumentId(tree))
+        context.contentResolver.query(doc, arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+
     fun encode(bitmap: Bitmap, format: ExportFormat, quality: Int, lossless: Boolean): ByteArray {
         val out = java.io.ByteArrayOutputStream(1 shl 16)
         val q = quality.coerceIn(1, 100)
