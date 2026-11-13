@@ -73,7 +73,7 @@ private fun lastExit(context: Context): String? {
     val mem = "Memory: ${info.pss / 1024} MB in use when it closed"
     val device = "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}"
     val whenText = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(info.timestamp))
-    val report = "$why\n$mem\n$device · $whenText\n\n$details".trim()
+    val report = "$why\n${appVersion(context)}\n$mem\n$device · $whenText\n\n$details".trim()
     runCatching { keepReport(context, report) }
     return report
 }
@@ -159,3 +159,15 @@ fun LastExitDialog() {
         },
     )
 }
+
+/** "Quartz Editor 0.1.152" (the app's name and version; the last number is the build). */
+fun appVersion(context: Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    "${context.applicationInfo.loadLabel(context.packageManager)} ${info.versionName}"
+}.getOrDefault("Quartz Editor")
+
+/** When this build was installed (or last updated), for telling builds apart. */
+fun appInstalled(context: Context): String = runCatching {
+    val at = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at))
+}.getOrDefault("")

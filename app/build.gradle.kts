@@ -10,6 +10,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The build number: how many changes (commits) the code has had, so a build from newer code always
+// has a higher one (shown in Settings and in crash reports). Built without Git history, it's 1.
+val buildNumber: Int = runCatching {
+    providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }.standardOutput.asText.get().trim().toInt()
+}.getOrDefault(1)
+
 android {
     namespace = "com.tim.quartzeditor"
     compileSdk = 35
@@ -18,8 +24,8 @@ android {
         applicationId = "com.tim.quartzeditor"
         minSdk = 33 // Android 13+ (adjustments use Android 13 GPU shaders)
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = buildNumber
+        versionName = "0.1.$buildNumber"
     }
 
     // Two apps from one project: "offline" is Quartz Editor as always (no internet at all); "online"

@@ -448,6 +448,7 @@ The column holds **Color**, **Properties**, **Brushes**, **History** and **Layer
   **Window → Open Properties when picking a tool** (on at first): off, tools leave the panels as they are.
 - It's all remembered; **Window → Reset panel layout** puts everything back (every panel in the column).
 - **Crash reports** (Settings → Appearance): the last 5 reasons the app closed unexpectedly, with Copy.
+- **Version** (Settings → Appearance → About): e.g. "Quartz Editor 0.1.152", with when it was installed. The last number is the build: the number of commits in the code it was built from, so a newer build always has a higher one (crash reports include it too).
 - **Color** and **Properties** fold away by themselves: picking a tool opens Properties with that tool's
   settings (selection shape and mode, crop ratio, transform numbers, bucket tolerance, gradient presets
   and type, brush tips and opacity), and tapping a color swatch opens Color. The **pin** on a section's

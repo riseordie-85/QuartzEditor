@@ -180,6 +180,13 @@ private fun AppearanceSettings(vm: EditorViewModel) {
     SmallButton("Crash reports…") { reportsOpen = true }
     Text("Why the app last closed unexpectedly (the last 5), to copy for a bug report.", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
     if (reportsOpen) CrashReportsDialog { reportsOpen = false }
+    Spacer(Modifier.height(18.dp))
+    Heading("About")
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val version = remember { appVersion(ctx) }
+    val installed = remember { appInstalled(ctx) }
+    Text(version, color = Q.text, fontSize = 14.sp)
+    if (installed.isNotEmpty()) Text("Installed $installed", color = Q.textDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
 }
 
 /** How a pen (stylus) works: pressure, tilt, its eraser end and button, and what fingers do. */
