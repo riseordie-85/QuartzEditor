@@ -80,11 +80,13 @@ half4 main(float2 p) {
      * Canvas pixel = node pixel × ([sx], [sy]) + ([tx], [ty]).
      */
     /** On screen: one shader per layer, kept (compiling one every frame would stutter). Main thread only. */
-    private val screen = HashMap<Long, RuntimeShader>()
+    // (The most recently used are kept: a picture with many effects needs more than a few)
+    private val screen = object : LinkedHashMap<Long, RuntimeShader>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, RuntimeShader>?) = size > 256
+    }
 
     /** [layerId]: whose shader to reuse (each layer keeps its own, since several can be on screen at once). */
     fun pairEffect(layerId: Long, blend: Blend, width: Int, sx: Float, sy: Float, tx: Float, ty: Float): RenderEffect {
-        if (screen.size > 64) screen.clear()
         val sh = screen.getOrPut(layerId) { RuntimeShader(PAIR) }
         sh.setFloatUniform("mode", blend.custom.toFloat())
         sh.setFloatUniform("docMap", sx, sy, tx, ty)

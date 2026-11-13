@@ -303,6 +303,8 @@ object DocRenderer {
      * [fullOpacity]: its opacity likewise.
      */
     private fun drawNode(canvas: Canvas, l: Layer, ctx: Ctx, blendNormal: Boolean, fullOpacity: Boolean, styled: Boolean = true) {
+        // (On screen, effects mixed by the blend shader are recorded in screen pixels)
+        fxView.set(if (ctx.view != null && ctx.viewW > 0 && ctx.viewH > 0) ctx else null)
         when (l.kind) {
             LayerKind.PIXELS, LayerKind.SHAPE, LayerKind.TEXT, LayerKind.SMART -> drawLayer(
                 canvas, ctx.docW, ctx.docH, l, ctx.bounds, ctx.tilePaint,
@@ -875,7 +877,12 @@ object DocRenderer {
         if (steps.none { it.blend.custom != 0 }) {
             for (s in steps) s.draw(canvas, s.blend.mode)
         } else {
-            drawStepsMixed(canvas, RectF(bounds).apply { if (!intersect(0f, 0f, docW, docH)) setEmpty() }, steps, layer.id)
+            // Only where the layer and its effects are (within what's being drawn)
+            val ext = RectF()
+            built?.area?.let { ext.union(RectF(it).apply { offset(dx, dy) }) }
+            (built?.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { ext.union(RectF(it).apply { offset(dx, dy) }) }
+            val area = RectF(bounds).apply { if (ext.isEmpty || !intersect(ext)) setEmpty() }
+            drawStepsMixed(canvas, area, steps, layer.id, fxView.get())
         }
         canvas.restore()
     }
@@ -889,10 +896,66 @@ object DocRenderer {
      * that blend mode). On screen with RenderNodes (all on the GPU); off screen with pictures.
      * [area]: the canvas pixels it covers.
      */
-    private fun drawStepsMixed(canvas: Canvas, area: RectF, steps: List<FxStep>, key: Long) {
+    private fun drawStepsMixed(canvas: Canvas, area: RectF, steps: List<FxStep>, key: Long, screen: Ctx?) {
+        if (area.isEmpty) return
+        val view = screen?.view
+        if (canvas.isHardwareAccelerated && view != null && screen.viewW > 0 && screen.viewH > 0) {
+            // On screen: recorded in screen pixels (only the part on screen), drawn back through the
+            // inverse of the view, like the layer list does
+            val r = RectF(area).also { view.mapRect(it) }
+            val sl = kotlin.math.floor(r.left).coerceAtLeast(0f)
+            val st = kotlin.math.floor(r.top).coerceAtLeast(0f)
+            val sr = kotlin.math.ceil(r.right).coerceAtMost(screen.viewW.toFloat())
+            val sb = kotlin.math.ceil(r.bottom).coerceAtMost(screen.viewH.toFloat())
+            if (sr <= sl || sb <= st) return
+            val w = (sr - sl).toInt()
+            val h = (sb - st).toInt()
+            // Node pixel → canvas pixel, for Dissolve's pattern
+            val toDoc = FloatArray(9).also { v -> Matrix().also { inv -> view.invert(inv) }.getValues(v) }
+            fun accNode() = RenderNode("fx").apply { setPosition(0, 0, w, h) }
+            fun RecordingCanvasInit(c: Canvas) {
+                c.translate(-sl, -st)
+                c.concat(view)
+            }
+            var acc = accNode()
+            var rc: Canvas = acc.beginRecording(w, h)
+            RecordingCanvasInit(rc)
+            var k = 0
+            for (s in steps) {
+                if (s.blend.custom == 0) {
+                    s.draw(rc, s.blend.mode)
+                    continue
+                }
+                acc.endRecording()
+                val pair = RenderNode("fxPair").apply { setPosition(0, 0, 2 * w, h) }
+                val pc = pair.beginRecording(2 * w, h)
+                pc.drawRenderNode(acc)
+                pc.save()
+                pc.translate(w.toFloat(), 0f)
+                pc.clipRect(0, 0, w, h)
+                RecordingCanvasInit(pc)
+                s.draw(pc, android.graphics.BlendMode.SRC_OVER)
+                pc.restore()
+                pair.endRecording()
+                pair.setRenderEffect(BlendShader.pairEffect(
+                    -(key * 32 + k++) - 1, s.blend, w,
+                    toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X] + sl * toDoc[Matrix.MSCALE_X], toDoc[Matrix.MTRANS_Y] + st * toDoc[Matrix.MSCALE_Y],
+                ))
+                acc = accNode()
+                rc = acc.beginRecording(w, h)
+                rc.drawRenderNode(pair)
+                RecordingCanvasInit(rc)
+            }
+            acc.endRecording()
+            canvas.save()
+            canvas.concat(Matrix().also { view.invert(it) })
+            canvas.translate(sl, st)
+            canvas.drawRenderNode(acc)
+            canvas.restore()
+            return
+        }
         val l = kotlin.math.floor(area.left)
         val t = kotlin.math.floor(area.top)
-        if (area.isEmpty) return
         if (canvas.isHardwareAccelerated) {
             val w = (kotlin.math.ceil(area.right) - l).toInt().coerceAtLeast(1)
             val h = (kotlin.math.ceil(area.bottom) - t).toInt().coerceAtLeast(1)
@@ -960,6 +1023,9 @@ object DocRenderer {
         canvas.drawBitmap(acc, null, RectF(l, t, l + w / sc, t + h / sc), Paint().apply { isFilterBitmap = true })
         acc.recycle()
     }
+
+    /** On screen: the drawing's view (set per layer), for effects mixed in screen pixels. */
+    private val fxView = ThreadLocal<Ctx?>()
 
     /** Layers whose outer effects with a blend mode Android lacks are being mixed in by the list (so drawLayer leaves them out). */
     private val outerDone = ThreadLocal.withInitial { HashSet<Long>() }
