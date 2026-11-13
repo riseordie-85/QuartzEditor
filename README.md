@@ -12,6 +12,22 @@ from the build). Background removal's model is fetched by Google Play services i
   side; each has its own projects and settings (move work between them with project files). It talks
   only to the ComfyUI server you give it.
 
+## Screenshots
+<p align="center">
+  <img src="docs/screenshots/video-overlay-tablet.webp" alt="A stream overlay on a tablet with the menu bar, tools and stacked panels" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/banner-unfolded.webp" alt="A gaming banner on an unfolded phone with the brush bar and Layers panel" width="46%">
+  <img src="docs/screenshots/floating-layers-tablet.webp" alt="An offline screen on a tablet with a floating Layers panel" width="51%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/rotated-canvas-unfolded.webp" alt="The canvas rotated 14 degrees in the touch layout" width="66%">
+  <img src="docs/screenshots/offline-phone.webp" alt="The touch layout on a phone" width="31%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/export-tablet.webp" alt="The export panel with PNG, JPG, WebP, TIFF, Photoshop and layered TIFF" width="66%">
+</p>
+
 ## Launch screen
 The app icon is a rose-quartz gem with a paintbrush on a faceted pink background (with a themed
 version for Android's matching-icon setting), and the start screen sits on a lilac-to-blue crystal background.
