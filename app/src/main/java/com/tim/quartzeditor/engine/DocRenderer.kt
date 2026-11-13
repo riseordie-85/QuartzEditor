@@ -202,7 +202,7 @@ object DocRenderer {
             shown = list.filter { it.props.visible }
             ctx = ctx0
         }
-        val adjusts = shown.any { (it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f) || customBlend(it, ctx) || blendIfOn(it, ctx) }
+        val adjusts = shown.any { (it.isAdjustment && it.props.adjust != null && it.props.opacity > 0f) || customBlend(it, ctx) || blendIfOn(it, ctx) || hasOuterCustom(it, ctx) }
         if (!adjusts) {
             for (l in shown) drawNode(canvas, l, ctx)
             return
@@ -437,6 +437,32 @@ object DocRenderer {
         // Screen pixel → canvas pixel (for Dissolve's pattern)
         val toDoc = FloatArray(9).also { v -> Matrix().also { inv -> view.invert(inv) }.getValues(v) }
         for (l in list) {
+            // Shadows and glows with a blend mode Android lacks: each mixed with what's below first
+            val outer = outerCustomFx(l, ctx)
+            outer.forEachIndexed { i, (bl, draw) ->
+                below.endRecording()
+                val pair = RenderNode("fxPair").apply { setPosition(0, 0, 2 * w, h) }
+                val pc = pair.beginRecording(2 * w, h)
+                pc.drawRenderNode(below)
+                pc.save()
+                pc.translate(w.toFloat(), 0f)
+                pc.clipRect(0, 0, w, h)
+                pc.concat(view)
+                draw(pc)
+                pc.restore()
+                pair.endRecording()
+                pair.setRenderEffect(BlendShader.pairEffect(
+                    -(l.id * 32 + 20 + i) - 1, bl, w, toDoc[Matrix.MSCALE_X], toDoc[Matrix.MSCALE_Y], toDoc[Matrix.MTRANS_X], toDoc[Matrix.MTRANS_Y],
+                ))
+                val next = node("next")
+                val nr = next.beginRecording(w, h)
+                nr.drawRenderNode(pair)
+                nr.concat(view)
+                below = next
+                rec = nr
+            }
+            if (outer.isNotEmpty()) outerDone.get()!!.add(l.id)
+            try {
             if (blendIfOn(l, ctx)) {
                 // What's below, the layer alone, and the layer blended onto what's below, side by side
                 below.endRecording()
@@ -585,6 +611,9 @@ object DocRenderer {
             nr.concat(view)
             below = next
             rec = nr
+            } finally {
+                outerDone.get()!!.remove(l.id)
+            }
         }
         below.endRecording()
         val inverse = Matrix()
@@ -616,6 +645,22 @@ object DocRenderer {
         }
         prepare(pc)
         for (l in list) {
+            // Shadows and glows with a blend mode Android lacks: each mixed with what's below first
+            val outer = outerCustomFx(l, ctx)
+            for ((bl, draw) in outer) {
+                val alone = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+                val ac = Canvas(alone)
+                prepare(ac)
+                draw(ac)
+                val mixed = BlendShader.mix(pic, alone, bl, area.width() / pw.toFloat(), area.height() / ph.toFloat(), area.left.toFloat(), area.top.toFloat())
+                alone.recycle()
+                pic.recycle()
+                pic = mixed
+                pc = Canvas(pic)
+                prepare(pc)
+            }
+            if (outer.isNotEmpty()) outerDone.get()!!.add(l.id)
+            try {
             if (blendIfOn(l, ctx)) {
                 // The layer alone, and blended onto what's below; then mixed by how much of it shows
                 val alone = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
@@ -683,6 +728,9 @@ object DocRenderer {
             drawMask(pc, l, ctx, l.x.toFloat(), l.y.toFloat())
             pc.restore()
             adjusted.recycle()
+            } finally {
+                outerDone.get()!!.remove(l.id)
+            }
         }
         canvas.drawBitmap(pic, null, RectF(area), Paint().apply { isFilterBitmap = true })
         pic.recycle()
@@ -742,82 +790,207 @@ object DocRenderer {
         val op = p.opacity.coerceIn(0f, 1f)
         if (built != null) {
             // Effects behind the layer with a blend mode of their own blend with what's below it
-            if (style.longShadow.on && style.longShadow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity * op, style.longShadow.blend.mode)
-            if (style.dropShadow.on && style.dropShadow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity * op, style.dropShadow.blend.mode)
-            if (style.outerGlow.on && style.outerGlow.blend != Blend.NORMAL) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity * op, style.outerGlow.blend.mode)
+            // (A blend mode Android lacks is mixed in by the list, like a layer of its own, when it can be;
+            // otherwise the nearest one Android has)
+            val done = outerDone.get()!!.contains(layer.id)
+            fun outer(fx: Blend, on: Boolean) = on && fx != Blend.NORMAL && !(done && fx.custom != 0)
+            if (outer(style.longShadow.blend, style.longShadow.on)) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity * op, style.longShadow.blend.mode)
+            if (outer(style.dropShadow.blend, style.dropShadow.on)) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity * op, style.dropShadow.blend.mode)
+            if (outer(style.outerGlow.blend, style.outerGlow.on)) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity * op, style.outerGlow.blend.mode)
         }
         canvas.saveLayer(bounds, Paint().apply {
             alpha = (op * 255).roundToInt()
             blendMode = p.blend.mode
         })
+        // Everything inside the layer, in order; each with the blend mode it's drawn with
+        // (a step's draw takes the Android blend mode to use: its own, or Normal when it's mixed in)
+        val steps = ArrayList<FxStep>()
         if (built != null) {
-            if (style.longShadow.on && style.longShadow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity)
-            if (style.dropShadow.on && style.dropShadow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity)
-            if (style.outerGlow.on && style.outerGlow.blend == Blend.NORMAL) Effects.drawImage(canvas, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity)
+            if (style.longShadow.on && style.longShadow.blend == Blend.NORMAL) steps.add(FxStep(Blend.NORMAL) { c, _ -> Effects.drawImage(c, built, built.longShadow, dx, dy, style.longShadow.color, style.longShadow.opacity) })
+            if (style.dropShadow.on && style.dropShadow.blend == Blend.NORMAL) steps.add(FxStep(Blend.NORMAL) { c, _ -> Effects.drawImage(c, built, built.dropShadow, dx, dy, style.dropShadow.color, style.dropShadow.opacity) })
+            if (style.outerGlow.on && style.outerGlow.blend == Blend.NORMAL) steps.add(FxStep(Blend.NORMAL) { c, _ -> Effects.drawImage(c, built, built.outerGlow, dx, dy, style.outerGlow.color, style.outerGlow.opacity) })
         }
         // Fill fades the pixels only
-        if (p.fill > 0f) {
-            canvas.saveLayer(bounds, Paint().apply { alpha = (p.fill.coerceIn(0f, 1f) * 255).roundToInt() })
-            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
-            canvas.restore()
-        }
-        if (pattern != null) {
+        if (p.fill > 0f) steps.add(FxStep(Blend.NORMAL) { c, _ ->
+            c.saveLayer(bounds, Paint().apply { alpha = (p.fill.coerceIn(0f, 1f) * 255).roundToInt() })
+            drawContent(c, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            c.restore()
+        })
+        if (pattern != null) steps.add(FxStep(pattern.blend) { c, mode ->
             // The layer's shape, filled with the pattern (it moves with the layer)
-            canvas.saveLayer(bounds, Paint().apply {
+            c.saveLayer(bounds, Paint().apply {
                 alpha = (pattern.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-                blendMode = pattern.blend.mode
+                blendMode = mode
             })
-            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
-            Effects.drawPatternOverlay(canvas, pattern, dx, dy)
-            canvas.restore()
-        }
+            drawContent(c, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            Effects.drawPatternOverlay(c, pattern, dx, dy)
+            c.restore()
+        })
         val gradient = style.gradientFill.takeIf { it.on && !transforming && it.opacity > 0f }
         if (gradient != null) {
             // The layer's shape, filled with the gradient across where its pixels are
             val area = (built?.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }
-            if (area != null) {
-                canvas.saveLayer(bounds, Paint().apply {
+            if (area != null) steps.add(FxStep(gradient.blend) { c, mode ->
+                c.saveLayer(bounds, Paint().apply {
                     alpha = (gradient.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-                    blendMode = gradient.blend.mode
+                    blendMode = mode
                 })
-                drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
-                Effects.drawGradientFill(canvas, gradient, area)
-                canvas.restore()
-            }
-        }
-        if (overlay != null && overlay.opacity > 0f) {
-            // The layer's shape, colored (at full strength, whatever the fill)
-            canvas.saveLayer(bounds, Paint().apply {
-                alpha = (overlay.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-                blendMode = overlay.blend.mode
+                drawContent(c, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+                Effects.drawGradientFill(c, gradient, area)
+                c.restore()
             })
-            drawContent(canvas, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
-            canvas.drawPaint(Paint().apply {
+        }
+        if (overlay != null && overlay.opacity > 0f) steps.add(FxStep(overlay.blend) { c, mode ->
+            // The layer's shape, colored (at full strength, whatever the fill)
+            c.saveLayer(bounds, Paint().apply {
+                alpha = (overlay.opacity.coerceIn(0f, 1f) * 255).roundToInt()
+                blendMode = mode
+            })
+            drawContent(c, docW, docH, layer, bounds, tilePaint, stroke, preview, smooth, dx, dy)
+            c.drawPaint(Paint().apply {
                 color = overlay.color or 0xFF000000.toInt()
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
             })
-            canvas.restore()
-        }
-        if (built != null && style.satin.on) {
-            Effects.drawImage(canvas, built, built.satin, dx, dy, style.satin.color, style.satin.opacity, style.satin.blend.mode)
-        }
-        if (built != null && style.innerGlow.on) {
-            Effects.drawImage(canvas, built, built.innerGlow, dx, dy, style.innerGlow.color, style.innerGlow.opacity, style.innerGlow.blend.mode)
-        }
-        if (built != null && style.innerShadow.on) {
+            c.restore()
+        })
+        if (built != null && style.satin.on) steps.add(FxStep(style.satin.blend) { c, mode ->
+            Effects.drawImage(c, built, built.satin, dx, dy, style.satin.color, style.satin.opacity, mode)
+        })
+        if (built != null && style.innerGlow.on) steps.add(FxStep(style.innerGlow.blend) { c, mode ->
+            Effects.drawImage(c, built, built.innerGlow, dx, dy, style.innerGlow.color, style.innerGlow.opacity, mode)
+        })
+        if (built != null && style.innerShadow.on) steps.add(FxStep(style.innerShadow.blend) { c, mode ->
             // Already limited to the layer's shape
-            Effects.drawImage(canvas, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity, style.innerShadow.blend.mode)
-        }
+            Effects.drawImage(c, built, built.innerShadow, dx, dy, style.innerShadow.color, style.innerShadow.opacity, mode)
+        })
         if (built != null && style.bevel.on) {
             // Highlights lighten, shadows darken (Screen and Multiply unless changed, like Photoshop)
-            Effects.drawImage(canvas, built, built.bevelLight, dx, dy, style.bevel.highlight, style.bevel.highlightOpacity, style.bevel.highlightBlend.mode)
-            Effects.drawImage(canvas, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, style.bevel.shadowBlend.mode)
+            steps.add(FxStep(style.bevel.highlightBlend) { c, mode -> Effects.drawImage(c, built, built.bevelLight, dx, dy, style.bevel.highlight, style.bevel.highlightOpacity, mode) })
+            steps.add(FxStep(style.bevel.shadowBlend) { c, mode -> Effects.drawImage(c, built, built.bevelShade, dx, dy, style.bevel.shadow, style.bevel.shadowOpacity, mode) })
         }
         if (built != null && style.stroke.on) {
             val area = (built.content ?: layer.tiles.tileBounds()?.let { RectF(it) })?.let { RectF(it).apply { offset(dx, dy) } }
-            Effects.drawStroke(canvas, built, style.stroke, dx, dy, area)
+            steps.add(FxStep(style.stroke.blend) { c, mode -> Effects.drawStroke(c, built, style.stroke, dx, dy, area, mode) })
+        }
+        if (steps.none { it.blend.custom != 0 }) {
+            for (s in steps) s.draw(canvas, s.blend.mode)
+        } else {
+            drawStepsMixed(canvas, RectF(bounds).apply { if (!intersect(0f, 0f, docW, docH)) setEmpty() }, steps, layer.id)
         }
         canvas.restore()
+    }
+
+    /** One thing drawn inside a layer with effects: [blend] is its blend mode; [draw] draws it with the Android blend mode given. */
+    private class FxStep(val blend: Blend, val draw: (Canvas, android.graphics.BlendMode) -> Unit)
+
+    /**
+     * [steps] where some have a blend mode Android lacks: each of those is drawn on its own and
+     * mixed with what the steps before it made by [BlendShader] (the same formulas as a layer with
+     * that blend mode). On screen with RenderNodes (all on the GPU); off screen with pictures.
+     * [area]: the canvas pixels it covers.
+     */
+    private fun drawStepsMixed(canvas: Canvas, area: RectF, steps: List<FxStep>, key: Long) {
+        val l = kotlin.math.floor(area.left)
+        val t = kotlin.math.floor(area.top)
+        if (area.isEmpty) return
+        if (canvas.isHardwareAccelerated) {
+            val w = (kotlin.math.ceil(area.right) - l).toInt().coerceAtLeast(1)
+            val h = (kotlin.math.ceil(area.bottom) - t).toInt().coerceAtLeast(1)
+            fun accNode() = RenderNode("fx").apply { setPosition(0, 0, w, h) }
+            var acc = accNode()
+            var rc = acc.beginRecording(w, h)
+            rc.translate(-l, -t)
+            var k = 0
+            for (s in steps) {
+                if (s.blend.custom == 0) {
+                    s.draw(rc, s.blend.mode)
+                    continue
+                }
+                acc.endRecording()
+                // What's made so far on the left, this step alone on the right, mixed by the blend shader
+                val pair = RenderNode("fxPair").apply { setPosition(0, 0, 2 * w, h) }
+                val pc = pair.beginRecording(2 * w, h)
+                pc.drawRenderNode(acc)
+                pc.save()
+                pc.translate(w.toFloat(), 0f)
+                pc.clipRect(0, 0, w, h)
+                pc.translate(-l, -t)
+                s.draw(pc, android.graphics.BlendMode.SRC_OVER)
+                pc.restore()
+                pair.endRecording()
+                // (Each mix keeps its own shader: a layer can have several)
+                pair.setRenderEffect(BlendShader.pairEffect(-(key * 32 + k++) - 1, s.blend, w, 1f, 1f, l, t))
+                acc = accNode()
+                rc = acc.beginRecording(w, h)
+                rc.drawRenderNode(pair)
+                rc.translate(-l, -t)
+            }
+            acc.endRecording()
+            canvas.save()
+            canvas.translate(l, t)
+            canvas.drawRenderNode(acc)
+            canvas.restore()
+            return
+        }
+        // Off screen: at the picture's own scale
+        @Suppress("DEPRECATION")
+        val m = FloatArray(9).also { canvas.matrix.getValues(it) }
+        val sc = kotlin.math.hypot(m[Matrix.MSCALE_X], m[Matrix.MSKEW_Y]).coerceIn(0.05f, 8f)
+        val w = ((kotlin.math.ceil(area.right) - l) * sc).roundToInt().coerceAtLeast(1)
+        val h = ((kotlin.math.ceil(area.bottom) - t) * sc).roundToInt().coerceAtLeast(1)
+        fun prepare(c: Canvas) {
+            c.scale(sc, sc)
+            c.translate(-l, -t)
+        }
+        var acc = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        var ac = Canvas(acc).also { prepare(it) }
+        for (s in steps) {
+            if (s.blend.custom == 0) {
+                s.draw(ac, s.blend.mode)
+                continue
+            }
+            val alone = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            s.draw(Canvas(alone).also { prepare(it) }, android.graphics.BlendMode.SRC_OVER)
+            val mixed = BlendShader.mix(acc, alone, s.blend, 1f / sc, 1f / sc, l, t)
+            alone.recycle()
+            acc.recycle()
+            acc = if (mixed.isMutable && mixed.config == Bitmap.Config.ARGB_8888) mixed else mixed.copy(Bitmap.Config.ARGB_8888, true).also { mixed.recycle() }
+            ac = Canvas(acc).also { prepare(it) }
+        }
+        canvas.drawBitmap(acc, null, RectF(l, t, l + w / sc, t + h / sc), Paint().apply { isFilterBitmap = true })
+        acc.recycle()
+    }
+
+    /** Layers whose outer effects with a blend mode Android lacks are being mixed in by the list (so drawLayer leaves them out). */
+    private val outerDone = ThreadLocal.withInitial { HashSet<Long>() }
+
+    /**
+     * Outer effects (behind the layer: shadows, outer glow) with a blend mode Android lacks, as
+     * things to mix with what's below like layers of their own, each drawn Normally. Not for layers
+     * in a clipping group (those keep the nearest blend mode).
+     */
+    private fun outerCustomFx(l: Layer, ctx: Ctx): List<Pair<Blend, (Canvas) -> Unit>> {
+        if (!hasOuterCustom(l, ctx)) return emptyList()
+        val built = ctx.effects?.invoke(l) ?: return emptyList()
+        val st = l.props.style
+        val pv = ctx.preview?.of(l.id)
+        val dx = l.x + (pv?.dragX ?: 0f)
+        val dy = l.y + (pv?.dragY ?: 0f)
+        val op = l.props.opacity.coerceIn(0f, 1f)
+        val out = ArrayList<Pair<Blend, (Canvas) -> Unit>>()
+        if (st.longShadow.on && st.longShadow.blend.custom != 0) out.add(st.longShadow.blend to { c -> Effects.drawImage(c, built, built.longShadow, dx, dy, st.longShadow.color, st.longShadow.opacity * op) })
+        if (st.dropShadow.on && st.dropShadow.blend.custom != 0) out.add(st.dropShadow.blend to { c -> Effects.drawImage(c, built, built.dropShadow, dx, dy, st.dropShadow.color, st.dropShadow.opacity * op) })
+        if (st.outerGlow.on && st.outerGlow.blend.custom != 0) out.add(st.outerGlow.blend to { c -> Effects.drawImage(c, built, built.outerGlow, dx, dy, st.outerGlow.color, st.outerGlow.opacity * op) })
+        return out
+    }
+
+    private fun hasOuterCustom(l: Layer, ctx: Ctx): Boolean {
+        if (l.isAdjustment || ctx.clipBase != null || !ctx.clips[l.id].isNullOrEmpty() || l.props.opacity <= 0f || ctx.effects == null) return false
+        val pv = ctx.preview?.of(l.id)
+        if (pv?.transform != null || pv?.mesh != null) return false
+        val st = l.props.style
+        return (st.longShadow.on && st.longShadow.blend.custom != 0) || (st.dropShadow.on && st.dropShadow.blend.custom != 0) ||
+            (st.outerGlow.on && st.outerGlow.blend.custom != 0)
     }
 
     /** The layer's own pixels: tiles (or a preview), a stroke in progress, and its mask. */

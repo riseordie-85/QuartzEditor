@@ -363,8 +363,8 @@ private fun ShadowControls(vm: EditorViewModel, sh: ShadowFx, inner: Boolean) {
 private fun FxBlend(current: com.tim.quartzeditor.engine.Blend, onPick: (com.tim.quartzeditor.engine.Blend) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
         Text("Blend mode", color = Q.textDim, fontSize = 13.sp, modifier = Modifier.width(88.dp))
-        // Effects are drawn by Android's own blend modes
-        BlendMenu(current, Modifier.weight(1f), exactOnly = true, onPick = onPick)
+        // (Every blend mode: the ones Android lacks are mixed in like a layer's)
+        BlendMenu(current, Modifier.weight(1f), exactOnly = false, onPick = onPick)
     }
 }
 

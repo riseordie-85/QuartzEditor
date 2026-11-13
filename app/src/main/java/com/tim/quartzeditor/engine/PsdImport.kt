@@ -1320,7 +1320,8 @@ object PsdImport {
         }
 
         /** A blend mode from a layer style's descriptor ("Md  "). */
-        fun fxBlend(v: Any?): Blend = exact(when ((v as? PsdEnum)?.value) {
+        // (Every blend mode works on effects: the ones Android lacks are mixed in by BlendShader)
+        fun fxBlend(v: Any?): Blend = when ((v as? PsdEnum)?.value) {
             null, "Nrml" -> Blend.NORMAL
             "Dslv" -> Blend.DISSOLVE
             "Drkn" -> Blend.DARKEN
@@ -1349,7 +1350,7 @@ object PsdImport {
             "Clr " -> Blend.COLOR
             "Lmns" -> Blend.LUMINOSITY
             else -> Blend.NORMAL
-        }, "an effect")
+        }
 
         var unsupportedColors = 0
         /** The fill color a book color stands for, read from the layer being brought in (see [layer]); only its fill uses it. */

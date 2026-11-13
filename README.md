@@ -556,7 +556,10 @@ place, so the picture keeps its room; closing it brings the panels back as you l
 - **Posterize** (levels) and **Threshold** (level).
 - In every adjustment layer's window: **Clip to the layer below**.
 - Layer Style effects each have a **Blend mode** (Multiply shadows darken what's below; Bevel's highlight
-  and shadow start at Screen and Multiply).
+  and shadow start at Screen and Multiply). Every blend mode works, the same as on layers: the ones Android
+  doesn't draw itself (Linear Burn, Linear Light, Vivid Light, Pin Light, Hard Mix, Subtract, Divide, Darker
+  and Lighter Color, Dissolve) are mixed in on the GPU, so effects from a .psd keep their own modes. (A
+  shadow or outer glow on a layer inside a clipping group uses the nearest mode Android has.)
 
 ### Enhance
 Menu → **Enhance** works on the selected layer (with a selection, only on what's selected):

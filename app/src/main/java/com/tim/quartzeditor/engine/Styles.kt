@@ -827,17 +827,17 @@ half4 main(float2 p) {
     }
 
     /** The stroke, in its color or its gradient (across [area], where the layer's pixels are). */
-    fun drawStroke(canvas: Canvas, fx: BuiltEffects, s: StrokeFx, dx: Float, dy: Float, area: RectF?) {
+    fun drawStroke(canvas: Canvas, fx: BuiltEffects, s: StrokeFx, dx: Float, dy: Float, area: RectF?, mode: android.graphics.BlendMode = s.blend.mode) {
         val img = fx.stroke ?: return
         if (!s.useGradient || area == null) {
-            drawImage(canvas, fx, img, dx, dy, s.color, s.opacity, s.blend.mode)
+            drawImage(canvas, fx, img, dx, dy, s.color, s.opacity, mode)
             return
         }
         val a = fx.area
         val dst = RectF(dx + a.left, dy + a.top, dx + a.right, dy + a.bottom)
         canvas.saveLayer(dst, Paint().apply {
             alpha = (s.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-            blendMode = s.blend.mode
+            blendMode = mode
         })
         canvas.drawBitmap(img, null, dst, Paint().apply { isFilterBitmap = true; color = Color.WHITE })
         canvas.drawRect(dst, Paint().apply {
