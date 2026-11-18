@@ -99,7 +99,9 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
     var clear by remember { mutableStateOf<Bitmap?>(null) }
     var white by remember { mutableStateOf<Bitmap?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
-    val needWhite = !format.alpha
+    // A BMP's bits per pixel (only 32-bit keeps see-through areas)
+    var bmpDepth by remember { mutableIntStateOf(prefs.getInt("exportBmpDepth", 24).takeIf { it in Media.BMP_DEPTHS } ?: 24) }
+    val needWhite = !format.keepsAlpha(bmpDepth)
     LaunchedEffect(needWhite) {
         if ((if (needWhite) white else clear) != null) return@LaunchedEffect
         try {
@@ -174,18 +176,28 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
     var working by remember { mutableStateOf(false) }
     var previewError by remember { mutableStateOf<String?>(null) }
     val previewThread = remember { PREVIEW_DISPATCHER }
-    LaunchedEffect(src, format, quality, lossless, outW, outH) {
+    LaunchedEffect(src, format, quality, lossless, bmpDepth, outW, outH) {
         val s = src ?: return@LaunchedEffect
         working = true
         delay(280)
         try {
             val made = withContext(previewThread) {
-                val sized = Media.resized(s, outW, outH, opaque = !format.alpha)
+                val sized = Media.resized(s, outW, outH, opaque = !format.keepsAlpha(bmpDepth))
                 ensureActive()
                 if (layered || format == ExportFormat.TIFF) {
                     // (No size to work out before saving: the file is the picture without loss)
                     val small = screenSized(sized)
                     ExportPreview(small, small, null, outW)
+                } else if (format == ExportFormat.BMP) {
+                    // (Nothing is compressed: the size is known. 16-bit and gray are shown as saved)
+                    val small = screenSized(sized)
+                    val shown = if (bmpDepth <= 16) {
+                        val o = java.io.ByteArrayOutputStream()
+                        Media.writeBmp(small, bmpDepth, o)
+                        val data = o.toByteArray()
+                        BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }) ?: small
+                    } else small
+                    ExportPreview(shown, small, Media.bmpSize(outW, outH, bmpDepth), outW)
                 } else {
                     val data = Media.encode(sized, format, quality, lossless)
                     ensureActive()
@@ -224,11 +236,12 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
             .putString("exportFormat", format.name)
             .putInt("exportQ:${format.name}", quality)
             .putBoolean("exportLossless", lossless)
+            .putInt("exportBmpDepth", bmpDepth)
             .apply()
         val name = fileName.trim().ifBlank { "Untitled" }
         // The image takes the name too (its project and project files use it); a smart layer's contents don't
         if (!vm.exportingSmartContents) vm.renameDocument(name)
-        val settings = ExportSettings(format, quality, lossless, outW, outH)
+        val settings = ExportSettings(format, quality, lossless, outW, outH, bmpDepth)
         onDismiss()
         vm.exportWith(s, settings, name) { uri -> if (share) onShare(uri, format.mime) }
     }
@@ -271,6 +284,12 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                             ExportFormat.JPEG -> "Small files for photos. See-through areas become white."
                             ExportFormat.WEBP -> if (lossless) "No loss, keeps see-through areas." else "Small files, keeps see-through areas. Good for the web and email."
                             ExportFormat.TIFF -> "No loss, keeps see-through areas (ZIP-compressed)."
+                            ExportFormat.BMP -> when (bmpDepth) {
+                                32 -> "Windows bitmap: no loss, keeps see-through areas. Big files (nothing is compressed)."
+                                24 -> "Windows bitmap: no loss, opens almost anywhere. See-through areas become white. Big files (nothing is compressed)."
+                                16 -> "Windows bitmap with 65,536 colors (5-6-5), for older devices and games. See-through areas become white."
+                                else -> "Windows bitmap in 256 shades of gray. See-through areas become white."
+                            }
                             ExportFormat.PSD -> "Keeps every layer, mask, style, adjustment, shape, text and smart layer, at full size. Saved to Download/${Media.FOLDER}."
                             ExportFormat.TIFF_LAYERS -> "A TIFF any app shows, with the layers kept inside (Photoshop and Quartz Editor open them), at full size."
                         },
@@ -279,6 +298,13 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                     if (format == ExportFormat.WEBP) {
                         Spacer(Modifier.height(8.dp))
                         ToggleRow("Lossless", lossless) { lossless = it }
+                    }
+                    if (format == ExportFormat.BMP) {
+                        Spacer(Modifier.height(12.dp))
+                        SectionLabel("Depth")
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Media.BMP_DEPTHS.forEach { d -> SmallButton(Media.bmpDepthLabel(d), primary = d == bmpDepth) { bmpDepth = d } }
+                        }
                     }
                     if (lossy) {
                         Spacer(Modifier.height(12.dp))
@@ -350,7 +376,7 @@ fun ExportScreen(vm: EditorViewModel, onDismiss: () -> Unit, onShare: (Uri, Stri
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Q.panelDark).padding(14.dp),
                     ) {
                         Column {
-                            Text("$outW × $outH px · ${format.label}${if (lossy) " · $quality%" else ""}", color = Q.text, fontSize = 15.sp)
+                            Text("$outW × $outH px · ${format.label}${if (format == ExportFormat.BMP) " · ${Media.bmpDepthLabel(bmpDepth)}" else ""}${if (lossy) " · $quality%" else ""}", color = Q.text, fontSize = 15.sp)
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 when {

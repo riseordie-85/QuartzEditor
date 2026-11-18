@@ -24,10 +24,15 @@ enum class ExportFormat(val label: String, val mime: String, val ext: String, va
     JPEG("JPG", "image/jpeg", "jpg", Bitmap.CompressFormat.JPEG, false),
     WEBP("WebP", "image/webp", "webp", Bitmap.CompressFormat.WEBP_LOSSLESS, true),
     TIFF("TIFF", "image/tiff", "tif", null, true),
+    /** Windows bitmap: 32-bit keeps see-through areas, the other depths are on white. */
+    BMP("BMP", "image/bmp", "bmp", null, false),
     /** With its layers (saved to Download, since it isn't a picture galleries show). */
     PSD("Photoshop", "image/vnd.adobe.photoshop", "psd", null, true),
     /** A TIFF that keeps its layers inside (Photoshop opens them; other apps show the flattened picture). */
-    TIFF_LAYERS("TIFF with layers", "image/tiff", "tif", null, true),
+    TIFF_LAYERS("TIFF with layers", "image/tiff", "tif", null, true);
+
+    /** Whether see-through areas stay see-through ([bmpDepth]: a BMP's bits per pixel). */
+    fun keepsAlpha(bmpDepth: Int): Boolean = alpha || (this == BMP && bmpDepth == 32)
 }
 
 object Media {
@@ -196,6 +201,116 @@ object Media {
         out.flush()
     }
 
+    /** A BMP's bits per pixel, as offered on the Export screen (like Photoshop's BMP Options). */
+    val BMP_DEPTHS = listOf(32, 24, 16, 8)
+
+    fun bmpDepthLabel(depth: Int): String = if (depth == 8) "8-bit gray" else "$depth-bit"
+
+    // (32 and 16 bits: a V5 header, whose color masks say where alpha and 5-6-5 color are)
+    private fun bmpHeaderSize(depth: Int) = 14 + (if (depth == 32 || depth == 16) 124 else 40) + (if (depth == 8) 1024 else 0)
+    private fun bmpRowSize(w: Int, depth: Int) = ((w.toLong() * depth + 31) / 32 * 4).toInt()
+
+    /** A BMP's exact file size (nothing is compressed, so it's known before saving). */
+    fun bmpSize(w: Int, h: Int, depth: Int): Long = bmpHeaderSize(depth) + bmpRowSize(w, depth).toLong() * h
+
+    /**
+     * Writes [bitmap] as a Windows BMP (bottom row first, as they are): 32-bit keeps see-through
+     * areas (with the alpha mask Photoshop and Windows read); 24-bit, 16-bit (5-6-5: 65,536
+     * colors) and 8-bit gray expect [bitmap] already on white.
+     */
+    fun writeBmp(bitmap: Bitmap, depth: Int, out: java.io.OutputStream) {
+        require(depth in BMP_DEPTHS) { "Not a BMP depth: $depth" }
+        val w = bitmap.width
+        val h = bitmap.height
+        val rowBytes = bmpRowSize(w, depth)
+        val total = bmpSize(w, h, depth)
+        if (total > 0xFFFFFFFFL) throw IOException("Too big for a BMP")
+        val v5 = depth == 32 || depth == 16
+        val offset = bmpHeaderSize(depth)
+        val head = java.nio.ByteBuffer.allocate(offset).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        // File header
+        head.put('B'.code.toByte())
+        head.put('M'.code.toByte())
+        head.putInt(total.toInt())
+        head.putInt(0)
+        head.putInt(offset)
+        // Picture header (a positive height: bottom row first)
+        head.putInt(if (v5) 124 else 40)
+        head.putInt(w)
+        head.putInt(h)
+        head.putShort(1.toShort())
+        head.putShort(depth.toShort())
+        head.putInt(if (v5) 3 else 0) // BI_BITFIELDS / BI_RGB
+        head.putInt(rowBytes * h)
+        head.putInt(2835) // 72 dpi, in pixels per meter
+        head.putInt(2835)
+        head.putInt(if (depth == 8) 256 else 0)
+        head.putInt(0)
+        if (v5) {
+            if (depth == 32) {
+                head.putInt(0x00FF0000)
+                head.putInt(0x0000FF00)
+                head.putInt(0x000000FF)
+                head.putInt(0xFF000000.toInt())
+            } else {
+                head.putInt(0xF800)
+                head.putInt(0x07E0)
+                head.putInt(0x001F)
+                head.putInt(0)
+            }
+            head.putInt(0x73524742) // 'sRGB'
+            repeat(12) { head.putInt(0) } // color endpoints and gamma (unused for sRGB)
+            head.putInt(4) // LCS_GM_IMAGES
+            head.putInt(0) // no profile
+            head.putInt(0)
+            head.putInt(0)
+        }
+        // 8-bit: a palette of 256 grays
+        if (depth == 8) for (i in 0 until 256) {
+            head.put(i.toByte())
+            head.put(i.toByte())
+            head.put(i.toByte())
+            head.put(0.toByte())
+        }
+        out.write(head.array())
+        val px = IntArray(w)
+        // (Each row is padded to a multiple of 4 bytes; the padding stays 0)
+        val row = ByteArray(rowBytes)
+        for (y in h - 1 downTo 0) {
+            bitmap.getPixels(px, 0, w, 0, y, w, 1)
+            var o = 0
+            when (depth) {
+                32 -> for (c in px) {
+                    row[o] = c.toByte()
+                    row[o + 1] = (c shr 8).toByte()
+                    row[o + 2] = (c shr 16).toByte()
+                    row[o + 3] = (c ushr 24).toByte()
+                    o += 4
+                }
+                24 -> for (c in px) {
+                    row[o] = c.toByte()
+                    row[o + 1] = (c shr 8).toByte()
+                    row[o + 2] = (c shr 16).toByte()
+                    o += 3
+                }
+                16 -> for (c in px) {
+                    val r = (c shr 16 and 0xFF) * 31 + 127
+                    val g = (c shr 8 and 0xFF) * 63 + 127
+                    val b = (c and 0xFF) * 31 + 127
+                    val v = ((r / 255) shl 11) or ((g / 255) shl 5) or (b / 255)
+                    row[o] = v.toByte()
+                    row[o + 1] = (v shr 8).toByte()
+                    o += 2
+                }
+                else -> for (c in px) {
+                    row[o++] = (((c shr 16 and 0xFF) * 299 + (c shr 8 and 0xFF) * 587 + (c and 0xFF) * 114 + 500) / 1000).toByte()
+                }
+            }
+            out.write(row)
+        }
+        out.flush()
+    }
+
     val DOWNLOAD_LABEL = "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER"
 
     /** Copies [file] to Download/Quartz Editor as [name] (a Photoshop file, say). Returns its address. */
@@ -275,13 +390,17 @@ object Media {
         }
     }.getOrNull()
 
-    fun encode(bitmap: Bitmap, format: ExportFormat, quality: Int, lossless: Boolean): ByteArray {
+    fun encode(bitmap: Bitmap, format: ExportFormat, quality: Int, lossless: Boolean, bmpDepth: Int = 24): ByteArray {
         val out = java.io.ByteArrayOutputStream(1 shl 16)
         val q = quality.coerceIn(1, 100)
         val ok = when (format) {
             ExportFormat.PNG -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
             ExportFormat.JPEG -> bitmap.compress(Bitmap.CompressFormat.JPEG, q, out)
             ExportFormat.WEBP -> if (lossless) bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, out) else bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, q, out)
+            ExportFormat.BMP -> {
+                writeBmp(bitmap, bmpDepth, out)
+                true
+            }
             else -> {
                 writeTiff(bitmap, out)
                 true
@@ -315,7 +434,10 @@ object Media {
     }
 
     /** Saves already-encoded picture [bytes] to Pictures/Quartz Editor as [name] (without extension). */
-    suspend fun saveBytes(context: Context, bytes: ByteArray, name: String, format: ExportFormat): Uri = withContext(Dispatchers.IO) {
+    suspend fun saveBytes(context: Context, bytes: ByteArray, name: String, format: ExportFormat): Uri = saveWith(context, name, format) { it.write(bytes) }
+
+    /** Saves a picture [write] writes (as [format]) to Pictures/Quartz Editor as [name] (without extension). */
+    suspend fun saveWith(context: Context, name: String, format: ExportFormat, write: (java.io.OutputStream) -> Unit): Uri = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.${format.ext}")
@@ -327,7 +449,11 @@ object Media {
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
             ?: throw IOException("Android didn't allow a new picture")
         try {
-            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw IOException("Couldn't write the picture")
+            resolver.openOutputStream(uri)?.use { o ->
+                val b = o.buffered(1 shl 16)
+                write(b)
+                b.flush()
+            } ?: throw IOException("Couldn't write the picture")
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
@@ -360,7 +486,8 @@ object Media {
         try {
             resolver.openOutputStream(uri)?.use { out ->
                 val c = format.compress
-                if (c == null) writeTiff(bitmap, out.buffered(1 shl 16))
+                if (format == ExportFormat.BMP) writeBmp(bitmap, 24, out.buffered(1 shl 16))
+                else if (c == null) writeTiff(bitmap, out.buffered(1 shl 16))
                 else if (!bitmap.compress(c, if (format == ExportFormat.JPEG) 95 else 100, out)) throw IOException("Couldn't encode the picture")
             } ?: throw IOException("Couldn't write the picture")
             values.clear()

@@ -620,8 +620,12 @@ in between. With a selection, the mask button makes a mask that shows only what'
   layer's contents, as edited there, at their own size): a **preview** of exactly what will be saved
   (compression and all; Fit, 100% or 200% to look closely; hold "hold here to compare" to see it before
   compression) beside the settings:
-  - **File name** (the image takes it too) and **format**: PNG, JPG, WebP, TIFF, Photoshop, TIFF with layers.
+  - **File name** (the image takes it too) and **format**: PNG, JPG, WebP, TIFF, BMP, Photoshop, TIFF with layers.
   - **Quality** for JPG and WebP (1–100%; WebP can also be **Lossless**). Each format remembers its own.
+  - **BMP depth**, like Photoshop's BMP Options: **32-bit** (keeps see-through areas, with the alpha mask
+    Photoshop and Windows read), **24-bit** (the usual one), **16-bit** (5-6-5, 65,536 colors) or **8-bit gray**;
+    all but 32-bit are on white. BMPs aren't compressed, so the file size is shown exactly; 16-bit and gray
+    are previewed as they'll look.
   - **Size**: width and height in pixels (linked, or not), or 100 / 75 / 50 / 33 / 25%. Only the saved file
     is resized (in halves first, so it stays sharp); the image stays as it is.
   - **Save to**: the usual place (Pictures/Quartz Editor; Download for Photoshop files), or **Choose

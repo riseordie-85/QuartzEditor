@@ -698,7 +698,7 @@ internal suspend fun EditorViewModel.flattenForExport(white: Boolean = false): a
 }
 
 /** What the Export screen saves: the format, its quality, and the size. */
-data class ExportSettings(val format: ExportFormat, val quality: Int, val lossless: Boolean, val width: Int, val height: Int)
+data class ExportSettings(val format: ExportFormat, val quality: Int, val lossless: Boolean, val width: Int, val height: Int, val bmpDepth: Int = 24)
 
 /**
  * Saves [src] (the flattened picture) as [s] says to Pictures/Quartz Editor under [name]; Photoshop
@@ -713,18 +713,30 @@ fun EditorViewModel.exportWith(src: android.graphics.Bitmap, s: ExportSettings, 
     var where = ""
     runBusy("Exporting…") {
         val (uri, bytes) = withContext(Dispatchers.Default) {
-            val sized = Media.resized(src, s.width, s.height, opaque = !s.format.alpha)
+            val sized = Media.resized(src, s.width, s.height, opaque = !s.format.keepsAlpha(s.bmpDepth))
+            // A BMP is written straight into the file (it isn't compressed, so it can be big)
+            if (s.format == ExportFormat.BMP) {
+                try {
+                    val n = name.ifBlank { "Quartz" }
+                    val write: (java.io.OutputStream) -> Unit = { out -> Media.writeBmp(sized, s.bmpDepth, out) }
+                    val picked = saveToExportFolder("$n.${s.format.ext}", s.format.mime) { out -> out.buffered(1 shl 16).let { b -> write(b); b.flush() } }
+                    where = picked?.second ?: "Pictures/${Media.FOLDER}"
+                    return@withContext (picked?.first ?: Media.saveWith(ctx, n, s.format, write)) to Media.bmpSize(sized.width, sized.height, s.bmpDepth)
+                } finally {
+                    sized.recycle()
+                }
+            }
             val data = try {
-                Media.encode(sized, s.format, s.quality, s.lossless)
+                Media.encode(sized, s.format, s.quality, s.lossless, s.bmpDepth)
             } finally {
                 sized.recycle()
             }
             val n = name.ifBlank { "Quartz" }
             val picked = saveToExportFolder("$n.${s.format.ext}", s.format.mime) { out -> out.write(data) }
             where = picked?.second ?: "Pictures/${Media.FOLDER}"
-            (picked?.first ?: Media.saveBytes(ctx, data, n, s.format)) to data.size
+            (picked?.first ?: Media.saveBytes(ctx, data, n, s.format)) to data.size.toLong()
         }
-        toast("Saved \"${name.ifBlank { "Quartz" }}.${s.format.ext}\" (${Media.sizeLabel(bytes.toLong())}) to $where")
+        toast("Saved \"${name.ifBlank { "Quartz" }}.${s.format.ext}\" (${Media.sizeLabel(bytes)}) to $where")
         onSaved(uri)
     }
 }
