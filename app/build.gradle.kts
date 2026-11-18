@@ -21,7 +21,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.tim.quartzeditor"
+        applicationId = "com.timcordova.quartzeditor" // (the code stays in com.tim.quartzeditor)
         minSdk = 33 // Android 13+ (adjustments use Android 13 GPU shaders)
         targetSdk = 35
         versionCode = buildNumber

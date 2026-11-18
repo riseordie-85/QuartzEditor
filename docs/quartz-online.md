@@ -5,7 +5,7 @@ Not linked from the main README. Quartz Online is a second build of Quartz Edito
 **Two apps from one project.** In Android Studio, pick the build variant (Build → Select Build Variant):
 - **offlineRelease / offlineDebug** — Quartz Editor, as always: no internet at all.
 - **onlineRelease / onlineDebug** — **Quartz Online**: everything above plus **ComfyUI** (your own AI
-  server, below). It's a separate app (`com.tim.quartzeditor.online`), so both can be installed side by
+  server, below). It's a separate app (`com.timcordova.quartzeditor.online`), so both can be installed side by
   side; each has its own projects and settings (move work between them with project files). It talks
   only to the ComfyUI server you give it.
 
